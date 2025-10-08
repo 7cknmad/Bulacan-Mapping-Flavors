@@ -6,12 +6,11 @@ export const API = (
 
 /** Fetch a URL (absolute) and parse JSON with helpful error messages */
 async function getJSONAbsolute<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: "omit" });
+  const res = await fetch(url, { credentials: 'omit' }); // ← omit
   const text = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}: ${text.slice(0, 200)}`);
-  try {
-    return JSON.parse(text) as T;
-  } catch {
+  return JSON.parse(text) as T;
+} catch {
     throw new Error(`Bad JSON from ${url}: ${text.slice(0, 200)}`);
   }
 }
