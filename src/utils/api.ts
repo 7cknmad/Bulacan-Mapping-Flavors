@@ -1,13 +1,14 @@
 // src/utils/api.ts
-export const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+// Trim trailing slashes so `${API}/api/...` is clean
+export const API = (
+  import.meta.env.VITE_API_URL ?? "http://localhost:3001"
+).replace(/\/+$/, "");
 
 /** Fetch a URL (absolute) and parse JSON with helpful error messages */
 async function getJSONAbsolute<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  const text = await res.text(); // read once so we can show body on error
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} on ${url}: ${text.slice(0, 200)}`);
-  }
+  const res = await fetch(url, { credentials: "omit" });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}: ${text.slice(0, 200)}`);
   try {
     return JSON.parse(text) as T;
   } catch {
@@ -68,7 +69,7 @@ export type Restaurant = {
   municipality_name?: string;
 };
 
-
+/* ================== Calls ================== */
 export const fetchMunicipalities = () =>
   getPath<Municipality[]>("/api/municipalities");
 
@@ -89,11 +90,3 @@ export const fetchRestaurants = (opts: { municipalityId?: number; dishId?: numbe
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return getPath<Restaurant[]>(`/api/restaurants${suffix}`);
 };
-
-/* Optional helpers if you add these routes later:
-export const fetchDishBySlug = (slug: string) =>
-  getPath<Dish>(`/api/dishes/${encodeURIComponent(slug)}`);
-
-export const fetchRestaurantsForDishSlug = (slug: string) =>
-  getPath<Restaurant[]>(`/api/dishes/${encodeURIComponent(slug)}/restaurants`);
-*/

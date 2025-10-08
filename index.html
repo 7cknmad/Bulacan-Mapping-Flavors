@@ -2,12 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <!-- Use %BASE_URL% so it respects Vite's base (/Bulacan-Mapping-Flavors/) -->
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
+    <title>Bulacan Mapping Flavors</title>
   </head>
   <body>
     <div id="root"></div>
+    <!-- Keep Vite's entry; Vite will rewrite this to the hashed JS in /Bulacan-Mapping-Flavors/assets/... -->
     <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>

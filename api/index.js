@@ -1,4 +1,3 @@
-// api/index.js
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -6,7 +5,24 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+
+// Allow your frontend origins (Production + Local Dev)
+const allowedOrigins = new Set([
+  'http://localhost:5173',           // Vite dev
+  'https://7cknmad.github.io',       // GitHub Pages (the path /Bulacan-Mapping-Flavors is not part of Origin)
+]);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    // allow non-browser clients (curl/Postman) with no Origin
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.has(origin)) return cb(null, true);
+    return cb(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
 app.use(express.json());
 
 const cfg = {
