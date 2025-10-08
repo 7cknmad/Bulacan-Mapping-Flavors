@@ -5,4 +5,4 @@ export default defineConfig(({ command }) => ({
   plugins: [react()],
   // 👇 must match your repo name EXACTLY (including caps)
   base: '/Bulacan-Mapping-Flavors/',
-});
+}));
