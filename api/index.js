@@ -14,10 +14,11 @@ const allowedOrigins = new Set([
 
 app.use(cors({
   origin: (origin, cb) => {
-    // allow non-browser clients (curl/Postman) with no Origin
-    if (!origin) return cb(null, true);
-    if (allowedOrigins.has(origin)) return cb(null, true);
-    return cb(new Error(`Not allowed by CORS: ${origin}`));
+    if (!origin) return cb(null, true); // curl/postman
+    const ok =
+      origin === 'https://7cknmad.github.io' ||
+      /^http:\/\/localhost:\d+$/.test(origin); // any localhost:*
+    return ok ? cb(null, true) : cb(new Error(`Not allowed by CORS: ${origin}`));
   },
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

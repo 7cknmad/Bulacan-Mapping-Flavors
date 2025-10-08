@@ -16,17 +16,22 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest  
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - run: npm ci
+
+      # Write the API base for production builds
       - name: Create env file (production)
-      - name: Build
         run: echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" > .env.production
-      - run: npm run build -- --base=/Bulacan-Mapping-Flavors/
+
+      # Build (we pass base again for belt + suspenders; OK if also set in vite.config.ts)
+      - name: Build
+        run: npm run build -- --base=/Bulacan-Mapping-Flavors/
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
