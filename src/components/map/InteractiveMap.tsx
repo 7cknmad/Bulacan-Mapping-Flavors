@@ -119,7 +119,11 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
   };
 
   return (
-    <div className="relative h-[500px] md:h-[600px] lg:h-[700px] w-full rounded-lg overflow-hidden shadow-lg">
+    <div
+  className={`relative h-[500px] md:h-[600px] lg:h-[700px] w-full rounded-lg overflow-hidden shadow-lg ${
+    selectedMunicipality ? "panel-open" : ""
+  }`}
+>
       <MapContainer
         center={bulacanCenter}
         zoom={10}
