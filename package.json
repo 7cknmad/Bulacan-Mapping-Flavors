@@ -1,12 +1,11 @@
 {
-  "name": "magic-patterns-vite-template",
-  "version": "0.0.1",
+  "name": "bulacan-mapping-flavors",
   "private": true,
-  "type": "module",
+  "version": "0.1.0",
+  "description": "Bulacan Mapping Flavors – interactive culinary map for Bulacan.",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --base=/Bulacan-Mapping-Flavors/",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
