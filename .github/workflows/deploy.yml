@@ -24,13 +24,12 @@ jobs:
           node-version: 20
       - run: npm ci
 
-      # Write the API base for production builds
+      # write API base for production
       - name: Create env file (production)
         run: echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" > .env.production
 
-      # Build (we pass base again for belt + suspenders; OK if also set in vite.config.ts)
       - name: Build
-        run: npm run build -- --base=/Bulacan-Mapping-Flavors/
+        run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
