@@ -1,0 +1,99 @@
+// src/utils/api.ts
+export const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+
+/** Fetch a URL (absolute) and parse JSON with helpful error messages */
+async function getJSONAbsolute<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  const text = await res.text(); // read once so we can show body on error
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} on ${url}: ${text.slice(0, 200)}`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Bad JSON from ${url}: ${text.slice(0, 200)}`);
+  }
+}
+
+/** Fetch a PATH (relative) and auto-prefix with API base */
+async function getPath<T>(path: string): Promise<T> {
+  const url = path.startsWith("http") ? path : `${API}${path}`;
+  return getJSONAbsolute<T>(url);
+}
+
+/* ================== Types ================== */
+export type Municipality = {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  province: string;
+  lat: number;
+  lng: number;
+  image_url: string | null;
+};
+
+export type Dish = {
+  id: number;
+  slug: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  rating: number | null;
+  popularity: number | null;
+  flavor_profile: string[] | null;
+  ingredients: string[] | null;
+  municipality_id: number;
+  municipality_name: string;
+  category: "food" | "delicacy" | "drink";
+};
+
+export type Restaurant = {
+  id: number;
+  name: string;
+  slug: string;
+  kind: 'restaurant'|'stall'|'store'|'dealer'|'market'|'home-based';
+  description: string | null;
+  address: string;
+  phone: string | null;
+  website: string | null;
+  facebook: string | null;
+  instagram: string | null;
+  opening_hours: string | null;
+  price_range: "budget" | "moderate" | "expensive";
+  cuisine_types: string[] | null;
+  rating: number;
+  lat: number;
+  lng: number;
+  municipality_name?: string;
+};
+
+
+export const fetchMunicipalities = () =>
+  getPath<Municipality[]>("/api/municipalities");
+
+export const fetchDishes = (opts: { municipalityId?: number; category?: string; q?: string } = {}) => {
+  const qs = new URLSearchParams();
+  if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
+  if (opts.category) qs.set("category", opts.category);
+  if (opts.q) qs.set("q", opts.q);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return getPath<Dish[]>(`/api/dishes${suffix}`);
+};
+
+export const fetchRestaurants = (opts: { municipalityId?: number; dishId?: number; q?: string } = {}) => {
+  const qs = new URLSearchParams();
+  if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
+  if (opts.dishId) qs.set("dishId", String(opts.dishId));
+  if (opts.q) qs.set("q", opts.q);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return getPath<Restaurant[]>(`/api/restaurants${suffix}`);
+};
+
+/* Optional helpers if you add these routes later:
+export const fetchDishBySlug = (slug: string) =>
+  getPath<Dish>(`/api/dishes/${encodeURIComponent(slug)}`);
+
+export const fetchRestaurantsForDishSlug = (slug: string) =>
+  getPath<Restaurant[]>(`/api/dishes/${encodeURIComponent(slug)}/restaurants`);
+*/

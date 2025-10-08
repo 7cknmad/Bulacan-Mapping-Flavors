@@ -1,0 +1,76 @@
+/* PLEASE NOTE: THESE TAILWIND IMPORTS SHOULD NEVER BE DELETED */
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+/* DO NOT DELETE THESE TAILWIND IMPORTS, OTHERWISE THE STYLING WILL NOT RENDER AT ALL */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap');
+@layer base {
+  body {
+    @apply bg-neutral-50 text-neutral-900 font-sans;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+  }
+  h1 {
+    @apply text-4xl md:text-5xl font-bold;
+  }
+  h2 {
+    @apply text-3xl md:text-4xl font-semibold;
+  }
+  h3 {
+    @apply text-2xl md:text-3xl font-medium;
+  }
+  h4 {
+    @apply text-xl md:text-2xl font-medium;
+  }
+}
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-md font-medium transition-all duration-200;
+  }
+  .btn-primary {
+    @apply bg-primary-500 text-white hover:bg-primary-600 focus:ring-2 focus:ring-primary-300 focus:outline-none;
+  }
+  .btn-secondary {
+    @apply bg-secondary-500 text-white hover:bg-secondary-600 focus:ring-2 focus:ring-secondary-300 focus:outline-none;
+  }
+  .btn-outline {
+    @apply border border-primary-500 text-primary-500 hover:bg-primary-50 focus:ring-2 focus:ring-primary-300 focus:outline-none;
+  }
+  .card {
+    @apply bg-white rounded-lg shadow-md overflow-hidden transition-transform duration-300 hover:shadow-lg;
+  }
+  .input {
+    @apply w-full px-4 py-2 border border-neutral-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-300;
+  }
+  .badge {
+    @apply inline-block px-2 py-1 text-xs font-medium rounded-full;
+  }
+}
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  min-height: 400px;
+}
+
+@keyframes bm-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    90deg,
+    rgba(245, 245, 245, 1) 0%,
+    rgba(235, 235, 235, 1) 20%,
+    rgba(245, 245, 245, 1) 40%
+  );
+  background-size: 200% 100%;
+  animation: bm-shimmer 1.2s linear infinite;
+}
+.skeleton.rounded { border-radius: 0.75rem; }       /* rounded-xl look */
+.skeleton.muted   { filter: saturate(0.85) contrast(0.98); }
+.input { @apply border rounded px-3 py-2 outline-none focus:ring-2 focus:ring-primary-300;}
+.btn { @apply inline-flex items-center px-4 py-2 rounded font-medium;}
+.btn-primary { @apply bg-primary-600 text-white hover:bg-primary-700;}
