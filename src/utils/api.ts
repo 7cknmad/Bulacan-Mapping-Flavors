@@ -10,9 +10,6 @@ async function getJSONAbsolute<T>(url: string): Promise<T> {
   const text = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}: ${text.slice(0, 200)}`);
   return JSON.parse(text) as T;
-} catch {
-    throw new Error(`Bad JSON from ${url}: ${text.slice(0, 200)}`);
-  }
 }
 
 /** Fetch a PATH (relative) and auto-prefix with API base */
