@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npx vite",
+    "dev": "vite",
     "build": "vite build --base=/Bulacan-Mapping-Flavors/",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "preview": "vite preview"

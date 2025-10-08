@@ -48,7 +48,7 @@ let pool;
 
 app.get('/api/dishes', async (req, res) => {
   try {
-    const { municipalityId, category, q } = req.query;
+    const { municipalityId, category, q, slug } = req.query;
 
     const where = [];
     const params = [];
@@ -65,15 +65,22 @@ app.get('/api/dishes', async (req, res) => {
       params.push(String(category));
     }
 
+    // NEW: exact slug filter
+    if (slug) {
+      where.push('d.slug = ?');
+      params.push(String(slug));
+    }
+
+    // IMPROVED: q matches slug OR FULLTEXT or LIKE on name
     if (q) {
-      where.push('(MATCH(d.name,d.description) AGAINST(? IN NATURAL LANGUAGE MODE))');
-      params.push(String(q));
+      where.push('(d.slug = ? OR MATCH(d.name, d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
+      params.push(String(q), String(q), `%${String(q)}%`);
     }
 
     const sql = `
       SELECT
         d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
-        d.flavor_profile, d.ingredients,
+        d.flavor_profile, d.ingredients, d.history,
         m.id AS municipality_id, m.name AS municipality_name,
         c.code AS category
       FROM dishes d
@@ -88,19 +95,18 @@ app.get('/api/dishes', async (req, res) => {
     const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (e) {
-    console.error('MUNICIPALITIES ERROR:', e);
+    console.error('DISHES ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch dishes', detail: String(e?.message || e) });
   }
 });
 
 app.get('/api/restaurants', async (req, res) => {
   try {
-    const { municipalityId, dishId, kind, q } = req.query;
+    const { municipalityId, dishId, kind, q, slug } = req.query;
 
     const where = [];
     const params = [];
 
-    // If filtering by dish, join via dish_restaurants
     const joinDish = dishId
       ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id = r.id AND dr.dish_id = ?'
       : '';
@@ -118,10 +124,16 @@ app.get('/api/restaurants', async (req, res) => {
       params.push(String(kind));
     }
 
+    // NEW: exact slug filter
+    if (slug) {
+      where.push('r.slug = ?');
+      params.push(String(slug));
+    }
+
+    // IMPROVED: q matches slug OR FULLTEXT or LIKE on name
     if (q) {
-      // use FULLTEXT if available, fallback to LIKE
-      where.push('(MATCH(r.name, r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)');
-      params.push(String(q), `%${String(q)}%`);
+      where.push('(r.slug = ? OR MATCH(r.name, r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)');
+      params.push(String(q), String(q), `%${String(q)}%`);
     }
 
     const sql = `

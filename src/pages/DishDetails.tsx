@@ -35,16 +35,23 @@ function toArray(v: unknown): string[] {
 }
 
 export default function DishDetails() {
-  const { id: idOrSlug = "" } = useParams<{ id: string }>();
-  const [tab, setTab] = useState<"overview" | "history" | "ingredients" | "restaurants">("overview");
+  // Accept either /dish/:slug or /dish/:id
+  const params = useParams();
+  const idOrSlug = (params.slug ?? params.id ?? "").toString();
   const isNumericId = /^\d+$/.test(idOrSlug);
+  const [tab, setTab] =
+    useState<"overview" | "history" | "ingredients" | "restaurants">("overview");
 
-  // Load ONE dish (try slug match via q=; if route param is numeric, fallback by id)
+  // Load ONE dish (pref: exact slug via q=; fallback: by numeric id)
   const dishQ = useQuery<Dish>({
     queryKey: ["dish", idOrSlug],
+    enabled: !!idOrSlug,
     queryFn: async () => {
+      // 1) try match by slug using q=
       const byQuery = await fetchDishes({ q: idOrSlug });
       let d = byQuery.find((x) => x.slug === idOrSlug);
+
+      // 2) fallback by numeric id
       if (!d && isNumericId) {
         const all = await fetchDishes();
         d = all.find((x) => String(x.id) === idOrSlug);
@@ -56,7 +63,7 @@ export default function DishDetails() {
     retry: 0,
   });
 
-  // Load municipalities to label the dish's origin
+  // Load municipalities to label origin
   const muniQ = useQuery<Municipality[]>({
     queryKey: ["municipalities"],
     queryFn: fetchMunicipalities,
@@ -64,19 +71,22 @@ export default function DishDetails() {
   });
 
   const municipality = useMemo(
-    () => (dishQ.data && muniQ.data ? muniQ.data.find((m) => m.id === dishQ.data!.municipality_id) : null),
+    () =>
+      dishQ.data && muniQ.data
+        ? muniQ.data.find((m) => m.id === dishQ.data!.municipality_id)
+        : null,
     [dishQ.data, muniQ.data]
   );
 
   // Where to try this dish
   const placesQ = useQuery<Restaurant[]>({
     queryKey: ["where-to-try", dishQ.data?.id],
-    queryFn: () => fetchRestaurants({ dishId: dishQ.data!.id }),
     enabled: !!dishQ.data?.id,
+    queryFn: () => fetchRestaurants({ dishId: dishQ.data!.id }),
     staleTime: 60_000,
   });
 
-  // Loading state
+  // Loading
   if (dishQ.isLoading) {
     return (
       <div className="pt-20 pb-16 bg-neutral-50 min-h-screen">
@@ -101,7 +111,9 @@ export default function DishDetails() {
       <div className="pt-24 pb-16 flex items-center justify-center min-h-screen bg-neutral-50">
         <div className="text-center">
           <h2 className="mb-2">Dish Not Found</h2>
-          <p className="mb-6 text-neutral-600">We couldn’t locate that dish. It may have been removed or you followed an outdated link.</p>
+          <p className="mb-6 text-neutral-600">
+            We couldn’t locate that dish. It may have been removed or you followed an outdated link.
+          </p>
           <Link
             to="/map"
             className="inline-flex items-center px-4 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700"
@@ -149,11 +161,15 @@ export default function DishDetails() {
                   </div>
                   <div className="flex items-center">
                     <StarIcon size={16} className="text-yellow-400 fill-yellow-400 mr-1" />
-                    <span className="text-white text-sm font-medium">{Number(dish.rating ?? 0).toFixed(1)}</span>
+                    <span className="text-white text-sm font-medium">
+                      {Number(dish.rating ?? 0).toFixed(1)}
+                    </span>
                   </div>
                 </div>
                 <h1 className="text-white mb-2">{dish.name}</h1>
-                {dish.description && <p className="text-white/90 max-w-2xl">{dish.description}</p>}
+                {dish.description && (
+                  <p className="text-white/90 max-w-2xl">{dish.description}</p>
+                )}
               </div>
             </div>
           </div>
@@ -164,7 +180,9 @@ export default function DishDetails() {
           <div className="flex overflow-x-auto hide-scrollbar">
             <button
               className={`px-6 py-3 font-medium text-sm whitespace-nowrap ${
-                tab === "overview" ? "text-primary-600 border-b-2 border-primary-600" : "text-neutral-600 hover:text-primary-600"
+                tab === "overview"
+                  ? "text-primary-600 border-b-2 border-primary-600"
+                  : "text-neutral-600 hover:text-primary-600"
               }`}
               onClick={() => setTab("overview")}
             >
@@ -173,7 +191,9 @@ export default function DishDetails() {
             </button>
             <button
               className={`px-6 py-3 font-medium text-sm whitespace-nowrap ${
-                tab === "history" ? "text-primary-600 border-b-2 border-primary-600" : "text-neutral-600 hover:text-primary-600"
+                tab === "history"
+                  ? "text-primary-600 border-b-2 border-primary-600"
+                  : "text-neutral-600 hover:text-primary-600"
               }`}
               onClick={() => setTab("history")}
             >
@@ -182,7 +202,9 @@ export default function DishDetails() {
             </button>
             <button
               className={`px-6 py-3 font-medium text-sm whitespace-nowrap ${
-                tab === "ingredients" ? "text-primary-600 border-b-2 border-primary-600" : "text-neutral-600 hover:text-primary-600"
+                tab === "ingredients"
+                  ? "text-primary-600 border-b-2 border-primary-600"
+                  : "text-neutral-600 hover:text-primary-600"
               }`}
               onClick={() => setTab("ingredients")}
             >
@@ -191,7 +213,9 @@ export default function DishDetails() {
             </button>
             <button
               className={`px-6 py-3 font-medium text-sm whitespace-nowrap ${
-                tab === "restaurants" ? "text-primary-600 border-b-2 border-primary-600" : "text-neutral-600 hover:text-primary-600"
+                tab === "restaurants"
+                  ? "text-primary-600 border-b-2 border-primary-600"
+                  : "text-neutral-600 hover:text-primary-600"
               }`}
               onClick={() => setTab("restaurants")}
             >
@@ -230,14 +254,17 @@ export default function DishDetails() {
                   <h3 className="text-xl font-semibold mb-3">Quick Facts</h3>
                   <ul className="space-y-2 text-sm">
                     <li>
-                      <span className="font-medium">Category:</span> {dish.category?.toUpperCase?.() || "—"}
+                      <span className="font-medium">Category:</span>{" "}
+                      {dish.category?.toUpperCase?.() || "—"}
                     </li>
                     <li>
-                      <span className="font-medium">Popularity:</span> {Number(dish.popularity ?? 0)}
+                      <span className="font-medium">Popularity:</span>{" "}
+                      {Number(dish.popularity ?? 0)}
                     </li>
                     {flavorList.length > 0 && (
                       <li>
-                        <span className="font-medium">Flavor:</span> {flavorList.join(", ")}
+                        <span className="font-medium">Flavor:</span>{" "}
+                        {flavorList.join(", ")}
                       </li>
                     )}
                   </ul>
@@ -249,7 +276,9 @@ export default function DishDetails() {
           {tab === "history" && (
             <div>
               <h2 className="mb-4">History & Notes</h2>
-              <p className="text-neutral-700">{(dish as any).history || "We’ll add historical notes soon."}</p>
+              <p className="text-neutral-700">
+                {(dish as any).history || "We’ll add historical notes soon."}
+              </p>
             </div>
           )}
 
@@ -295,7 +324,9 @@ export default function DishDetails() {
                       <div className="p-3">
                         <div className="flex items-center justify-between">
                           <div className="font-medium">{r.name}</div>
-                          <span className="text-xs px-2 py-1 rounded-full bg-neutral-100">{r.kind}</span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-neutral-100">
+                            {r.kind}
+                          </span>
                         </div>
                         <div className="text-sm text-neutral-600 line-clamp-2">{r.address}</div>
                         <div className="text-xs text-neutral-500 mt-1">

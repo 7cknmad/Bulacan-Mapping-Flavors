@@ -16,11 +16,8 @@ import {
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
-import { fetchRestaurants, type Restaurant, type Dish } from "../utils/api";
+import { fetchRestaurants, type Restaurant, type Dish, API } from "../utils/api";
 import DishCard from "../components/cards/DishCard";
-
-/** API base */
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
 /** Safely coerce DB JSON columns (which may arrive as strings) into arrays */
 function toArray(v: unknown): string[] {
@@ -39,7 +36,7 @@ function toArray(v: unknown): string[] {
 
 /** Basic fetch helper with readable errors */
 async function getJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(url, { credentials: "omit" });
   const txt = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status} ${txt.slice(0, 200)}`);
   try {
@@ -50,13 +47,16 @@ async function getJSON<T>(url: string): Promise<T> {
 }
 
 export default function RestaurantDetails() {
-  const { id: idOrSlug = "" } = useParams<{ id: string }>();
-  const [tab, setTab] = useState<"overview" | "menu" | "info">("overview");
+  // Accept either /restaurant/:slug or /restaurant/:id
+  const params = useParams();
+  const idOrSlug = (params.slug ?? params.id ?? "").toString();
   const isNumericId = /^\d+$/.test(idOrSlug);
+  const [tab, setTab] = useState<"overview" | "menu" | "info">("overview");
 
   /** 1) Load the restaurant by slug (exact) or numeric id (fallback) */
   const restaurantQ = useQuery<Restaurant>({
     queryKey: ["restaurant", idOrSlug],
+    enabled: !!idOrSlug,
     queryFn: async () => {
       // Try search by q= and exact-match slug
       const byQ = await fetchRestaurants({ q: idOrSlug });
@@ -64,7 +64,7 @@ export default function RestaurantDetails() {
 
       // If param looks like an id, fallback by id
       if (!r && isNumericId) {
-        const all = await fetchRestaurants(); // bounded to LIMIT 200 in API
+        const all = await fetchRestaurants();
         r = all.find((x) => String(x.id) === idOrSlug);
       }
       if (!r) throw new Error("Restaurant not found");
@@ -77,6 +77,7 @@ export default function RestaurantDetails() {
   /** 2) Load dishes linked to this restaurant via link table */
   const dishesQ = useQuery<Dish[]>({
     queryKey: ["restaurant-dishes", restaurantQ.data?.id],
+    enabled: !!restaurantQ.data?.id,
     queryFn: async () => {
       const rid = restaurantQ.data!.id;
       // Preferred route: GET /api/restaurants/:id/dishes
@@ -87,7 +88,6 @@ export default function RestaurantDetails() {
         return await getJSON<Dish[]>(`${API}/api/dishes?restaurantId=${rid}`);
       }
     },
-    enabled: !!restaurantQ.data?.id,
     staleTime: 60_000,
   });
 
@@ -204,40 +204,22 @@ export default function RestaurantDetails() {
           {/* Contact strip */}
           <div className="p-4 flex flex-wrap gap-4 text-sm">
             {r.phone && (
-              <a
-                href={`tel:${r.phone}`}
-                className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600"
-              >
+              <a href={`tel:${r.phone}`} className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600">
                 <PhoneIcon size={16} /> {r.phone}
               </a>
             )}
             {r.website && (
-              <a
-                href={r.website}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600"
-              >
+              <a href={r.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600">
                 <GlobeIcon size={16} /> Website
               </a>
             )}
             {r.facebook && (
-              <a
-                href={r.facebook}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600"
-              >
+              <a href={r.facebook} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600">
                 <FacebookIcon size={16} /> Facebook
               </a>
             )}
             {r.instagram && (
-              <a
-                href={r.instagram}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600"
-              >
+              <a href={r.instagram} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-neutral-700 hover:text-primary-600">
                 <InstagramIcon size={16} /> Instagram
               </a>
             )}
@@ -254,9 +236,7 @@ export default function RestaurantDetails() {
           <div className="flex overflow-x-auto hide-scrollbar">
             <button
               className={`px-6 py-3 font-medium text-sm whitespace-nowrap ${
-                tab === "overview"
-                  ? "text-primary-600 border-b-2 border-primary-600"
-                  : "text-neutral-600 hover:text-primary-600"
+                tab === "overview" ? "text-primary-600 border-b-2 border-primary-600" : "text-neutral-600 hover:text-primary-600"
               }`}
               onClick={() => setTab("overview")}
             >
@@ -264,9 +244,7 @@ export default function RestaurantDetails() {
             </button>
             <button
               className={`px-6 py-3 font-medium text-sm whitespace-nowrap ${
-                tab === "menu"
-                  ? "text-primary-600 border-b-2 border-primary-600"
-                  : "text-neutral-600 hover:text-primary-600"
+                tab === "menu" ? "text-primary-600 border-b-2 border-primary-600" : "text-neutral-600 hover:text-primary-600"
               }`}
               onClick={() => setTab("menu")}
             >
@@ -274,9 +252,7 @@ export default function RestaurantDetails() {
             </button>
             <button
               className={`px-6 py-3 font-medium text-sm whitespace-nowrap ${
-                tab === "info"
-                  ? "text-primary-600 border-b-2 border-primary-600"
-                  : "text-neutral-600 hover:text-primary-600"
+                tab === "info" ? "text-primary-600 border-b-2 border-primary-600" : "text-neutral-600 hover:text-primary-600"
               }`}
               onClick={() => setTab("info")}
             >
@@ -287,7 +263,7 @@ export default function RestaurantDetails() {
 
         {/* Content */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          {/* === OVERVIEW: only the featured dish; NO MAP here === */}
+          {/* OVERVIEW: only the featured dish */}
           {tab === "overview" && (
             <div>
               <h2 className="mb-3">About {r.name}</h2>
@@ -297,10 +273,7 @@ export default function RestaurantDetails() {
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                   <UtensilsIcon size={18} /> Featured Dish
                 </h3>
-                <button
-                  onClick={() => setTab("menu")}
-                  className="text-sm text-primary-600 hover:text-primary-700"
-                >
+                <button onClick={() => setTab("menu")} className="text-sm text-primary-600 hover:text-primary-700">
                   View Full Menu →
                 </button>
               </div>
@@ -319,7 +292,7 @@ export default function RestaurantDetails() {
             </div>
           )}
 
-          {/* === MENU: all linked dishes === */}
+          {/* MENU: all linked dishes */}
           {tab === "menu" && (
             <div>
               <h2 className="mb-4">Menu</h2>
@@ -347,9 +320,7 @@ export default function RestaurantDetails() {
                         src={d.image_url || "https://via.placeholder.com/160"}
                         alt={d.name}
                         className="w-24 h-24 object-cover rounded-md mr-4 bg-neutral-100"
-                        onError={(e) =>
-                          ((e.currentTarget.src = "https://via.placeholder.com/160"))
-                        }
+                        onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/160"))}
                       />
                       <div>
                         <h3 className="font-medium text-lg mb-1">{d.name}</h3>
@@ -367,7 +338,7 @@ export default function RestaurantDetails() {
             </div>
           )}
 
-          {/* === INFO: details + MAP goes here === */}
+          {/* INFO: details + MAP */}
           {tab === "info" && (
             <div>
               <h2 className="mb-4">Information</h2>
@@ -397,31 +368,19 @@ export default function RestaurantDetails() {
                     {r.website && (
                       <li className="flex items-center">
                         <GlobeIcon size={20} className="mr-2 text-neutral-500" />
-                        <a
-                          href={r.website}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-primary-600 hover:underline"
-                        >
+                        <a href={r.website} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">
                           {r.website}
                         </a>
                       </li>
                     )}
                   </ul>
+
                   <h3 className="text-lg font-semibold mt-6 mb-3">Details</h3>
                   <ul className="space-y-2 text-sm text-neutral-700">
-                    <li>
-                      <span className="font-medium">Kind:</span> {r.kind}
-                    </li>
-                    <li>
-                      <span className="font-medium">Price range:</span> {r.price_range || "—"}
-                    </li>
-                    <li>
-                      <span className="font-medium">Cuisine:</span> {toArray((r as any).cuisine_types).join(", ") || "—"}
-                    </li>
-                    <li>
-                      <span className="font-medium">Rating:</span> {Number(r.rating ?? 0).toFixed(1)}
-                    </li>
+                    <li><span className="font-medium">Kind:</span> {r.kind}</li>
+                    <li><span className="font-medium">Price range:</span> {r.price_range || "—"}</li>
+                    <li><span className="font-medium">Cuisine:</span> {toArray((r as any).cuisine_types).join(", ") || "—"}</li>
+                    <li><span className="font-medium">Rating:</span> {Number(r.rating ?? 0).toFixed(1)}</li>
                   </ul>
                 </div>
               </div>
