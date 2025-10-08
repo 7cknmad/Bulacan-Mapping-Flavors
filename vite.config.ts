@@ -4,6 +4,6 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  // 👇 must match your repo name EXACTLY (including caps)
+  // MUST match your repo name exactly (case-sensitive)
   base: '/Bulacan-Mapping-Flavors/',
 });
