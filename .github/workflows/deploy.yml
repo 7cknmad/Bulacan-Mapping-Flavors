@@ -24,8 +24,9 @@ jobs:
           node-version: 20
       - run: npm ci
       - name: Create env file (production)
+      - name: Build
         run: echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" > .env.production
-      - run: npm run build
+      - run: npm run build -- --base=/Bulacan-Mapping-Flavors/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
