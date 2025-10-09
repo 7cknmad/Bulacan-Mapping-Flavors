@@ -1,4 +1,3 @@
-// src/pages/AdminDashboard.tsx
 import React, { useState } from "react";
 import { Routes, Route, Link, useLocation } from "react-router-dom";
 import {
@@ -26,7 +25,6 @@ import {
   type Restaurant,
 } from "../utils/api";
 
-// Normalize JSONish fields safely
 function toArray(v: unknown): string[] {
   if (Array.isArray(v)) return v as string[];
   if (v == null) return [];
@@ -41,7 +39,6 @@ function toArray(v: unknown): string[] {
   return [];
 }
 
-/* ================= Overview ================= */
 const AdminOverview: React.FC = () => {
   const muniQ = useQuery<Municipality[]>({
     queryKey: ["admin-municipalities"],
@@ -187,7 +184,6 @@ const AdminOverview: React.FC = () => {
   );
 };
 
-/* ================= Dishes ================= */
 const AdminDishes: React.FC = () => {
   const dishesQ = useQuery<Dish[]>({
     queryKey: ["admin-dishes-table"],
@@ -272,7 +268,6 @@ const AdminDishes: React.FC = () => {
   );
 };
 
-/* ================= Restaurants ================= */
 const AdminRestaurants: React.FC = () => {
   const restosQ = useQuery<Restaurant[]>({
     queryKey: ["admin-restaurants-table"],
@@ -357,7 +352,7 @@ const AdminRestaurants: React.FC = () => {
   );
 };
 
-/* ================= Reviews (placeholder) ================= */
+
 const AdminReviews: React.FC = () => {
   return (
     <div>
@@ -369,7 +364,6 @@ const AdminReviews: React.FC = () => {
   );
 };
 
-/* ================= Analytics (placeholder) ================= */
 const AdminAnalytics: React.FC = () => {
   return (
     <div>

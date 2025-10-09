@@ -1,8 +1,6 @@
-/* PLEASE NOTE: THESE TAILWIND IMPORTS SHOULD NEVER BE DELETED */
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
-/* DO NOT DELETE THESE TAILWIND IMPORTS, OTHERWISE THE STYLING WILL NOT RENDER AT ALL */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap');
 @layer base {
   body {
@@ -69,21 +67,40 @@
   background-size: 200% 100%;
   animation: bm-shimmer 1.2s linear infinite;
 }
-.skeleton.rounded { border-radius: 0.75rem; }       /* rounded-xl look */
+.skeleton.rounded { border-radius: 0.75rem; }
 .skeleton.muted   { filter: saturate(0.85) contrast(0.98); }
 .input { @apply border rounded px-3 py-2 outline-none focus:ring-2 focus:ring-primary-300;}
 .btn { @apply inline-flex items-center px-4 py-2 rounded font-medium;}
 .btn-primary { @apply bg-primary-600 text-white hover:bg-primary-700;}
 .leaflet-control-container {
-  z-index: 500 !important; /* panel is z-[4000] */
+  z-index: 500 !important;
 }
 
-/* When the slide-out panel is open, soften controls and hide attribution to avoid overlap */
 .panel-open .leaflet-control-container {
   opacity: 0.35;
-  pointer-events: none; /* prevents stray clicks on zoom while panel is active */
+  pointer-events: none;
 }
 
 .panel-open .leaflet-bottom .leaflet-control-attribution {
-  display: none; /* hide the Leaflet/OSM watermark under the panel */
+  display: none;
+}
+.leaflet-control-container { z-index: 500 !important; }
+
+.panel-open .map-hud {
+  opacity: 0;
+  pointer-events: none;
+}
+.panel-open .leaflet-bottom .leaflet-control-attribution {
+  display: none;
+}
+.leaflet-control-container { z-index: 500 !important; }
+
+/* When the panel is open, soften/hide map chrome under it */
+.panel-open .leaflet-control-container {
+  opacity: 0.35;
+  pointer-events: none; /* remove if you still want zoom buttons clickable */
+}
+
+.panel-open .leaflet-bottom .leaflet-control-attribution {
+  display: none;
 }

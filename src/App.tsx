@@ -16,7 +16,7 @@ import RestaurantList from "./pages/RestaurantList";
 import RestaurantDetails from "./pages/RestaurantDetails";
 import Admin from "./pages/Admin";
 import AdminDashboard from "./pages/AdminDashboard";
-
+import ScrollToTop from "./components/common/ScrollToTop";
 const queryClient = new QueryClient();
 
 function Routed() {
@@ -42,6 +42,7 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <Router>
         <ErrorBoundary fallbackTitle="Something went wrong">
+          <ScrollToTop />   {/* Scroll to top on route change */}
           <Suspense fallback={<div className="p-6 text-center text-neutral-500">Loading…</div>}>
             <Layout>
               <Routed />

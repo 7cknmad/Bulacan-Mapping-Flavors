@@ -16,6 +16,7 @@ type UIMunicipality = {
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
+// Leaflet marker assets
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl:
@@ -58,8 +59,17 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
   const [selectedMunicipality, setSelectedMunicipality] = useState<UIMunicipality | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number]>(bulacanCenter);
   const [mapZoom, setMapZoom] = useState<number>(10);
-
   const mapRef = useRef<L.Map | null>(null);
+
+  const isOpen = !!selectedMunicipality;
+
+  // Lock background scroll when panel is open (especially on mobile)
+  useEffect(() => {
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [isOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,10 +130,10 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
 
   return (
     <div
-  className={`relative h-[500px] md:h-[600px] lg:h-[700px] w-full rounded-lg overflow-hidden shadow-lg ${
-    selectedMunicipality ? "panel-open" : ""
-  }`}
->
+      className={`relative h-[500px] md:h-[600px] lg:h-[700px] w-full rounded-lg overflow-hidden shadow-lg ${
+        isOpen ? "panel-open" : ""
+      }`}
+    >
       <MapContainer
         center={bulacanCenter}
         zoom={10}
@@ -159,25 +169,37 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
 
       <AnimatePresence initial={false} mode="wait">
         {selectedMunicipality && (
-          <div className="absolute top-4 right-4 w-full md:w-96 lg:w-[520px] z-[400]">
-            <ErrorBoundary fallbackTitle="Panel error">
-              {/* key ensures smooth cross-fade when switching between municipalities */}
-              <MunicipalityCard
-                key={selectedMunicipality.id}
-                municipality={selectedMunicipality as any}
-                onClose={resetMap}
-              />
-            </ErrorBoundary>
+          <div className="absolute top-4 right-4 w-full md:w-96 lg:w-[520px] z-[4000]">
+            {/* Scrollable panel wrapper */}
+            <div
+              className="max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain rounded-xl"
+              style={{ WebkitOverflowScrolling: "touch" }}
+            >
+              <ErrorBoundary fallbackTitle="Panel error">
+                <MunicipalityCard
+                  key={selectedMunicipality.id}
+                  municipality={selectedMunicipality as any}
+                  onClose={resetMap}
+                />
+              </ErrorBoundary>
+            </div>
           </div>
         )}
       </AnimatePresence>
 
-      <div className="absolute bottom-4 left-4 z-[400] bg-white px-4 py-2 rounded-md shadow-md">
-        <h3 className="font-medium text-sm">Bulacan Province</h3>
-        <p className="text-xs text-neutral-600">
-          {loading ? 'Loading municipalities…' : errorMsg ? 'Failed to load municipalities' : 'Click on markers to explore municipalities'}
-        </p>
-      </div>
+      {/* status chip — hide while panel is open */}
+      {!isOpen && (
+        <div className="map-hud absolute bottom-4 left-4 z-[200] bg-white px-4 py-2 rounded-md shadow-md">
+          <h3 className="font-medium text-sm">Bulacan Province</h3>
+          <p className="text-xs text-neutral-600">
+            {loading
+              ? 'Loading municipalities…'
+              : errorMsg
+              ? 'Failed to load municipalities'
+              : 'Click on markers to explore municipalities'}
+          </p>
+        </div>
+      )}
     </div>
   );
 };
