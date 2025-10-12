@@ -1,5 +1,5 @@
 // src/components/cards/MunicipalityCard.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { X as XIcon, MapPin, Utensils, ExternalLink, ChevronRight } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -89,7 +89,7 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
       setRestosError(null); setRestos(null);
       try {
         const data = await getJSON<Restaurant[]>(`${API}/api/restaurants?municipalityId=${municipality.id}`);
-        if (!cancel) setRestos((data || []).slice(0, 2)); // keep to 2 to avoid scroll
+        if (!cancel) setRestos((data || []).slice(0, 2)); // keep to 2 to avoid too much vertical space
       } catch (e: any) { if (!cancel) setRestosError(String(e?.message || e)); }
     })();
     return () => { cancel = true; };
@@ -168,8 +168,11 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
         </div>
       </div>
 
-      {/* BODY — no scroll, compact */}
-      <div className="px-5 pt-4 pb-5 flex-1 overflow-hidden">
+      {/* BODY — now scrollable */}
+      <div
+        className="px-5 pt-4 pb-5 flex-1 overflow-y-auto overscroll-contain"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
         <p className="text-[15px] leading-relaxed text-neutral-800/95 mb-5 max-w-prose">
           {shortDesc || "—"}
         </p>
