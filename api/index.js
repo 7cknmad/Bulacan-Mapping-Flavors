@@ -47,50 +47,42 @@ let pool;
   }
 })();
 
+// /api/dishes
 app.get('/api/dishes', async (req, res) => {
   try {
-    const { municipalityId, category, q, slug, limit } = req.query;
+    const { municipalityId, category, q, slug, signature, limit } = req.query;
+    const where = [], params = [];
 
-    const where = [];
-    const params = [];
+    if (municipalityId) { where.push('d.municipality_id = ?'); params.push(Number(municipalityId)); }
 
-    if (municipalityId) {
-      const id = Number(municipalityId);
-      if (!Number.isFinite(id)) return res.status(400).json({ error: 'municipalityId must be a number' });
-      where.push('d.municipality_id = ?');
-      params.push(id);
-    }
-
-    // category can be a single code or comma-separated list
     if (category) {
-      const parts = String(category).split(',').map(s => s.trim()).filter(Boolean);
+      const parts = String(category).split(',').map(s=>s.trim()).filter(Boolean);
       if (parts.length === 1) { where.push('c.code = ?'); params.push(parts[0]); }
-      else { where.push(`c.code IN (${parts.map(() => '?').join(',')})`); params.push(...parts); }
+      else { where.push(`c.code IN (${parts.map(()=>'?').join(',')})`); params.push(...parts); }
     }
 
+    if (signature === '1') where.push('d.is_signature = 1');
     if (slug) { where.push('d.slug = ?'); params.push(String(slug)); }
 
     if (q) {
-      where.push('(d.slug = ? OR MATCH(d.name, d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
+      where.push('(d.slug = ? OR MATCH(d.name,d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
       params.push(String(q), String(q), `%${String(q)}%`);
     }
 
     const lim = Math.min(Number(limit) || 200, 200);
 
     const sql = `
-      SELECT
-        d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
-        d.flavor_profile, d.ingredients, d.history,
-        m.id AS municipality_id, m.name AS municipality_name,
-        c.code AS category
+      SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
+             d.flavor_profile, d.ingredients, d.is_signature, d.panel_rank,
+             m.id AS municipality_id, m.name AS municipality_name,
+             c.code AS category
       FROM dishes d
       JOIN municipalities m ON m.id = d.municipality_id
       JOIN dish_categories c ON c.id = d.category_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY d.popularity DESC, d.name ASC
+      ORDER BY COALESCE(d.panel_rank, 999), d.popularity DESC, d.name ASC
       LIMIT ?
     `;
-
     const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
@@ -99,57 +91,33 @@ app.get('/api/dishes', async (req, res) => {
   }
 });
 
+
+// /api/restaurants
 app.get('/api/restaurants', async (req, res) => {
   try {
-    const { municipalityId, dishId, kind, q, slug } = req.query;
-
-    const where = [];
-    const params = [];
-
-    const joinDish = dishId
-      ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id = r.id AND dr.dish_id = ?'
-      : '';
+    const { municipalityId, dishId, kind, q, featured, limit } = req.query;
+    const where = [], params = [];
+    const joinDish = dishId ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id=r.id AND dr.dish_id=?' : '';
     if (dishId) params.push(Number(dishId));
 
-    if (municipalityId) {
-      const id = Number(municipalityId);
-      if (!Number.isFinite(id)) return res.status(400).json({ error: 'municipalityId must be a number' });
-      where.push('r.municipality_id = ?');
-      params.push(id);
-    }
+    if (municipalityId) { where.push('r.municipality_id = ?'); params.push(Number(municipalityId)); }
+    if (kind)          { where.push('r.kind = ?'); params.push(String(kind)); }
+    if (featured === '1') where.push('r.is_featured = 1');
+    if (q) { where.push('(MATCH(r.name,r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)'); params.push(String(q), `%${String(q)}%`); }
 
-    if (kind) {
-      where.push('r.kind = ?');
-      params.push(String(kind));
-    }
-
-    // NEW: exact slug filter
-    if (slug) {
-      where.push('r.slug = ?');
-      params.push(String(slug));
-    }
-
-    // IMPROVED: q matches slug OR FULLTEXT or LIKE on name
-    if (q) {
-      where.push('(r.slug = ? OR MATCH(r.name, r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)');
-      params.push(String(q), String(q), `%${String(q)}%`);
-    }
+    const lim = Math.min(Number(limit) || 200, 200);
 
     const sql = `
-      SELECT
-        r.id, r.name, r.slug, r.kind,
-        r.description, r.address, r.phone, r.website,
-        r.facebook, r.instagram, r.opening_hours,
-        r.price_range, r.cuisine_types, r.rating, r.lat, r.lng
+      SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
+             r.facebook, r.instagram, r.opening_hours, r.price_range, r.cuisine_types,
+             r.rating, r.lat, r.lng, r.is_featured, r.panel_rank
       FROM restaurants r
       ${joinDish}
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY r.rating DESC, r.name ASC
-      LIMIT 200
+      ORDER BY COALESCE(r.panel_rank, 999), r.rating DESC, r.name ASC
+      LIMIT ?
     `;
-
-    console.log('[GET] /api/restaurants where=', where.join(' AND ') || '(none)', 'params=', params);
-    const [rows] = await pool.query(sql, params);
+    const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
     console.error('RESTAURANTS ERROR:', e);
@@ -157,59 +125,67 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
+
+// /api/municipalities/:id/dishes
 app.get('/api/municipalities/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid municipality id' });
 
-    const { category, limit } = req.query;
-    const where = ['d.municipality_id = ?'];
-    const params = [id];
+    const { category, signature, limit } = req.query;
+    const where = ['d.municipality_id = ?']; const params = [id];
 
     if (category) {
-      const parts = String(category).split(',').map(s => s.trim()).filter(Boolean);
+      const parts = String(category).split(',').map(s=>s.trim()).filter(Boolean);
       if (parts.length === 1) { where.push('c.code = ?'); params.push(parts[0]); }
-      else { where.push(`c.code IN (${parts.map(() => '?').join(',')})`); params.push(...parts); }
+      else { where.push(`c.code IN (${parts.map(()=>'?').join(',')})`); params.push(...parts); }
     }
+    if (signature === '1') where.push('d.is_signature = 1');
 
     const lim = Math.min(Number(limit) || 200, 200);
 
     const sql = `
-      SELECT
-        d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
-        d.flavor_profile, d.ingredients,
-        m.id AS municipality_id, m.name AS municipality_name,
-        c.code AS category
+      SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
+             d.flavor_profile, d.ingredients, d.is_signature, d.panel_rank,
+             m.id AS municipality_id, m.name AS municipality_name,
+             c.code AS category
       FROM dishes d
       JOIN municipalities m ON m.id = d.municipality_id
       JOIN dish_categories c ON c.id = d.category_id
       WHERE ${where.join(' AND ')}
-      ORDER BY d.popularity DESC, d.name ASC
+      ORDER BY COALESCE(d.panel_rank, 999), d.popularity DESC, d.name ASC
       LIMIT ?
     `;
-
     const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
-    console.error('GET /api/municipalities/:id/dishes ERROR:', e);
+    console.error('MUNI DISHES ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch municipality dishes', detail: String(e?.message || e) });
   }
 });
 
+
+// /api/municipalities/:id/restaurants
 app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid municipality id' });
 
+    const { featured, limit } = req.query;
+    const where = ['r.municipality_id = ?']; const params = [id];
+    if (featured === '1') where.push('r.is_featured = 1');
+
+    const lim = Math.min(Number(limit) || 200, 200);
+
     const [rows] = await pool.query(
       `SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
               r.facebook, r.instagram, r.opening_hours, r.price_range, r.cuisine_types,
-              r.rating, r.lat, r.lng
+              r.rating, r.lat, r.lng, r.is_featured, r.panel_rank
        FROM restaurants r
-       WHERE r.municipality_id = ?
-       ORDER BY r.rating DESC, r.name ASC
-       LIMIT 200`,
-      [id]
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(r.panel_rank, 999), r.rating DESC, r.name ASC
+       LIMIT ?`,
+      [...params, lim]
     );
     res.json(rows);
   } catch (e) {
@@ -217,6 +193,7 @@ app.get('/api/municipalities/:id/restaurants', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch municipality restaurants', detail: String(e?.message || e) });
   }
 });
+
 
 app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
   try {

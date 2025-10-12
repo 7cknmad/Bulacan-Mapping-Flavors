@@ -69,6 +69,8 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
       setFoodsErr(null); setFoods(null);
       try {
         const data = await getJSON<Dish[]>(
+  `${API}/api/dishes?municipalityId=${municipality.id}&category=food&signature=1&limit=3`
+); getJSON<Dish[]>(
           `${API}/api/dishes?municipalityId=${municipality.id}&category=food&limit=3`
         );
         if (!cancel) setFoods(data);
@@ -84,8 +86,8 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
       setDelicsErr(null); setDelics(null);
       try {
         const data = await getJSON<Dish[]>(
-          `${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy&limit=3`
-        );
+  `${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy&signature=1&limit=3`
+);
         if (!cancel) setDelics(data);
       } catch (e:any) { if (!cancel) setDelicsErr(String(e?.message || e)); }
     })();
@@ -99,8 +101,8 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
       setRestosErr(null); setRestos(null);
       try {
         const data = await getJSON<Restaurant[]>(
-          `${API}/api/restaurants?municipalityId=${municipality.id}&limit=2`
-        );
+  `${API}/api/restaurants?municipalityId=${municipality.id}&featured=1&limit=2`
+);
         if (!cancel) setRestos(data.slice(0, 2));
       } catch (e:any) { if (!cancel) setRestosErr(String(e?.message || e)); }
     })();
