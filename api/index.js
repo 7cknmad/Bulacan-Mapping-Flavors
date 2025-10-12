@@ -49,7 +49,7 @@ let pool;
 
 app.get('/api/dishes', async (req, res) => {
   try {
-    const { municipalityId, category, q, slug } = req.query;
+    const { municipalityId, category, q, slug, limit } = req.query;
 
     const where = [];
     const params = [];
@@ -61,22 +61,21 @@ app.get('/api/dishes', async (req, res) => {
       params.push(id);
     }
 
+    // category can be a single code or comma-separated list
     if (category) {
-      where.push('c.code = ?');
-      params.push(String(category));
+      const parts = String(category).split(',').map(s => s.trim()).filter(Boolean);
+      if (parts.length === 1) { where.push('c.code = ?'); params.push(parts[0]); }
+      else { where.push(`c.code IN (${parts.map(() => '?').join(',')})`); params.push(...parts); }
     }
 
-    // NEW: exact slug filter
-    if (slug) {
-      where.push('d.slug = ?');
-      params.push(String(slug));
-    }
+    if (slug) { where.push('d.slug = ?'); params.push(String(slug)); }
 
-    // IMPROVED: q matches slug OR FULLTEXT or LIKE on name
     if (q) {
       where.push('(d.slug = ? OR MATCH(d.name, d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
       params.push(String(q), String(q), `%${String(q)}%`);
     }
+
+    const lim = Math.min(Number(limit) || 200, 200);
 
     const sql = `
       SELECT
@@ -89,11 +88,10 @@ app.get('/api/dishes', async (req, res) => {
       JOIN dish_categories c ON c.id = d.category_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY d.popularity DESC, d.name ASC
-      LIMIT 200
+      LIMIT ?
     `;
 
-    console.log('[GET] /api/dishes where=', where.join(' AND ') || '(none)', 'params=', params);
-    const [rows] = await pool.query(sql, params);
+    const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
     console.error('DISHES ERROR:', e);
@@ -162,9 +160,19 @@ app.get('/api/restaurants', async (req, res) => {
 app.get('/api/municipalities/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id)) {
-      return res.status(400).json({ error: 'Invalid municipality id' });
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid municipality id' });
+
+    const { category, limit } = req.query;
+    const where = ['d.municipality_id = ?'];
+    const params = [id];
+
+    if (category) {
+      const parts = String(category).split(',').map(s => s.trim()).filter(Boolean);
+      if (parts.length === 1) { where.push('c.code = ?'); params.push(parts[0]); }
+      else { where.push(`c.code IN (${parts.map(() => '?').join(',')})`); params.push(...parts); }
     }
+
+    const lim = Math.min(Number(limit) || 200, 200);
 
     const sql = `
       SELECT
@@ -175,18 +183,19 @@ app.get('/api/municipalities/:id/dishes', async (req, res) => {
       FROM dishes d
       JOIN municipalities m ON m.id = d.municipality_id
       JOIN dish_categories c ON c.id = d.category_id
-      WHERE d.municipality_id = ?
+      WHERE ${where.join(' AND ')}
       ORDER BY d.popularity DESC, d.name ASC
-      LIMIT 200
+      LIMIT ?
     `;
 
-    const [rows] = await pool.query(sql, [id]);
+    const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
     console.error('GET /api/municipalities/:id/dishes ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch municipality dishes', detail: String(e?.message || e) });
   }
 });
+
 app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   try {
     const id = Number(req.params.id);
