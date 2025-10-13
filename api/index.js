@@ -5,44 +5,36 @@ import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+
 dotenv.config();
+
 const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'dev-secret-change-me';
 const app = express();
 
-// Allow your frontend origins (Production + Local Dev)
-const allowedOrigins = new Set([
-  'http://localhost:5173',           // Vite dev
-  'https://7cknmad.github.io',       // GitHub Pages (the path /Bulacan-Mapping-Flavors is not part of Origin)
+// So secure cookies work behind reverse proxies/tunnels (Cloudflare/localhost.run/etc)
+app.set('trust proxy', 1);
+
+// ---- CORS (single source of truth) ----
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:5173',       // Vite dev
+  'https://7cknmad.github.io',   // GitHub Pages (path isn't part of the Origin)
 ]);
+
 app.use(cors({
-  origin: (origin, cb) => {
-    const allow = [
-      'http://localhost:5173',
-      'https://7cknmad.github.io'
-    ];
-    if (!origin || allow.includes(origin)) return cb(null, true);
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);                 // curl/Postman
+    if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
     cb(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-app.use(cookieParser());
-
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // curl/postman
-    const ok =
-      origin === 'https://7cknmad.github.io' ||
-      /^http:\/\/localhost:\d+$/.test(origin); // any localhost:*
-    return ok ? cb(null, true) : cb(new Error(`Not allowed by CORS: ${origin}`));
-  },
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+app.use(cookieParser());
 app.use(express.json());
 
+// ---- DB Pool ----
 const cfg = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
@@ -64,7 +56,55 @@ let pool;
   }
 })();
 
-// /api/dishes
+// ---- Auth helpers ----
+function signAdmin(user) {
+  return jwt.sign(
+    { sub: user.id, name: user.name, email: user.email, role: 'admin' },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+function requireAdmin(req, res, next) {
+  try {
+    const token = req.cookies?.admin_token;
+    if (!token) return res.status(401).json({ error: 'Auth required' });
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.admin = payload;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired session' });
+  }
+}
+
+// ---- Public endpoints ----
+
+// Health
+app.get('/api/health', async (_req, res) => {
+  try {
+    const [[row]] = await pool.query('SELECT 1 AS ok');
+    res.json({ ok: row.ok === 1, db: cfg.database });
+  } catch (e) {
+    console.error('HEALTH ERROR:', e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Municipalities
+app.get('/api/municipalities', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, name, slug, description, province, lat, lng, image_url
+       FROM municipalities
+       ORDER BY name`
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('MUNICIPALITIES ERROR:', e);
+    res.status(500).json({ error: 'Failed to fetch municipalities', detail: String(e?.message || e) });
+  }
+});
+
+// Dishes (list / search / by municipality via query)
 app.get('/api/dishes', async (req, res) => {
   try {
     const { municipalityId, category, q, slug, signature, limit } = req.query;
@@ -108,8 +148,7 @@ app.get('/api/dishes', async (req, res) => {
   }
 });
 
-
-// /api/restaurants
+// Restaurants (list / search / by municipality or dish via query)
 app.get('/api/restaurants', async (req, res) => {
   try {
     const { municipalityId, dishId, kind, q, featured, limit } = req.query;
@@ -142,8 +181,7 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
-
-// /api/municipalities/:id/dishes
+// By municipality helpers
 app.get('/api/municipalities/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -181,8 +219,6 @@ app.get('/api/municipalities/:id/dishes', async (req, res) => {
   }
 });
 
-
-// /api/municipalities/:id/restaurants
 app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -211,7 +247,7 @@ app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   }
 });
 
-
+// Cross refs
 app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
   try {
     const dishId = Number(req.params.dishId);
@@ -259,34 +295,132 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
   }
 });
 
-app.get('/api/health', async (req, res) => {
-  try {
-    const [[row]] = await pool.query('SELECT 1 AS ok');
-    res.json({ ok: row.ok === 1, db: cfg.database });
-  } catch (e) {
-    console.error('HEALTH ERROR:', e);
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
+// ---- Admin auth ----
+app.post('/api/admin/auth/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+  const [[user]] = await pool.query('SELECT * FROM admin_users WHERE email=? AND is_active=1', [email]);
+  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+
+  const ok = await bcrypt.compare(password, user.password_hash);
+  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+  const token = signAdmin(user);
+  res.cookie('admin_token', token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    maxAge: 7 * 24 * 3600 * 1000,
+  });
+  res.json({ ok: true, name: user.name, email: user.email });
 });
 
-app.get('/api/municipalities', async (req, res) => {
+app.post('/api/admin/auth/logout', (req, res) => {
+  res.clearCookie('admin_token', { httpOnly: true, secure: true, sameSite: 'none' });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/auth/me', requireAdmin, (req, res) => {
+  res.json({ ok: true, admin: req.admin });
+});
+
+// ---- Admin: search (for linking by name) ----
+app.get('/api/admin/search/dishes', requireAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const [rows] = await pool.query(
+    `SELECT d.id, d.name, d.slug, c.code AS category
+     FROM dishes d
+     JOIN dish_categories c ON c.id = d.category_id
+     WHERE (? = '' OR d.name LIKE CONCAT('%', ?, '%'))
+     ORDER BY d.name ASC
+     LIMIT 20`, [q, q]
+  );
+  res.json(rows);
+});
+
+app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const [rows] = await pool.query(
+    `SELECT id, name, slug
+     FROM restaurants
+     WHERE (? = '' OR name LIKE CONCAT('%', ?, '%'))
+     ORDER BY name ASC
+     LIMIT 20`, [q, q]
+  );
+  res.json(rows);
+});
+
+// ---- Admin: create / edit / link ----
+app.post('/api/admin/dishes', requireAdmin, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT id, name, slug, description, province, lat, lng, image_url
-       FROM municipalities
-       ORDER BY name`
+    const {
+      municipality_id, category_code, name, slug,
+      description = null, flavor_profile = [], ingredients = [],
+      history = null, image_url = null, popularity = 0, rating = 0
+    } = req.body;
+
+    if (!municipality_id || !category_code || !name || !slug) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const [[cat]] = await pool.query(`SELECT id FROM dish_categories WHERE code=?`, [category_code]);
+    if (!cat) return res.status(400).json({ error: 'Unknown category_code' });
+
+    const [r] = await pool.query(
+      `INSERT INTO dishes
+        (municipality_id, category_id, name, slug, description,
+         flavor_profile, ingredients, history, image_url, popularity, rating)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE
+         description=VALUES(description), flavor_profile=VALUES(flavor_profile),
+         ingredients=VALUES(ingredients), history=VALUES(history),
+         image_url=VALUES(image_url), popularity=VALUES(popularity), rating=VALUES(rating)`,
+      [municipality_id, cat.id, name, slug, description,
+       JSON.stringify(flavor_profile), JSON.stringify(ingredients), history,
+       image_url, popularity, rating]
     );
-    res.json(rows);
+    const id = r.insertId || (await pool.query(`SELECT id FROM dishes WHERE slug=?`, [slug]))[0][0]?.id;
+    res.json({ id });
   } catch (e) {
-    console.error('MUNICIPALITIES ERROR:', e);
-    res.status(500).json({ error: 'Failed to fetch municipalities', detail: String(e?.message || e) });
+    console.error(e);
+    res.status(500).json({ error: 'Failed to save dish', detail: String(e.message || e) });
   }
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
-// Create restaurant
-app.post('/api/admin/restaurants', async (req, res) => {
+app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const {
+    name, slug, municipality_id, category_code,
+    description, flavor_profile, ingredients, image_url,
+    popularity, rating, is_signature, panel_rank
+  } = req.body;
+
+  const sets = []; const params = [];
+  if (name != null) { sets.push('name=?'); params.push(name); }
+  if (slug != null) { sets.push('slug=?'); params.push(slug); }
+  if (municipality_id != null) { sets.push('municipality_id=?'); params.push(municipality_id); }
+  if (category_code != null) {
+    const [[cat]] = await pool.query('SELECT id FROM dish_categories WHERE code=?', [category_code]);
+    if (!cat) return res.status(400).json({ error: 'Invalid category_code' });
+    sets.push('category_id=?'); params.push(cat.id);
+  }
+  if (description !== undefined) { sets.push('description=?'); params.push(description); }
+  if (flavor_profile !== undefined) { sets.push('flavor_profile=?'); params.push(JSON.stringify(flavor_profile ?? null)); }
+  if (ingredients !== undefined) { sets.push('ingredients=?'); params.push(JSON.stringify(ingredients ?? null)); }
+  if (image_url !== undefined) { sets.push('image_url=?'); params.push(image_url); }
+  if (popularity != null) { sets.push('popularity=?'); params.push(popularity); }
+  if (rating != null) { sets.push('rating=?'); params.push(rating); }
+  if (is_signature != null) { sets.push('is_signature=?'); params.push(is_signature ? 1 : 0); }
+  if (panel_rank !== undefined) { sets.push('panel_rank=?'); params.push(panel_rank === null ? null : Number(panel_rank)); }
+
+  if (!sets.length) return res.json({ ok: true, updated: 0 });
+  params.push(id);
+  await pool.query(`UPDATE dishes SET ${sets.join(', ')} WHERE id=?`, params);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
   try {
     const {
       municipality_id, name, slug, kind = 'restaurant',
@@ -323,170 +457,6 @@ app.post('/api/admin/restaurants', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Failed to save restaurant', detail: String(e.message || e) });
   }
-});
-
-// Create dish
-app.post('/api/admin/dishes', async (req, res) => {
-  try {
-    const {
-      municipality_id, category_code, name, slug,
-      description = null, flavor_profile = [], ingredients = [],
-      history = null, image_url = null, popularity = 0, rating = 0
-    } = req.body;
-
-    if (!municipality_id || !category_code || !name || !slug) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const [[cat]] = await pool.query(`SELECT id FROM dish_categories WHERE code=?`, [category_code]);
-    if (!cat) return res.status(400).json({ error: 'Unknown category_code' });
-
-    const [r] = await pool.query(
-      `INSERT INTO dishes
-        (municipality_id, category_id, name, slug, description,
-         flavor_profile, ingredients, history, image_url, popularity, rating)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)
-       ON DUPLICATE KEY UPDATE
-         description=VALUES(description), flavor_profile=VALUES(flavor_profile),
-         ingredients=VALUES(ingredients), history=VALUES(history),
-         image_url=VALUES(image_url), popularity=VALUES(popularity), rating=VALUES(rating)`,
-      [municipality_id, cat.id, name, slug, description,
-       JSON.stringify(flavor_profile), JSON.stringify(ingredients), history,
-       image_url, popularity, rating]
-    );
-    const id = r.insertId || (await pool.query(`SELECT id FROM dishes WHERE slug=?`, [slug]))[0][0]?.id;
-    res.json({ id });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Failed to save dish', detail: String(e.message || e) });
-  }
-});
-
-// Link dish <-> restaurant
-app.post('/api/admin/dish-restaurants', async (req, res) => {
-  try {
-    const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body;
-    if (!dish_id || !restaurant_id) {
-      return res.status(400).json({ error: 'dish_id and restaurant_id are required' });
-    }
-    await pool.query(
-      `INSERT INTO dish_restaurants (dish_id, restaurant_id, price_note, availability)
-       VALUES (?,?,?,?)
-       ON DUPLICATE KEY UPDATE price_note=VALUES(price_note), availability=VALUES(availability)`,
-      [dish_id, restaurant_id, price_note, availability]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Failed to link dish & restaurant', detail: String(e.message || e) });
-  }
-});
-
-function signAdmin(user) {
-  return jwt.sign(
-    { sub: user.id, name: user.name, email: user.email, role: 'admin' },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
-}
-
-function requireAdmin(req, res, next) {
-  try {
-    const token = req.cookies?.admin_token;
-    if (!token) return res.status(401).json({ error: 'Auth required' });
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.admin = payload;
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: 'Invalid or expired session' });
-  }
-}
-
-app.post('/api/admin/auth/login', async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  const [[user]] = await pool.query('SELECT * FROM admin_users WHERE email=? AND is_active=1', [email]);
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-  const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const token = signAdmin(user);
-  // Secure cookie so GH Pages (https) can use it
-  res.cookie('admin_token', token, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',   // cross-site (GitHub Pages -> tunnel)
-    maxAge: 7 * 24 * 3600 * 1000
-  });
-  res.json({ ok: true, name: user.name, email: user.email });
-});
-
-app.post('/api/admin/auth/logout', (req, res) => {
-  res.clearCookie('admin_token', { httpOnly: true, secure: true, sameSite: 'none' });
-  res.json({ ok: true });
-});
-
-app.get('/api/admin/auth/me', requireAdmin, (req, res) => {
-  res.json({ ok: true, admin: req.admin });
-});
-
-// Search by name (use in async selects)
-app.get('/api/admin/search/dishes', requireAdmin, async (req, res) => {
-  const q = String(req.query.q || '').trim();
-  const [rows] = await pool.query(
-    `SELECT d.id, d.name, d.slug, c.code AS category
-     FROM dishes d
-     JOIN dish_categories c ON c.id = d.category_id
-     WHERE (? = '' OR d.name LIKE CONCAT('%', ?, '%'))
-     ORDER BY d.name ASC
-     LIMIT 20`, [q, q]
-  );
-  res.json(rows);
-});
-
-app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
-  const q = String(req.query.q || '').trim();
-  const [rows] = await pool.query(
-    `SELECT id, name, slug
-     FROM restaurants
-     WHERE (? = '' OR name LIKE CONCAT('%', ?, '%'))
-     ORDER BY name ASC
-     LIMIT 20`, [q, q]
-  );
-  res.json(rows);
-});
-
-// Create / Update (you already have POST routes; add PATCH & DELETE)
-app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const {
-    name, slug, municipality_id, category_code,
-    description, flavor_profile, ingredients, image_url,
-    popularity, rating, is_signature, panel_rank
-  } = req.body;
-
-  const sets = []; const params = [];
-  if (name != null) { sets.push('name=?'); params.push(name); }
-  if (slug != null) { sets.push('slug=?'); params.push(slug); }
-  if (municipality_id != null) { sets.push('municipality_id=?'); params.push(municipality_id); }
-  if (category_code != null) {
-    const [[cat]] = await pool.query('SELECT id FROM dish_categories WHERE code=?', [category_code]);
-    if (!cat) return res.status(400).json({ error: 'Invalid category_code' });
-    sets.push('category_id=?'); params.push(cat.id);
-  }
-  if (description !== undefined) { sets.push('description=?'); params.push(description); }
-  if (flavor_profile !== undefined) { sets.push('flavor_profile=?'); params.push(JSON.stringify(flavor_profile ?? null)); }
-  if (ingredients !== undefined) { sets.push('ingredients=?'); params.push(JSON.stringify(ingredients ?? null)); }
-  if (image_url !== undefined) { sets.push('image_url=?'); params.push(image_url); }
-  if (popularity != null) { sets.push('popularity=?'); params.push(popularity); }
-  if (rating != null) { sets.push('rating=?'); params.push(rating); }
-  if (is_signature != null) { sets.push('is_signature=?'); params.push(is_signature ? 1 : 0); }
-  if (panel_rank !== undefined) { sets.push('panel_rank=?'); params.push(panel_rank === null ? null : Number(panel_rank)); }
-
-  if (!sets.length) return res.json({ ok: true, updated: 0 });
-  params.push(id);
-  await pool.query(`UPDATE dishes SET ${sets.join(', ')} WHERE id=?`, params);
-  res.json({ ok: true });
 });
 
 app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
@@ -527,15 +497,27 @@ app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Link dish <-> restaurant (you already have)
+// link dish <-> restaurant (single, secured)
 app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
-  // dish_id, restaurant_id, price_note, availability
-  // (same as your existing route but add requireAdmin)
-  // ... keep as-is
-  res.json({ ok: true });
+  try {
+    const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body;
+    if (!dish_id || !restaurant_id) {
+      return res.status(400).json({ error: 'dish_id and restaurant_id are required' });
+    }
+    await pool.query(
+      `INSERT INTO dish_restaurants (dish_id, restaurant_id, price_note, availability)
+       VALUES (?,?,?,?)
+       ON DUPLICATE KEY UPDATE price_note=VALUES(price_note), availability=VALUES(availability)`,
+      [dish_id, restaurant_id, price_note, availability]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('LINK ERROR:', e);
+    res.status(500).json({ error: 'Failed to link dish & restaurant', detail: String(e.message || e) });
+  }
 });
 
-// High-level counts
+// ---- Admin: stats ----
 app.get('/api/admin/stats/overview', requireAdmin, async (_req, res) => {
   const [[row]] = await pool.query(`
     SELECT
@@ -548,7 +530,6 @@ app.get('/api/admin/stats/overview', requireAdmin, async (_req, res) => {
   res.json(row);
 });
 
-// Top dishes by link count (optionally by municipality/category)
 app.get('/api/admin/stats/top-dishes', requireAdmin, async (req, res) => {
   const { municipalityId, category, limit = 10 } = req.query;
   const where = []; const params = [];
@@ -570,7 +551,6 @@ app.get('/api/admin/stats/top-dishes', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// Top restaurants by dish count
 app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   const { municipalityId, limit = 10 } = req.query;
   const where = []; const params = [];
@@ -589,3 +569,7 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   );
   res.json(rows);
 });
+
+// ---- Start server ----
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
