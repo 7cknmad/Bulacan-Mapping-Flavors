@@ -2,8 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import cookieParser from 'cookie-parser';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 dotenv.config();
-
+const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'dev-secret-change-me';
 const app = express();
 
 // Allow your frontend origins (Production + Local Dev)
@@ -11,6 +14,20 @@ const allowedOrigins = new Set([
   'http://localhost:5173',           // Vite dev
   'https://7cknmad.github.io',       // GitHub Pages (the path /Bulacan-Mapping-Flavors is not part of Origin)
 ]);
+app.use(cors({
+  origin: (origin, cb) => {
+    const allow = [
+      'http://localhost:5173',
+      'https://7cknmad.github.io'
+    ];
+    if (!origin || allow.includes(origin)) return cb(null, true);
+    cb(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(cookieParser());
 
 app.use(cors({
   origin: (origin, cb) => {
@@ -363,4 +380,212 @@ app.post('/api/admin/dish-restaurants', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Failed to link dish & restaurant', detail: String(e.message || e) });
   }
+});
+
+function signAdmin(user) {
+  return jwt.sign(
+    { sub: user.id, name: user.name, email: user.email, role: 'admin' },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+
+function requireAdmin(req, res, next) {
+  try {
+    const token = req.cookies?.admin_token;
+    if (!token) return res.status(401).json({ error: 'Auth required' });
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.admin = payload;
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: 'Invalid or expired session' });
+  }
+}
+
+app.post('/api/admin/auth/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  const [[user]] = await pool.query('SELECT * FROM admin_users WHERE email=? AND is_active=1', [email]);
+  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  const ok = await bcrypt.compare(password, user.password_hash);
+  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+  const token = signAdmin(user);
+  // Secure cookie so GH Pages (https) can use it
+  res.cookie('admin_token', token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',   // cross-site (GitHub Pages -> tunnel)
+    maxAge: 7 * 24 * 3600 * 1000
+  });
+  res.json({ ok: true, name: user.name, email: user.email });
+});
+
+app.post('/api/admin/auth/logout', (req, res) => {
+  res.clearCookie('admin_token', { httpOnly: true, secure: true, sameSite: 'none' });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/auth/me', requireAdmin, (req, res) => {
+  res.json({ ok: true, admin: req.admin });
+});
+
+// Search by name (use in async selects)
+app.get('/api/admin/search/dishes', requireAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const [rows] = await pool.query(
+    `SELECT d.id, d.name, d.slug, c.code AS category
+     FROM dishes d
+     JOIN dish_categories c ON c.id = d.category_id
+     WHERE (? = '' OR d.name LIKE CONCAT('%', ?, '%'))
+     ORDER BY d.name ASC
+     LIMIT 20`, [q, q]
+  );
+  res.json(rows);
+});
+
+app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const [rows] = await pool.query(
+    `SELECT id, name, slug
+     FROM restaurants
+     WHERE (? = '' OR name LIKE CONCAT('%', ?, '%'))
+     ORDER BY name ASC
+     LIMIT 20`, [q, q]
+  );
+  res.json(rows);
+});
+
+// Create / Update (you already have POST routes; add PATCH & DELETE)
+app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const {
+    name, slug, municipality_id, category_code,
+    description, flavor_profile, ingredients, image_url,
+    popularity, rating, is_signature, panel_rank
+  } = req.body;
+
+  const sets = []; const params = [];
+  if (name != null) { sets.push('name=?'); params.push(name); }
+  if (slug != null) { sets.push('slug=?'); params.push(slug); }
+  if (municipality_id != null) { sets.push('municipality_id=?'); params.push(municipality_id); }
+  if (category_code != null) {
+    const [[cat]] = await pool.query('SELECT id FROM dish_categories WHERE code=?', [category_code]);
+    if (!cat) return res.status(400).json({ error: 'Invalid category_code' });
+    sets.push('category_id=?'); params.push(cat.id);
+  }
+  if (description !== undefined) { sets.push('description=?'); params.push(description); }
+  if (flavor_profile !== undefined) { sets.push('flavor_profile=?'); params.push(JSON.stringify(flavor_profile ?? null)); }
+  if (ingredients !== undefined) { sets.push('ingredients=?'); params.push(JSON.stringify(ingredients ?? null)); }
+  if (image_url !== undefined) { sets.push('image_url=?'); params.push(image_url); }
+  if (popularity != null) { sets.push('popularity=?'); params.push(popularity); }
+  if (rating != null) { sets.push('rating=?'); params.push(rating); }
+  if (is_signature != null) { sets.push('is_signature=?'); params.push(is_signature ? 1 : 0); }
+  if (panel_rank !== undefined) { sets.push('panel_rank=?'); params.push(panel_rank === null ? null : Number(panel_rank)); }
+
+  if (!sets.length) return res.json({ ok: true, updated: 0 });
+  params.push(id);
+  await pool.query(`UPDATE dishes SET ${sets.join(', ')} WHERE id=?`, params);
+  res.json({ ok: true });
+});
+
+app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const {
+    name, slug, kind, description, municipality_id, address,
+    phone, email, website, facebook, instagram, opening_hours,
+    price_range, cuisine_types, rating, lat, lng,
+    is_featured, panel_rank
+  } = req.body;
+
+  const sets = []; const params = [];
+  if (name != null) { sets.push('name=?'); params.push(name); }
+  if (slug != null) { sets.push('slug=?'); params.push(slug); }
+  if (kind != null) { sets.push('kind=?'); params.push(kind); }
+  if (description !== undefined) { sets.push('description=?'); params.push(description); }
+  if (municipality_id != null) { sets.push('municipality_id=?'); params.push(municipality_id); }
+  if (address != null) { sets.push('address=?'); params.push(address); }
+  if (phone !== undefined) { sets.push('phone=?'); params.push(phone); }
+  if (email !== undefined) { sets.push('email=?'); params.push(email); }
+  if (website !== undefined) { sets.push('website=?'); params.push(website); }
+  if (facebook !== undefined) { sets.push('facebook=?'); params.push(facebook); }
+  if (instagram !== undefined) { sets.push('instagram=?'); params.push(instagram); }
+  if (opening_hours !== undefined) { sets.push('opening_hours=?'); params.push(opening_hours); }
+  if (price_range != null) { sets.push('price_range=?'); params.push(price_range); }
+  if (cuisine_types !== undefined) { sets.push('cuisine_types=?'); params.push(JSON.stringify(cuisine_types ?? null)); }
+  if (rating != null) { sets.push('rating=?'); params.push(rating); }
+  if (lat != null && lng != null) {
+    sets.push('lat=?','lng=?','location_pt=ST_GeomFromText(CONCAT("POINT(", ?, " ", ?, ")"), 4326)');
+    params.push(lat, lng, lng, lat);
+  }
+  if (is_featured != null) { sets.push('is_featured=?'); params.push(is_featured ? 1 : 0); }
+  if (panel_rank !== undefined) { sets.push('panel_rank=?'); params.push(panel_rank === null ? null : Number(panel_rank)); }
+
+  if (!sets.length) return res.json({ ok: true, updated: 0 });
+  params.push(id);
+  await pool.query(`UPDATE restaurants SET ${sets.join(', ')} WHERE id=?`, params);
+  res.json({ ok: true });
+});
+
+// Link dish <-> restaurant (you already have)
+app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
+  // dish_id, restaurant_id, price_note, availability
+  // (same as your existing route but add requireAdmin)
+  // ... keep as-is
+  res.json({ ok: true });
+});
+
+// High-level counts
+app.get('/api/admin/stats/overview', requireAdmin, async (_req, res) => {
+  const [[row]] = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM municipalities) AS municipalities,
+      (SELECT COUNT(*) FROM dishes) AS dishes,
+      (SELECT COUNT(*) FROM dishes d JOIN dish_categories c ON c.id=d.category_id WHERE c.code='delicacy') AS delicacies,
+      (SELECT COUNT(*) FROM restaurants) AS restaurants,
+      (SELECT COUNT(*) FROM dish_restaurants) AS links
+  `);
+  res.json(row);
+});
+
+// Top dishes by link count (optionally by municipality/category)
+app.get('/api/admin/stats/top-dishes', requireAdmin, async (req, res) => {
+  const { municipalityId, category, limit = 10 } = req.query;
+  const where = []; const params = [];
+  if (municipalityId) { where.push('d.municipality_id=?'); params.push(Number(municipalityId)); }
+  if (category) { where.push('c.code=?'); params.push(String(category)); }
+
+  const [rows] = await pool.query(
+    `SELECT d.id, d.name, d.slug, c.code AS category,
+            COALESCE(d.panel_rank, 999) AS rank_hint,
+            COUNT(dr.restaurant_id) AS places
+     FROM dishes d
+     JOIN dish_categories c ON c.id=d.category_id
+     LEFT JOIN dish_restaurants dr ON dr.dish_id=d.id
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     GROUP BY d.id
+     ORDER BY rank_hint, places DESC, d.popularity DESC, d.name ASC
+     LIMIT ?`, [...params, Math.min(Number(limit)||10, 50)]
+  );
+  res.json(rows);
+});
+
+// Top restaurants by dish count
+app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
+  const { municipalityId, limit = 10 } = req.query;
+  const where = []; const params = [];
+  if (municipalityId) { where.push('r.municipality_id=?'); params.push(Number(municipalityId)); }
+
+  const [rows] = await pool.query(
+    `SELECT r.id, r.name, r.slug,
+            COALESCE(r.panel_rank, 999) AS rank_hint,
+            COUNT(dr.dish_id) AS dishes
+     FROM restaurants r
+     LEFT JOIN dish_restaurants dr ON dr.restaurant_id=r.id
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     GROUP BY r.id
+     ORDER BY rank_hint, dishes DESC, r.rating DESC, r.name ASC
+     LIMIT ?`, [...params, Math.min(Number(limit)||10, 50)]
+  );
+  res.json(rows);
 });
