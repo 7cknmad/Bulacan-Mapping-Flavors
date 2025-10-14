@@ -1,3 +1,4 @@
+// api/index.js
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -7,28 +8,34 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
-const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'dev-secret-change-me';
-const app = express();
-const params = new URLSearchParams();
-if (municipalityId) params.set("municipalityId", String(municipalityId));
-const qs = params.toString() ? `?${params.toString()}` : "";
 
-const overview = await adminGet<OverviewStats>(`/api/admin/stats/overview${qs}`);
-const topDishes = await adminGet<any[]>(`/api/admin/stats/top-dishes${qs}`);
-const topRestos = await adminGet<any[]>(`/api/admin/stats/top-restaurants${qs}`);
+const app = express();
 app.set('trust proxy', 1);
 
-// ---- CORS (single source of truth) ----
-const ALLOWED_ORIGINS = new Set([
-  'http://localhost:5173',       // Vite dev
-  'https://7cknmad.github.io',   // GitHub Pages (path isn't part of the Origin)
+// ====== Env / Security ======
+const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'dev-secret-change-me';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const COOKIE_SECURE = NODE_ENV === 'production'; // HTTPS required in prod
+const COOKIE_SAMESITE = COOKIE_SECURE ? 'none' : 'lax';
+
+// ====== CORS ======
+const baseAllowed = new Set([
+  'http://localhost:5173',         // Vite dev
+  'https://7cknmad.github.io',     // GitHub Pages origin (path not included)
 ]);
+
+// Allow adding more origins without code changes
+if (process.env.CORS_EXTRA_ORIGINS) {
+  for (const o of process.env.CORS_EXTRA_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)) {
+    baseAllowed.add(o);
+  }
+}
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);                 // curl/Postman
-    if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
-    cb(new Error(`Not allowed by CORS: ${origin}`));
+    if (!origin) return cb(null, true);            // curl/Postman
+    if (baseAllowed.has(origin)) return cb(null, true);
+    return cb(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
@@ -38,7 +45,7 @@ app.use(cors({
 app.use(cookieParser());
 app.use(express.json());
 
-// ---- DB Pool ----
+// ====== DB Pool ======
 const cfg = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
@@ -60,7 +67,7 @@ let pool;
   }
 })();
 
-// ---- Auth helpers ----
+// ====== Auth helpers ======
 function signAdmin(user) {
   return jwt.sign(
     { sub: user.id, name: user.name, email: user.email, role: 'admin' },
@@ -68,6 +75,7 @@ function signAdmin(user) {
     { expiresIn: '7d' }
   );
 }
+
 function requireAdmin(req, res, next) {
   try {
     const token = req.cookies?.admin_token;
@@ -80,7 +88,7 @@ function requireAdmin(req, res, next) {
   }
 }
 
-// ---- Public endpoints ----
+// ====== PUBLIC ENDPOINTS ======
 
 // Health
 app.get('/api/health', async (_req, res) => {
@@ -108,11 +116,11 @@ app.get('/api/municipalities', async (_req, res) => {
   }
 });
 
-// Dishes (list / search / by municipality via query)
+// Dishes (list/search)
 app.get('/api/dishes', async (req, res) => {
   try {
     const { municipalityId, category, q, slug, signature, limit } = req.query;
-    const where = [], params = [];
+    const where = []; const params = [];
 
     if (municipalityId) { where.push('d.municipality_id = ?'); params.push(Number(municipalityId)); }
 
@@ -134,7 +142,9 @@ app.get('/api/dishes', async (req, res) => {
 
     const sql = `
       SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
-             d.flavor_profile, d.ingredients, d.is_signature, d.panel_rank,
+             JSON_EXTRACT(d.flavor_profile, '$') AS flavor_profile,
+             JSON_EXTRACT(d.ingredients, '$')     AS ingredients,
+             d.is_signature, d.panel_rank,
              m.id AS municipality_id, m.name AS municipality_name,
              c.code AS category
       FROM dishes d
@@ -152,24 +162,31 @@ app.get('/api/dishes', async (req, res) => {
   }
 });
 
-// Restaurants (list / search / by municipality or dish via query)
+// Restaurants (list/search)
 app.get('/api/restaurants', async (req, res) => {
   try {
     const { municipalityId, dishId, kind, q, featured, limit } = req.query;
-    const where = [], params = [];
-    const joinDish = dishId ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id=r.id AND dr.dish_id=?' : '';
+    const where = []; const params = [];
+
+    const joinDish = dishId
+      ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id=r.id AND dr.dish_id=?'
+      : '';
     if (dishId) params.push(Number(dishId));
 
     if (municipalityId) { where.push('r.municipality_id = ?'); params.push(Number(municipalityId)); }
     if (kind)          { where.push('r.kind = ?'); params.push(String(kind)); }
     if (featured === '1') where.push('r.is_featured = 1');
-    if (q) { where.push('(MATCH(r.name,r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)'); params.push(String(q), `%${String(q)}%`); }
+    if (q) {
+      where.push('(MATCH(r.name, r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)');
+      params.push(String(q), `%${String(q)}%`);
+    }
 
     const lim = Math.min(Number(limit) || 200, 200);
 
     const sql = `
       SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
-             r.facebook, r.instagram, r.opening_hours, r.price_range, r.cuisine_types,
+             r.facebook, r.instagram, r.opening_hours, r.price_range,
+             JSON_EXTRACT(r.cuisine_types, '$') AS cuisine_types,
              r.rating, r.lat, r.lng, r.is_featured, r.panel_rank
       FROM restaurants r
       ${joinDish}
@@ -185,7 +202,7 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
-// By municipality helpers
+// Municipality → dishes
 app.get('/api/municipalities/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -205,7 +222,9 @@ app.get('/api/municipalities/:id/dishes', async (req, res) => {
 
     const sql = `
       SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
-             d.flavor_profile, d.ingredients, d.is_signature, d.panel_rank,
+             JSON_EXTRACT(d.flavor_profile, '$') AS flavor_profile,
+             JSON_EXTRACT(d.ingredients, '$')     AS ingredients,
+             d.is_signature, d.panel_rank,
              m.id AS municipality_id, m.name AS municipality_name,
              c.code AS category
       FROM dishes d
@@ -223,6 +242,7 @@ app.get('/api/municipalities/:id/dishes', async (req, res) => {
   }
 });
 
+// Municipality → restaurants
 app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -236,7 +256,8 @@ app.get('/api/municipalities/:id/restaurants', async (req, res) => {
 
     const [rows] = await pool.query(
       `SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
-              r.facebook, r.instagram, r.opening_hours, r.price_range, r.cuisine_types,
+              r.facebook, r.instagram, r.opening_hours, r.price_range,
+              JSON_EXTRACT(r.cuisine_types, '$') AS cuisine_types,
               r.rating, r.lat, r.lng, r.is_featured, r.panel_rank
        FROM restaurants r
        WHERE ${where.join(' AND ')}
@@ -259,7 +280,8 @@ app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
 
     const [rows] = await pool.query(
       `SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
-              r.facebook, r.instagram, r.opening_hours, r.price_range, r.cuisine_types,
+              r.facebook, r.instagram, r.opening_hours, r.price_range,
+              JSON_EXTRACT(r.cuisine_types, '$') AS cuisine_types,
               r.rating, r.lat, r.lng,
               dr.price_note, dr.availability
        FROM dish_restaurants dr
@@ -286,7 +308,7 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
               JSON_EXTRACT(d.ingredients, '$')     AS ingredients,
               dc.code AS category, d.municipality_id
        FROM dish_restaurants dr
-       INNER JOIN dishes d        ON d.id = dr.dish_id
+       INNER JOIN dishes d           ON d.id = dr.dish_id
        INNER JOIN dish_categories dc ON dc.id = d.category_id
        WHERE dr.restaurant_id = ?
        ORDER BY d.popularity DESC, d.name ASC`,
@@ -299,7 +321,7 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
   }
 });
 
-// ---- Admin auth ----
+// ====== ADMIN AUTH ======
 app.post('/api/admin/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
@@ -313,15 +335,15 @@ app.post('/api/admin/auth/login', async (req, res) => {
   const token = signAdmin(user);
   res.cookie('admin_token', token, {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: COOKIE_SECURE,
+    sameSite: COOKIE_SAMESITE,
     maxAge: 7 * 24 * 3600 * 1000,
   });
   res.json({ ok: true, name: user.name, email: user.email });
 });
 
 app.post('/api/admin/auth/logout', (req, res) => {
-  res.clearCookie('admin_token', { httpOnly: true, secure: true, sameSite: 'none' });
+  res.clearCookie('admin_token', { httpOnly: true, secure: COOKIE_SECURE, sameSite: COOKIE_SAMESITE });
   res.json({ ok: true });
 });
 
@@ -329,7 +351,7 @@ app.get('/api/admin/auth/me', requireAdmin, (req, res) => {
   res.json({ ok: true, admin: req.admin });
 });
 
-// ---- Admin: search (for linking by name) ----
+// ====== ADMIN SEARCH (by name for linking) ======
 app.get('/api/admin/search/dishes', requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim();
   const [rows] = await pool.query(
@@ -355,7 +377,8 @@ app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// ---- Admin: create / edit / link ----
+// ====== ADMIN CRUD ======
+// Create dish
 app.post('/api/admin/dishes', requireAdmin, async (req, res) => {
   try {
     const {
@@ -392,6 +415,7 @@ app.post('/api/admin/dishes', requireAdmin, async (req, res) => {
   }
 });
 
+// Edit dish
 app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const {
@@ -424,6 +448,19 @@ app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Delete dish (secured)
+app.delete('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    await pool.query('DELETE FROM dishes WHERE id=?', [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete dish', detail: String(e?.message || e) });
+  }
+});
+
+// Create restaurant
 app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
   try {
     const {
@@ -463,6 +500,7 @@ app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
   }
 });
 
+// Edit restaurant
 app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const {
@@ -501,7 +539,19 @@ app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// link dish <-> restaurant (single, secured)
+// Delete restaurant (secured)
+app.delete('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    await pool.query('DELETE FROM restaurants WHERE id=?', [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete restaurant', detail: String(e?.message || e) });
+  }
+});
+
+// Link dish <-> restaurant
 app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
   try {
     const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body;
@@ -521,7 +571,22 @@ app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
   }
 });
 
-// ---- Admin: stats ----
+// Unlink dish <-> restaurant (secured)
+app.delete('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
+  try {
+    const dishId = Number(req.query.dishId);
+    const restaurantId = Number(req.query.restaurantId);
+    if (!Number.isFinite(dishId) || !Number.isFinite(restaurantId)) {
+      return res.status(400).json({ error: 'dishId and restaurantId required' });
+    }
+    await pool.query('DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?', [dishId, restaurantId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to unlink', detail: String(e?.message || e) });
+  }
+});
+
+// ====== ADMIN STATS ======
 app.get('/api/admin/stats/overview', requireAdmin, async (_req, res) => {
   const [[row]] = await pool.query(`
     SELECT
@@ -574,44 +639,6 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// ---- Start server ----
+// ====== Start server ======
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
-// Delete a dish
-app.delete('/api/admin/dishes/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
-    await pool.query('DELETE FROM dishes WHERE id=?', [id]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to delete dish', detail: String(e?.message || e) });
-  }
-});
-
-// Delete a restaurant
-app.delete('/api/admin/restaurants/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
-    await pool.query('DELETE FROM restaurants WHERE id=?', [id]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to delete restaurant', detail: String(e?.message || e) });
-  }
-});
-
-// Unlink dish <-> restaurant
-app.delete('/api/admin/dish-restaurants', async (req, res) => {
-  try {
-    const dishId = Number(req.query.dishId);
-    const restaurantId = Number(req.query.restaurantId);
-    if (!Number.isFinite(dishId) || !Number.isFinite(restaurantId)) {
-      return res.status(400).json({ error: 'dishId and restaurantId required' });
-    }
-    await pool.query('DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?', [dishId, restaurantId]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to unlink', detail: String(e?.message || e) });
-  }
-});
