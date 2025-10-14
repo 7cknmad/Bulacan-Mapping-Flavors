@@ -10,29 +10,49 @@ import bcrypt from 'bcryptjs';
 dotenv.config();
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // so X-Forwarded-* from tunnel is respected
 
-// ====== Env / Security ======
-const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'dev-secret-change-me';
+/* =========================
+   ENV / Security flags
+   ========================= */
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const COOKIE_SECURE = NODE_ENV === 'production'; // HTTPS required in prod
-const COOKIE_SAMESITE = COOKIE_SECURE ? 'none' : 'lax';
+const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'dev-secret-change-me';
 
-// ====== CORS ======
-const baseAllowed = new Set([
-  'http://localhost:5173',         // Vite dev
-  'https://7cknmad.github.io',     // GitHub Pages origin (path not included)
+// If you run behind HTTPS (GitHub Pages + HTTPS tunnel), force secure cookies.
+const DEFAULT_COOKIE_SECURE = NODE_ENV === 'production';
+const COOKIE_SAMESITE = 'none'; // cross-site cookie required for GH Pages → tunnel
+
+function makeCookieOpts(req) {
+  const xfProto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
+  const secure =
+    process.env.FORCE_SECURE_COOKIES === '1' ||
+    xfProto === 'https' ||
+    DEFAULT_COOKIE_SECURE;
+
+  return {
+    httpOnly: true,
+    secure,           // must be true for SameSite=None
+    sameSite: COOKIE_SAMESITE,
+    path: '/',
+    maxAge: 7 * 24 * 3600 * 1000, // 7d
+  };
+}
+
+/* =========================
+   CORS (with credentials)
+   ========================= */
+const allowed = new Set([
+  'http://localhost:5173',       // Vite dev
+  'https://7cknmad.github.io',   // GitHub Pages origin (no path)
 ]);
 if (process.env.CORS_EXTRA_ORIGINS) {
-  for (const o of process.env.CORS_EXTRA_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)) {
-    baseAllowed.add(o);
-  }
+  process.env.CORS_EXTRA_ORIGINS.split(',').map(s => s.trim()).filter(Boolean).forEach(o => allowed.add(o));
 }
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    if (baseAllowed.has(origin)) return cb(null, true);
+    if (!origin) return cb(null, true);        // allow curl/postman
+    if (allowed.has(origin)) return cb(null, true);
     return cb(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true,
@@ -43,7 +63,9 @@ app.use(cors({
 app.use(cookieParser());
 app.use(express.json());
 
-// ====== DB Pool ======
+/* =========================
+   DB Pool
+   ========================= */
 const cfg = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
@@ -65,7 +87,9 @@ let pool;
   }
 })();
 
-// ====== Auth helpers ======
+/* =========================
+   Auth helpers
+   ========================= */
 function signAdmin(user) {
   return jwt.sign(
     { sub: user.id, name: user.name, email: user.email, role: 'admin' },
@@ -85,7 +109,9 @@ function requireAdmin(req, res, next) {
   }
 }
 
-// ====== PUBLIC ======
+/* =========================
+   PUBLIC
+   ========================= */
 app.get('/api/health', async (_req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
@@ -108,11 +134,11 @@ app.get('/api/municipalities', async (_req, res) => {
   }
 });
 
-// Dishes (search/list with signature/panel ordering)
 app.get('/api/dishes', async (req, res) => {
   try {
     const { municipalityId, category, q, slug, signature, limit } = req.query;
     const where = []; const params = [];
+
     if (municipalityId) { where.push('d.municipality_id = ?'); params.push(Number(municipalityId)); }
     if (category) {
       const parts = String(category).split(',').map(s=>s.trim()).filter(Boolean);
@@ -125,6 +151,7 @@ app.get('/api/dishes', async (req, res) => {
       where.push('(d.slug = ? OR MATCH(d.name,d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
       params.push(String(q), String(q), `%${String(q)}%`);
     }
+
     const lim = Math.min(Number(limit) || 200, 200);
     const sql = `
       SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
@@ -146,7 +173,6 @@ app.get('/api/dishes', async (req, res) => {
   }
 });
 
-// Restaurants (search/list with featured/panel ordering)
 app.get('/api/restaurants', async (req, res) => {
   try {
     const { municipalityId, dishId, kind, q, featured, limit } = req.query;
@@ -178,7 +204,6 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
-// Municipality scopers
 app.get('/api/municipalities/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -237,7 +262,6 @@ app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   }
 });
 
-// Cross refs
 app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
   try {
     const dishId = Number(req.params.dishId);
@@ -282,7 +306,9 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
   }
 });
 
-// ====== ADMIN AUTH ======
+/* =========================
+   ADMIN AUTH (cookie session)
+   ========================= */
 app.post('/api/admin/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
@@ -294,17 +320,12 @@ app.post('/api/admin/auth/login', async (req, res) => {
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 
   const token = signAdmin(user);
-  res.cookie('admin_token', token, {
-    httpOnly: true,
-    secure: COOKIE_SECURE,
-    sameSite: COOKIE_SAMESITE,
-    maxAge: 7 * 24 * 3600 * 1000,
-  });
+  res.cookie('admin_token', token, makeCookieOpts(req));   // ✅ cross-site OK
   res.json({ ok: true, name: user.name, email: user.email });
 });
 
-app.post('/api/admin/auth/logout', (_req, res) => {
-  res.clearCookie('admin_token', { httpOnly: true, secure: COOKIE_SECURE, sameSite: COOKIE_SAMESITE });
+app.post('/api/admin/auth/logout', (req, res) => {
+  res.clearCookie('admin_token', makeCookieOpts(req));      // ✅ clear properly
   res.json({ ok: true });
 });
 
@@ -312,7 +333,9 @@ app.get('/api/admin/auth/me', requireAdmin, (req, res) => {
   res.json({ ok: true, admin: req.admin });
 });
 
-// ====== ADMIN SEARCH (name-based linking) ======
+/* =========================
+   ADMIN: search for linking
+   ========================= */
 app.get('/api/admin/search/dishes', requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim();
   const [rows] = await pool.query(
@@ -325,6 +348,7 @@ app.get('/api/admin/search/dishes', requireAdmin, async (req, res) => {
   );
   res.json(rows);
 });
+
 app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim();
   const [rows] = await pool.query(
@@ -337,7 +361,9 @@ app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// ====== ADMIN CRUD ======
+/* =========================
+   ADMIN: CRUD Dishes
+   ========================= */
 app.post('/api/admin/dishes', requireAdmin, async (req, res) => {
   try {
     const {
@@ -416,6 +442,9 @@ app.delete('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
   }
 });
 
+/* =========================
+   ADMIN: CRUD Restaurants
+   ========================= */
 app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
   try {
     const {
@@ -503,7 +532,9 @@ app.delete('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Linking
+/* =========================
+   ADMIN: Linking
+   ========================= */
 app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
   try {
     const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body;
@@ -535,7 +566,9 @@ app.delete('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
   }
 });
 
-// ====== Admin stats + analytics aliases ======
+/* =========================
+   ADMIN: Stats / Analytics
+   ========================= */
 app.get('/api/admin/stats/overview', requireAdmin, async (_req, res) => {
   const [[row]] = await pool.query(`
     SELECT
@@ -586,17 +619,9 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// Aliases to match any older UI calls:
-app.get('/api/admin/analytics/summary', requireAdmin, async (req, res) => {
-  const [[row]] = await pool.query(`
-    SELECT
-      (SELECT COUNT(*) FROM municipalities) AS municipalities,
-      (SELECT COUNT(*) FROM dishes) AS dishes,
-      (SELECT COUNT(*) FROM dishes d JOIN dish_categories c ON c.id=d.category_id WHERE c.code='delicacy') AS delicacies,
-      (SELECT COUNT(*) FROM restaurants) AS restaurants,
-      (SELECT COUNT(*) FROM dish_restaurants) AS links
-  `);
-  res.json(row);
+// legacy aliases (if old UI still calls these)
+app.get('/api/admin/analytics/summary', requireAdmin, (req, res) => {
+  req.url = '/api/admin/stats/overview'; req.originalUrl = req.url; return app._router.handle(req, res);
 });
 app.get('/api/admin/analytics/top-dishes', requireAdmin, (req, res) => {
   req.url = '/api/admin/stats/top-dishes'; req.originalUrl = req.url; return app._router.handle(req, res);
@@ -605,6 +630,8 @@ app.get('/api/admin/analytics/top-restaurants', requireAdmin, (req, res) => {
   req.url = '/api/admin/stats/top-restaurants'; req.originalUrl = req.url; return app._router.handle(req, res);
 });
 
-// ====== Start ======
+/* =========================
+   Start server
+   ========================= */
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
