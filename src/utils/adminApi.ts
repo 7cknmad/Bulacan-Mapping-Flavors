@@ -1,7 +1,7 @@
 // src/utils/adminApi.ts
 import { API } from "./api";
 
-/** Low-level helpers (always send cookies) */
+/** Always send cookies to the API (admin runs cross-site from GH Pages) */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const url = path.startsWith("http") ? path : `${API}${path}`;
   const res = await fetch(url, {
@@ -22,9 +22,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const get = <T,>(p: string) => request<T>(p);
 const post = <T,>(p: string, body?: unknown) => request<T>(p, { method: "POST", body: JSON.stringify(body ?? {}) });
 const patch = <T,>(p: string, body?: unknown) => request<T>(p, { method: "PATCH", body: JSON.stringify(body ?? {}) });
-const del = <T,>(p: string) => request<T>(p, { method: "DELETE" });
+const del =  <T,>(p: string) => request<T>(p, { method: "DELETE" });
 
-/** Types for admin analytics */
+/** ====== Auth ====== */
+export const adminAuth = {
+  me:     () => get<{ ok: boolean; admin?: { name: string; email: string } }>("/api/admin/auth/me"),
+  login:  (email: string, password: string) => post<{ ok: true; name: string; email: string }>("/api/admin/auth/login", { email, password }),
+  logout: () => post<{ ok: true }>("/api/admin/auth/logout"),
+};
+
+/** ====== Analytics ====== */
 export type Overview = {
   municipalities: number;
   dishes: number;
@@ -35,20 +42,8 @@ export type Overview = {
 export type TopDish = { id: number; name: string; slug: string; category: string; rank_hint: number; places: number; };
 export type TopRestaurant = { id: number; name: string; slug: string; rank_hint: number; dishes: number; };
 
-/** Auth */
-export const adminAuth = {
-  me: () => get<{ ok: boolean; admin?: { name: string; email: string } }>("/api/admin/auth/me"),
-  login: (email: string, password: string) => post<{ ok: true; name: string; email: string }>("/api/admin/auth/login", { email, password }),
-  logout: () => post<{ ok: true }>("/api/admin/auth/logout"),
-};
-
-/** Analytics (tries new endpoints first; falls back to legacy aliases if necessary) */
 async function tryBoth<T>(primary: string, fallback: string) {
-  try {
-    return await get<T>(primary);
-  } catch {
-    return await get<T>(fallback);
-  }
+  try { return await get<T>(primary); } catch { return await get<T>(fallback); }
 }
 export const adminStats = {
   overview: () => tryBoth<Overview>("/api/admin/stats/overview", "/api/admin/analytics/summary"),
@@ -69,8 +64,70 @@ export const adminStats = {
   },
 };
 
-/** Admin data helpers (CRUD you already use elsewhere) */
+/** ====== Types from public API ====== */
+export type Municipality = {
+  id: number; name: string; slug: string; description: string|null;
+  province: string; lat: number; lng: number; image_url: string|null;
+};
+export type Dish = {
+  id: number; slug: string; name: string; description: string|null; image_url: string|null;
+  rating: number|null; popularity: number|null; flavor_profile: string[]|null; ingredients: string[]|null;
+  municipality_id: number; municipality_name: string; category: "food"|"delicacy"|"drink";
+  is_signature?: 0|1; panel_rank?: number|null;
+};
+export type Restaurant = {
+  id: number; name: string; slug: string; kind: 'restaurant'|'stall'|'store'|'dealer'|'market'|'home-based';
+  description: string|null; address: string; phone: string|null; website: string|null;
+  facebook: string|null; instagram: string|null; opening_hours: string|null;
+  price_range: "budget"|"moderate"|"expensive"; cuisine_types: string[]|null;
+  rating: number; lat: number; lng: number; is_featured?: 0|1; panel_rank?: number|null;
+};
+
+/** ====== Public list helpers (used by admin too) ====== */
+export const list = {
+  municipalities: () => get<Municipality[]>("/api/municipalities"),
+  dishes: (opts: { municipalityId?: number; category?: string; q?: string; slug?: string; signature?: boolean; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
+    if (opts.category) qs.set("category", opts.category);
+    if (opts.q) qs.set("q", opts.q);
+    if (opts.slug) qs.set("slug", opts.slug);
+    if (opts.signature) qs.set("signature", "1");
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<Dish[]>(`/api/dishes${suffix}`);
+  },
+  restaurants: (opts: { municipalityId?: number; dishId?: number; q?: string; featured?: boolean; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
+    if (opts.dishId) qs.set("dishId", String(opts.dishId));
+    if (opts.q) qs.set("q", opts.q);
+    if (opts.featured) qs.set("featured", "1");
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<Restaurant[]>(`/api/restaurants${suffix}`);
+  },
+  restaurantsByDish: (dishId: number) => get<(Restaurant & { price_note: string|null; availability: string })[]>(`/api/restaurants/by-dish/${dishId}`),
+  dishesByMunicipality: (municipalityId: number, category?: string, signature?: boolean) => {
+    const qs = new URLSearchParams();
+    if (category) qs.set("category", category);
+    if (signature) qs.set("signature", "1");
+    const suffix = `?${qs.toString()}`;
+    return get<Dish[]>(`/api/municipalities/${municipalityId}/dishes${suffix}`);
+  },
+  restaurantsByMunicipality: (municipalityId: number, featured?: boolean) => {
+    const qs = new URLSearchParams();
+    if (featured) qs.set("featured", "1");
+    const suffix = `?${qs.toString()}`;
+    return get<Restaurant[]>(`/api/municipalities/${municipalityId}/restaurants${suffix}`);
+  },
+  dishBySlug: async (slug: string) => (await list.dishes({ slug, limit: 1 }))[0] ?? null,
+  restaurantBySlug: async (slug: string) => (await list.restaurants({ q: slug, limit: 1 })).find(r => r.slug === slug) ?? null,
+};
+
+/** ====== Admin CRUD + Linking ====== */
 export const adminData = {
+  // live search
   searchDishes: (q: string) => get<Array<{ id: number; name: string; slug: string; category: string }>>(`/api/admin/search/dishes?q=${encodeURIComponent(q)}`),
   searchRestaurants: (q: string) => get<Array<{ id: number; name: string; slug: string }>>(`/api/admin/search/restaurants?q=${encodeURIComponent(q)}`),
 
