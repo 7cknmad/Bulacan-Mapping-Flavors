@@ -23,8 +23,6 @@ const baseAllowed = new Set([
   'http://localhost:5173',         // Vite dev
   'https://7cknmad.github.io',     // GitHub Pages origin (path not included)
 ]);
-
-// Allow adding more origins without code changes
 if (process.env.CORS_EXTRA_ORIGINS) {
   for (const o of process.env.CORS_EXTRA_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)) {
     baseAllowed.add(o);
@@ -33,7 +31,7 @@ if (process.env.CORS_EXTRA_ORIGINS) {
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);            // curl/Postman
+    if (!origin) return cb(null, true);
     if (baseAllowed.has(origin)) return cb(null, true);
     return cb(new Error(`Not allowed by CORS: ${origin}`));
   },
@@ -75,7 +73,6 @@ function signAdmin(user) {
     { expiresIn: '7d' }
   );
 }
-
 function requireAdmin(req, res, next) {
   try {
     const token = req.cookies?.admin_token;
@@ -88,20 +85,16 @@ function requireAdmin(req, res, next) {
   }
 }
 
-// ====== PUBLIC ENDPOINTS ======
-
-// Health
+// ====== PUBLIC ======
 app.get('/api/health', async (_req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
     res.json({ ok: row.ok === 1, db: cfg.database });
   } catch (e) {
-    console.error('HEALTH ERROR:', e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// Municipalities
 app.get('/api/municipalities', async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -111,35 +104,28 @@ app.get('/api/municipalities', async (_req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('MUNICIPALITIES ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch municipalities', detail: String(e?.message || e) });
   }
 });
 
-// Dishes (list/search)
+// Dishes (search/list with signature/panel ordering)
 app.get('/api/dishes', async (req, res) => {
   try {
     const { municipalityId, category, q, slug, signature, limit } = req.query;
     const where = []; const params = [];
-
     if (municipalityId) { where.push('d.municipality_id = ?'); params.push(Number(municipalityId)); }
-
     if (category) {
       const parts = String(category).split(',').map(s=>s.trim()).filter(Boolean);
       if (parts.length === 1) { where.push('c.code = ?'); params.push(parts[0]); }
       else { where.push(`c.code IN (${parts.map(()=>'?').join(',')})`); params.push(...parts); }
     }
-
     if (signature === '1') where.push('d.is_signature = 1');
     if (slug) { where.push('d.slug = ?'); params.push(String(slug)); }
-
     if (q) {
       where.push('(d.slug = ? OR MATCH(d.name,d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
       params.push(String(q), String(q), `%${String(q)}%`);
     }
-
     const lim = Math.min(Number(limit) || 200, 200);
-
     const sql = `
       SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
              JSON_EXTRACT(d.flavor_profile, '$') AS flavor_profile,
@@ -152,27 +138,21 @@ app.get('/api/dishes', async (req, res) => {
       JOIN dish_categories c ON c.id = d.category_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY COALESCE(d.panel_rank, 999), d.popularity DESC, d.name ASC
-      LIMIT ?
-    `;
+      LIMIT ?`;
     const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
-    console.error('DISHES ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch dishes', detail: String(e?.message || e) });
   }
 });
 
-// Restaurants (list/search)
+// Restaurants (search/list with featured/panel ordering)
 app.get('/api/restaurants', async (req, res) => {
   try {
     const { municipalityId, dishId, kind, q, featured, limit } = req.query;
     const where = []; const params = [];
-
-    const joinDish = dishId
-      ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id=r.id AND dr.dish_id=?'
-      : '';
+    const joinDish = dishId ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id=r.id AND dr.dish_id=?' : '';
     if (dishId) params.push(Number(dishId));
-
     if (municipalityId) { where.push('r.municipality_id = ?'); params.push(Number(municipalityId)); }
     if (kind)          { where.push('r.kind = ?'); params.push(String(kind)); }
     if (featured === '1') where.push('r.is_featured = 1');
@@ -180,9 +160,7 @@ app.get('/api/restaurants', async (req, res) => {
       where.push('(MATCH(r.name, r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)');
       params.push(String(q), `%${String(q)}%`);
     }
-
     const lim = Math.min(Number(limit) || 200, 200);
-
     const sql = `
       SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
              r.facebook, r.instagram, r.opening_hours, r.price_range,
@@ -192,34 +170,28 @@ app.get('/api/restaurants', async (req, res) => {
       ${joinDish}
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY COALESCE(r.panel_rank, 999), r.rating DESC, r.name ASC
-      LIMIT ?
-    `;
+      LIMIT ?`;
     const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
-    console.error('RESTAURANTS ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch restaurants', detail: String(e?.message || e) });
   }
 });
 
-// Municipality → dishes
+// Municipality scopers
 app.get('/api/municipalities/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid municipality id' });
-
     const { category, signature, limit } = req.query;
     const where = ['d.municipality_id = ?']; const params = [id];
-
     if (category) {
       const parts = String(category).split(',').map(s=>s.trim()).filter(Boolean);
       if (parts.length === 1) { where.push('c.code = ?'); params.push(parts[0]); }
       else { where.push(`c.code IN (${parts.map(()=>'?').join(',')})`); params.push(...parts); }
     }
     if (signature === '1') where.push('d.is_signature = 1');
-
     const lim = Math.min(Number(limit) || 200, 200);
-
     const sql = `
       SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
              JSON_EXTRACT(d.flavor_profile, '$') AS flavor_profile,
@@ -232,28 +204,22 @@ app.get('/api/municipalities/:id/dishes', async (req, res) => {
       JOIN dish_categories c ON c.id = d.category_id
       WHERE ${where.join(' AND ')}
       ORDER BY COALESCE(d.panel_rank, 999), d.popularity DESC, d.name ASC
-      LIMIT ?
-    `;
+      LIMIT ?`;
     const [rows] = await pool.query(sql, [...params, lim]);
     res.json(rows);
   } catch (e) {
-    console.error('MUNI DISHES ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch municipality dishes', detail: String(e?.message || e) });
   }
 });
 
-// Municipality → restaurants
 app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid municipality id' });
-
     const { featured, limit } = req.query;
     const where = ['r.municipality_id = ?']; const params = [id];
     if (featured === '1') where.push('r.is_featured = 1');
-
     const lim = Math.min(Number(limit) || 200, 200);
-
     const [rows] = await pool.query(
       `SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
               r.facebook, r.instagram, r.opening_hours, r.price_range,
@@ -267,7 +233,6 @@ app.get('/api/municipalities/:id/restaurants', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('MUNI RESTAURANTS ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch municipality restaurants', detail: String(e?.message || e) });
   }
 });
@@ -277,7 +242,6 @@ app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
   try {
     const dishId = Number(req.params.dishId);
     if (!Number.isFinite(dishId)) return res.status(400).json({ error: 'Invalid dish id' });
-
     const [rows] = await pool.query(
       `SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
               r.facebook, r.instagram, r.opening_hours, r.price_range,
@@ -292,7 +256,6 @@ app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('RESTAURANTS BY DISH ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch restaurants for dish', detail: String(e?.message || e) });
   }
 });
@@ -301,7 +264,6 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid restaurant id' });
-
     const [rows] = await pool.query(
       `SELECT d.id, d.slug, d.name, d.description, d.image_url, d.rating, d.popularity,
               JSON_EXTRACT(d.flavor_profile, '$') AS flavor_profile,
@@ -316,7 +278,6 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('RESTO DISHES ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch dishes for restaurant', detail: String(e?.message || e) });
   }
 });
@@ -342,7 +303,7 @@ app.post('/api/admin/auth/login', async (req, res) => {
   res.json({ ok: true, name: user.name, email: user.email });
 });
 
-app.post('/api/admin/auth/logout', (req, res) => {
+app.post('/api/admin/auth/logout', (_req, res) => {
   res.clearCookie('admin_token', { httpOnly: true, secure: COOKIE_SECURE, sameSite: COOKIE_SAMESITE });
   res.json({ ok: true });
 });
@@ -351,20 +312,19 @@ app.get('/api/admin/auth/me', requireAdmin, (req, res) => {
   res.json({ ok: true, admin: req.admin });
 });
 
-// ====== ADMIN SEARCH (by name for linking) ======
+// ====== ADMIN SEARCH (name-based linking) ======
 app.get('/api/admin/search/dishes', requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim();
   const [rows] = await pool.query(
     `SELECT d.id, d.name, d.slug, c.code AS category
      FROM dishes d
-     JOIN dish_categories c ON c.id = d.category_id
+     JOIN dish_categories c ON c.id=d.category_id
      WHERE (? = '' OR d.name LIKE CONCAT('%', ?, '%'))
      ORDER BY d.name ASC
      LIMIT 20`, [q, q]
   );
   res.json(rows);
 });
-
 app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim();
   const [rows] = await pool.query(
@@ -378,7 +338,6 @@ app.get('/api/admin/search/restaurants', requireAdmin, async (req, res) => {
 });
 
 // ====== ADMIN CRUD ======
-// Create dish
 app.post('/api/admin/dishes', requireAdmin, async (req, res) => {
   try {
     const {
@@ -410,12 +369,10 @@ app.post('/api/admin/dishes', requireAdmin, async (req, res) => {
     const id = r.insertId || (await pool.query(`SELECT id FROM dishes WHERE slug=?`, [slug]))[0][0]?.id;
     res.json({ id });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ error: 'Failed to save dish', detail: String(e.message || e) });
   }
 });
 
-// Edit dish
 app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const {
@@ -448,7 +405,6 @@ app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Delete dish (secured)
 app.delete('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -460,7 +416,6 @@ app.delete('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Create restaurant
 app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
   try {
     const {
@@ -495,12 +450,10 @@ app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
     const id = r.insertId || (await pool.query(`SELECT id FROM restaurants WHERE slug=?`, [slug]))[0][0]?.id;
     res.json({ id });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ error: 'Failed to save restaurant', detail: String(e.message || e) });
   }
 });
 
-// Edit restaurant
 app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const {
@@ -539,7 +492,6 @@ app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Delete restaurant (secured)
 app.delete('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -551,7 +503,7 @@ app.delete('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Link dish <-> restaurant
+// Linking
 app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
   try {
     const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body;
@@ -566,12 +518,9 @@ app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
     );
     res.json({ ok: true });
   } catch (e) {
-    console.error('LINK ERROR:', e);
     res.status(500).json({ error: 'Failed to link dish & restaurant', detail: String(e.message || e) });
   }
 });
-
-// Unlink dish <-> restaurant (secured)
 app.delete('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
   try {
     const dishId = Number(req.query.dishId);
@@ -586,7 +535,7 @@ app.delete('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
   }
 });
 
-// ====== ADMIN STATS ======
+// ====== Admin stats + analytics aliases ======
 app.get('/api/admin/stats/overview', requireAdmin, async (_req, res) => {
   const [[row]] = await pool.query(`
     SELECT
@@ -604,7 +553,6 @@ app.get('/api/admin/stats/top-dishes', requireAdmin, async (req, res) => {
   const where = []; const params = [];
   if (municipalityId) { where.push('d.municipality_id=?'); params.push(Number(municipalityId)); }
   if (category) { where.push('c.code=?'); params.push(String(category)); }
-
   const [rows] = await pool.query(
     `SELECT d.id, d.name, d.slug, c.code AS category,
             COALESCE(d.panel_rank, 999) AS rank_hint,
@@ -624,7 +572,6 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   const { municipalityId, limit = 10 } = req.query;
   const where = []; const params = [];
   if (municipalityId) { where.push('r.municipality_id=?'); params.push(Number(municipalityId)); }
-
   const [rows] = await pool.query(
     `SELECT r.id, r.name, r.slug,
             COALESCE(r.panel_rank, 999) AS rank_hint,
@@ -639,9 +586,8 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// --- Analytics aliases (match the UI paths that were 404) ---
+// Aliases to match any older UI calls:
 app.get('/api/admin/analytics/summary', requireAdmin, async (req, res) => {
-  // reuse stats/overview
   const [[row]] = await pool.query(`
     SELECT
       (SELECT COUNT(*) FROM municipalities) AS municipalities,
@@ -652,20 +598,13 @@ app.get('/api/admin/analytics/summary', requireAdmin, async (req, res) => {
   `);
   res.json(row);
 });
-
-app.get('/api/admin/analytics/top-dishes', requireAdmin, async (req, res) => {
-  req.url = '/api/admin/stats/top-dishes'; // delegate
-  req.originalUrl = req.url;
-  return app._router.handle(req, res);
+app.get('/api/admin/analytics/top-dishes', requireAdmin, (req, res) => {
+  req.url = '/api/admin/stats/top-dishes'; req.originalUrl = req.url; return app._router.handle(req, res);
+});
+app.get('/api/admin/analytics/top-restaurants', requireAdmin, (req, res) => {
+  req.url = '/api/admin/stats/top-restaurants'; req.originalUrl = req.url; return app._router.handle(req, res);
 });
 
-app.get('/api/admin/analytics/top-restaurants', requireAdmin, async (req, res) => {
-  req.url = '/api/admin/stats/top-restaurants'; // delegate
-  req.originalUrl = req.url;
-  return app._router.handle(req, res);
-});
-
-// ====== Start server ======
+// ====== Start ======
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
-
