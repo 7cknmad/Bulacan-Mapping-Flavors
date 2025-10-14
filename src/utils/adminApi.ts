@@ -64,7 +64,7 @@ export const adminStats = {
   },
 };
 
-/** ====== Types from public API ====== */
+/** ====== Public list helpers (used by admin too) ====== */
 export type Municipality = {
   id: number; name: string; slug: string; description: string|null;
   province: string; lat: number; lng: number; image_url: string|null;
@@ -83,7 +83,6 @@ export type Restaurant = {
   rating: number; lat: number; lng: number; is_featured?: 0|1; panel_rank?: number|null;
 };
 
-/** ====== Public list helpers (used by admin too) ====== */
 export const list = {
   municipalities: () => get<Municipality[]>("/api/municipalities"),
   dishes: (opts: { municipalityId?: number; category?: string; q?: string; slug?: string; signature?: boolean; limit?: number } = {}) => {
@@ -125,9 +124,9 @@ export const adminData = {
   searchDishes: (q: string) => get<Array<{ id: number; name: string; slug: string; category: string }>>(`/api/admin/search/dishes?q=${encodeURIComponent(q)}`),
   searchRestaurants: (q: string) => get<Array<{ id: number; name: string; slug: string }>>(`/api/admin/search/restaurants?q=${encodeURIComponent(q)}`),
 
-  // Dishes — UPDATE via POST (upsert) so it works even if PATCH not implemented
+  // Dishes — UPDATE via POST (upsert)
   createDish: (payload: any) => post<{ id: number }>("/api/admin/dishes", payload),
-  updateDish: (id: number, payload: any) => post<{ id: number }>("/api/admin/dishes", { ...payload }), // relies on slug upsert
+  updateDish: (id: number, payload: any) => post<{ id: number }>("/api/admin/dishes", { ...payload }),
   deleteDish: (id: number) => del<{ ok: true }>(`/api/admin/dishes/${id}`),
 
   // Restaurants — UPDATE via POST (upsert)
@@ -140,4 +139,19 @@ export const adminData = {
     post<{ ok: true }>("/api/admin/dish-restaurants", { dish_id, restaurant_id, price_note, availability }),
   unlinkDishRestaurant: (dishId: number, restaurantId: number) =>
     del<{ ok: true }>(`/api/admin/dish-restaurants?dishId=${dishId}&restaurantId=${restaurantId}`),
+
+  // Image upload (expects backend route to return {url})
+  async uploadImage(file: File): Promise<{ url: string }> {
+    const fd = new FormData();
+    fd.append("file", file);
+    const url = `${API}/api/admin/upload-image`;
+    const res = await fetch(url, { method: "POST", body: fd, credentials: "include" });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Upload failed: HTTP ${res.status} ${txt.slice(0, 160)}`);
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!json?.url) throw new Error("Upload endpoint did not return a {url}. Add /api/admin/upload-image.");
+    return { url: json.url };
+  },
 };

@@ -619,6 +619,12 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
+app.post('/api/admin/upload-image', async (req, res) => {
+  // TODO: parse multipart via multer or busboy and upload to Cloudinary/S3.
+  // For now, return a placeholder so UI flows work.
+  res.json({ url: 'https://via.placeholder.com/640x360?text=Uploaded' });
+});
+
 // legacy aliases (if old UI still calls these)
 app.get('/api/admin/analytics/summary', requireAdmin, (req, res) => {
   req.url = '/api/admin/stats/overview'; req.originalUrl = req.url; return app._router.handle(req, res);

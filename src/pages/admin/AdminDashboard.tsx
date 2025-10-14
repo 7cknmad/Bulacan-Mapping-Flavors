@@ -1,15 +1,18 @@
 // src/pages/admin/AdminDashboard.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  adminStats, adminData, list,
+  adminStats, adminData, list, adminAuth,
   type Municipality, type Dish, type Restaurant
 } from "../../utils/adminApi";
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from "recharts";
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, CartesianGrid, Legend
+} from "recharts";
+import { useBeforeUnload, useNavigate } from "react-router-dom";
 
 /* ========== helpers ========== */
 const slugify = (s: string) =>
@@ -102,10 +105,50 @@ function SearchBox({ placeholder, value, onChange }: { placeholder: string; valu
   );
 }
 
+/* ========== Confirm navigation (HashRouter friendly) ========== */
+function useConfirmLeave(when: boolean) {
+  // browser reload/close
+  useBeforeUnload(when, { message: "You have unsaved changes. Leave this page?" });
+
+  // in-app route change with HashRouter
+  const lastHash = useRef(window.location.hash);
+  useEffect(() => {
+    function onHashChange(e: HashChangeEvent) {
+      if (!when) { lastHash.current = window.location.hash; return; }
+      const proceed = confirm("You have unsaved changes. Leave this page?");
+      if (!proceed) {
+        // revert navigation
+        setTimeout(() => {
+          window.location.hash = lastHash.current || "#/";
+        }, 0);
+      } else {
+        lastHash.current = window.location.hash;
+      }
+    }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [when]);
+}
+
 /* ========== Main ========== */
 export default function AdminDashboard() {
   const [tab, setTab] = useState<"analytics"|"dishes"|"restaurants"|"linking"|"curation">("analytics");
   const qc = useQueryClient();
+  const navigate = useNavigate();
+
+  /* ---- Banner + Logout ---- */
+  const [adminName, setAdminName] = useState<string>("Admin");
+  useEffect(() => {
+    adminAuth.me().then(r => {
+      if (r?.admin?.name) setAdminName(r.admin.name);
+    }).catch(() => {});
+  }, []);
+  function doLogout() {
+    adminAuth.logout().finally(() => {
+      qc.clear();
+      navigate("/admin/login");
+    });
+  }
 
   /* ---- Shared muni list ---- */
   const muniQ = useQuery<Municipality[]>({
@@ -152,6 +195,11 @@ export default function AdminDashboard() {
     return ds.map((d) => ({ name: d.name, value: Math.max(1, d.places), id: d.id }));
   }, [topDishesQ.data]);
 
+  const topRestBar = useMemo(() => {
+    const rs = topRestaurantsQ.data ?? [];
+    return rs.map((r) => ({ name: r.name, dishes: Math.max(1, r.dishes) }));
+  }, [topRestaurantsQ.data]);
+
   /* =========================
      DISHES — CRUD + muni filter + always list
   ========================== */
@@ -180,6 +228,7 @@ export default function AdminDashboard() {
     },
   });
   const [autoSlugDish, setAutoSlugDish] = useState(true);
+  const [dishImagePreview, setDishImagePreview] = useState<string>("");
 
   function loadDishById(id: number) {
     const full = (dishesListQ.data ?? []).find(d => d.id === id);
@@ -197,6 +246,7 @@ export default function AdminDashboard() {
       popularity: full.popularity ?? 0,
       rating: full.rating ?? 0,
     });
+    setDishImagePreview(full.image_url ?? "");
   }
 
   function saveDish(values: DishForm) {
@@ -216,18 +266,31 @@ export default function AdminDashboard() {
     action.then(() => {
       qc.invalidateQueries({ queryKey: ["admin:list:dishes"] });
       alert("Dish saved.");
+      dishForm.reset({ ...values, id: values.id ?? -1 }); // keep showing as edited
     }).catch(e => alert(e.message));
   }
 
   function deleteDish() {
     const v = dishForm.getValues();
     if (!v.id) return;
-    if (!confirm("Delete this dish?")) return;
+    if (!confirm(`Delete dish "${v.name}"?`)) return;
     adminData.deleteDish(v.id).then(() => {
       dishForm.reset();
+      setDishImagePreview("");
       qc.invalidateQueries({ queryKey: ["admin:list:dishes"] });
       alert("Dish deleted.");
     }).catch(e => alert("Delete endpoint not available on API. Please add DELETE /api/admin/dishes/:id"));
+  }
+
+  async function uploadDishImage(file?: File | null) {
+    if (!file) return;
+    try {
+      const { url } = await adminData.uploadImage(file);
+      dishForm.setValue("image_url", url, { shouldDirty: true });
+      setDishImagePreview(url);
+    } catch (e: any) {
+      alert(e.message || "Upload failed. Ensure /api/admin/upload-image returns {url}.");
+    }
   }
 
   /* =========================
@@ -258,6 +321,7 @@ export default function AdminDashboard() {
     },
   });
   const [autoSlugRest, setAutoSlugRest] = useState(true);
+  const [restImagePreview, setRestImagePreview] = useState<string>("");
 
   function loadRestaurantById(id: number) {
     const full = (restaurantsListQ.data ?? []).find(r => r.id === id);
@@ -278,6 +342,8 @@ export default function AdminDashboard() {
       opening_hours: full.opening_hours ?? "",
       rating: full.rating ?? 0,
     } as any);
+    // preview: we don't store main image for restaurants yet; keep placeholder
+    setRestImagePreview("");
   }
 
   function saveRestaurant(values: RestaurantForm) {
@@ -304,18 +370,32 @@ export default function AdminDashboard() {
     action.then(() => {
       qc.invalidateQueries({ queryKey: ["admin:list:restaurants"] });
       alert("Restaurant saved.");
+      restForm.reset({ ...values, id: values.id ?? -1 } as any);
     }).catch(e => alert(e.message));
   }
 
   function deleteRestaurant() {
     const v = restForm.getValues();
     if (!v.id) return;
-    if (!confirm("Delete this restaurant?")) return;
+    if (!confirm(`Delete restaurant "${v.name}"?`)) return;
     adminData.deleteRestaurant(v.id).then(() => {
       restForm.reset();
+      setRestImagePreview("");
       qc.invalidateQueries({ queryKey: ["admin:list:restaurants"] });
       alert("Restaurant deleted.");
     }).catch(e => alert("Delete endpoint not available on API. Please add DELETE /api/admin/restaurants/:id"));
+  }
+
+  async function uploadRestaurantImage(file?: File | null) {
+    if (!file) return;
+    try {
+      const { url } = await adminData.uploadImage(file);
+      // If later you add a column (e.g., hero_image_url), set it here.
+      alert(`Uploaded. URL: ${url}\n(Add a hero_image_url column to restaurants to store this.)`);
+      setRestImagePreview(url);
+    } catch (e: any) {
+      alert(e.message || "Upload failed. Ensure /api/admin/upload-image returns {url}.");
+    }
   }
 
   /* =========================
@@ -372,7 +452,6 @@ export default function AdminDashboard() {
   const [delicacyRanks, setDelicacyRanks] = useState<Record<number, number>>({});
   const [restRanks, setRestRanks] = useState<Record<number, number>>({});
 
-  // initialize ranks from any existing panel_rank/is_signature flags if present in payload
   useEffect(() => {
     const f: Record<number, number> = {};
     dishFood.forEach(d => { if ((d as any).panel_rank != null && (d as any).is_signature) f[d.id] = (d as any).panel_rank; });
@@ -434,11 +513,29 @@ export default function AdminDashboard() {
     alert("Curation saved.");
   }
 
+  /* ===== Unsaved-changes guard (forms + curation) ===== */
+  const isDirty =
+    dishForm.formState.isDirty ||
+    restForm.formState.isDirty ||
+    Object.keys(foodRanks).length > 0 ||
+    Object.keys(delicacyRanks).length > 0 ||
+    Object.keys(restRanks).length > 0;
+  useConfirmLeave(isDirty);
+
   /* =========================
      RENDER
   ========================== */
   return (
     <main className="mx-auto max-w-7xl p-6">
+      {/* Banner/Header */}
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Admin Dashboard</h1>
+          <div className="text-sm text-neutral-500">Signed in as <span className="font-medium">{adminName}</span></div>
+        </div>
+        <button onClick={doLogout} className="px-3 py-2 rounded border hover:bg-neutral-50">Logout</button>
+      </div>
+
       {/* Tabs */}
       <div className="mb-6 flex flex-wrap gap-2">
         {[
@@ -450,7 +547,10 @@ export default function AdminDashboard() {
         ].map(([k,label]) => (
           <button
             key={k}
-            onClick={() => setTab(k as any)}
+            onClick={() => {
+              if (isDirty && !confirm("You have unsaved changes. Switch tabs anyway?")) return;
+              setTab(k as any);
+            }}
             className={`px-3 py-2 rounded border ${tab===k ? "bg-primary-600 text-white border-primary-600" : "bg-white hover:bg-neutral-50"}`}
           >
             {label}
@@ -496,6 +596,7 @@ export default function AdminDashboard() {
                 <div className="h-64">
                   <ResponsiveContainer>
                     <BarChart data={invData}>
+                      <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="name" />
                       <YAxis allowDecimals={false} />
                       <Tooltip />
@@ -513,7 +614,22 @@ export default function AdminDashboard() {
                         {pieData.map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]} />))}
                       </Pie>
                       <Tooltip />
+                      <Legend />
                     </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div className="rounded-lg border p-4 lg:col-span-2">
+                <div className="font-medium mb-2">Top Restaurants (by dishes offered)</div>
+                <div className="h-72">
+                  <ResponsiveContainer>
+                    <BarChart data={topRestBar}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" interval={0} angle={-20} textAnchor="end" height={70}/>
+                      <YAxis allowDecimals={false} />
+                      <Tooltip />
+                      <Bar dataKey="dishes" radius={[6,6,0,0]} />
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
@@ -558,13 +674,16 @@ export default function AdminDashboard() {
 
             <button
               className="mt-3 px-3 py-2 rounded bg-primary-600 text-white"
-              onClick={() => dishForm.reset({
-                name: "", slug: "", category_code: "food",
-                municipality_id: dishMuniFilter ?? (undefined as unknown as number),
-                description: "", image_url: "",
-                flavor_profile_csv: "", ingredients_csv: "",
-                popularity: 0, rating: 0
-              })}
+              onClick={() => {
+                dishForm.reset({
+                  name: "", slug: "", category_code: "food",
+                  municipality_id: dishMuniFilter ?? (undefined as unknown as number),
+                  description: "", image_url: "",
+                  flavor_profile_csv: "", ingredients_csv: "",
+                  popularity: 0, rating: 0
+                });
+                setDishImagePreview("");
+              }}
             >
               + New dish
             </button>
@@ -573,10 +692,21 @@ export default function AdminDashboard() {
           <Section
             title="Dish details"
             right={
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={autoSlugDish} onChange={e=>setAutoSlugDish(e.target.checked)} />
-                Auto-slug
-              </label>
+              <div className="flex items-center gap-4">
+                {dishForm.watch("id") ? (
+                  <div className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                    Editing: <strong>{dishForm.watch("name") || "Untitled"}</strong> ({dishForm.watch("slug")})
+                  </div>
+                ) : (
+                  <div className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Creating new dish
+                  </div>
+                )}
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={autoSlugDish} onChange={e=>setAutoSlugDish(e.target.checked)} />
+                  Auto-slug
+                </label>
+              </div>
             }
           >
             <form className="grid grid-cols-1 gap-3" onSubmit={dishForm.handleSubmit(saveDish)}>
@@ -630,15 +760,34 @@ export default function AdminDashboard() {
                 </label>
                 <label className="block">
                   <Label>Image URL</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("image_url")} />
+                  <input
+                    className="mt-1 w-full border rounded px-3 py-2"
+                    {...dishForm.register("image_url")}
+                    onChange={(e)=> setDishImagePreview(e.target.value)}
+                  />
                   <FieldError msg={dishForm.formState.errors.image_url?.message as string} />
                 </label>
               </div>
 
-              <label className="block">
-                <Label>Description</Label>
-                <textarea className="mt-1 w-full border rounded px-3 py-2" rows={3} {...dishForm.register("description")} />
-              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Upload image</Label>
+                  <div className="mt-1 flex items-center gap-2">
+                    <input type="file" accept="image/*" onChange={(e)=> uploadDishImage(e.target.files?.[0])} />
+                  </div>
+                  <div className="mt-2">
+                    {dishImagePreview ? (
+                      <img src={dishImagePreview} alt="preview" className="h-24 w-24 object-cover rounded border" />
+                    ) : (
+                      <div className="h-24 w-24 rounded border bg-neutral-50 flex items-center justify-center text-xs text-neutral-400">No image</div>
+                    )}
+                  </div>
+                </div>
+                <label className="block">
+                  <Label>Description</Label>
+                  <textarea className="mt-1 w-full border rounded px-3 py-2" rows={3} {...dishForm.register("description")} />
+                </label>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
@@ -709,13 +858,16 @@ export default function AdminDashboard() {
 
             <button
               className="mt-3 px-3 py-2 rounded bg-primary-600 text-white"
-              onClick={() => restForm.reset({
-                name: "", slug: "", municipality_id: restMuniFilter ?? (undefined as unknown as number),
-                kind: "restaurant", address: "", lat: 0, lng: 0,
-                description: "", price_range: "moderate", cuisine_csv: "",
-                phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
-                rating: 0
-              })}
+              onClick={() => {
+                restForm.reset({
+                  name: "", slug: "", municipality_id: restMuniFilter ?? (undefined as unknown as number),
+                  kind: "restaurant", address: "", lat: 0, lng: 0,
+                  description: "", price_range: "moderate", cuisine_csv: "",
+                  phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
+                  rating: 0
+                } as any);
+                setRestImagePreview("");
+              }}
             >
               + New restaurant
             </button>
@@ -724,10 +876,21 @@ export default function AdminDashboard() {
           <Section
             title="Restaurant details"
             right={
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={autoSlugRest} onChange={e=>setAutoSlugRest(e.target.checked)} />
-                Auto-slug
-              </label>
+              <div className="flex items-center gap-4">
+                {restForm.watch("id") ? (
+                  <div className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                    Editing: <strong>{restForm.watch("name") || "Untitled"}</strong> ({restForm.watch("slug")})
+                  </div>
+                ) : (
+                  <div className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Creating new restaurant
+                  </div>
+                )}
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={autoSlugRest} onChange={e=>setAutoSlugRest(e.target.checked)} />
+                  Auto-slug
+                </label>
+              </div>
             }
           >
             <form className="grid grid-cols-1 gap-3" onSubmit={restForm.handleSubmit(saveRestaurant)}>
@@ -810,10 +973,26 @@ export default function AdminDashboard() {
                 </label>
               </div>
 
-              <label className="block">
-                <Label>Description</Label>
-                <textarea className="mt-1 w-full border rounded px-3 py-2" rows={3} {...restForm.register("description")} />
-              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <Label>Description</Label>
+                  <textarea className="mt-1 w-full border rounded px-3 py-2" rows={3} {...restForm.register("description")} />
+                </label>
+                <div>
+                  <Label>Upload image</Label>
+                  <div className="mt-1 flex items-center gap-2">
+                    <input type="file" accept="image/*" onChange={(e)=> uploadRestaurantImage(e.target.files?.[0])} />
+                  </div>
+                  <div className="mt-2">
+                    {restImagePreview ? (
+                      <img src={restImagePreview} alt="preview" className="h-24 w-24 object-cover rounded border" />
+                    ) : (
+                      <div className="h-24 w-24 rounded border bg-neutral-50 flex items-center justify-center text-xs text-neutral-400">No image</div>
+                    )}
+                  </div>
+                  <div className="text-xs text-neutral-500 mt-1">Tip: add a <code>hero_image_url</code> column later and store this URL.</div>
+                </div>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
@@ -826,7 +1005,7 @@ export default function AdminDashboard() {
                 </label>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <label className="block">
                   <Label>Phone</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("phone")} />
@@ -835,9 +1014,13 @@ export default function AdminDashboard() {
                   <Label>Website</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("website")} />
                 </label>
+                <label className="block">
+                  <Label>Opening hours</Label>
+                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("opening_hours")} />
+                </label>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <Label>Facebook</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("facebook")} />
@@ -845,10 +1028,6 @@ export default function AdminDashboard() {
                 <label className="block">
                   <Label>Instagram</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("instagram")} />
-                </label>
-                <label className="block">
-                  <Label>Opening hours</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("opening_hours")} />
                 </label>
               </div>
 
@@ -874,7 +1053,6 @@ export default function AdminDashboard() {
               </div>
             }
           >
-            {/* Reuse dishes list with quick finder */}
             <div className="mb-3">
               <SearchBox placeholder="Quick search dish…" value={dishSearch} onChange={setDishSearch} />
             </div>
@@ -948,7 +1126,7 @@ export default function AdminDashboard() {
               <div>
                 <div className="font-medium mb-2">Top Dishes (Food) — choose up to 3, rank 1–3</div>
                 <div className="max-h-[420px] overflow-auto border rounded">
-                  {dishFood.map(d => {
+                  {(allDishesForCurQ.data ?? []).filter(d=>d.category==="food").map(d => {
                     const picked = foodRanks[d.id] != null;
                     return (
                       <div key={d.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
@@ -980,7 +1158,7 @@ export default function AdminDashboard() {
               <div>
                 <div className="font-medium mb-2">Top Delicacies — choose up to 3, rank 1–3</div>
                 <div className="max-h-[420px] overflow-auto border rounded">
-                  {dishDelicacy.map(d => {
+                  {(allDishesForCurQ.data ?? []).filter(d=>d.category==="delicacy").map(d => {
                     const picked = delicacyRanks[d.id] != null;
                     return (
                       <div key={d.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
