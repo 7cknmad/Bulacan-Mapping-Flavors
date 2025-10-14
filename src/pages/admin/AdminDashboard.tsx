@@ -130,16 +130,23 @@ function AnalyticsTab() {
   const [topDishes, setTopDishes] = useState<any[]>([]);
   const [topRestos, setTopRestos] = useState<any[]>([]);
 
-  useEffect(() => {
-    (async () => {
+useEffect(() => {
+  (async () => {
+    try {
       const [a, b, c] = await Promise.all([
         jget<OverviewStats>("/api/admin/stats/overview"),
         jget<any[]>("/api/admin/stats/top-dishes?limit=7"),
         jget<any[]>("/api/admin/stats/top-restaurants?limit=7"),
       ]);
       setOverview(a); setTopDishes(b); setTopRestos(c);
-    })();
-  }, []);
+    } catch (e) {
+      // Gracefully degrade if stats endpoints aren't ready
+      setOverview({ municipalities: 0, dishes: 0, delicacies: 0, restaurants: 0, links: 0 });
+      setTopDishes([]); setTopRestos([]);
+      console.warn("Admin stats endpoints not available yet:", e);
+    }
+  })();
+}, []);
 
   return (
     <div className="space-y-8">

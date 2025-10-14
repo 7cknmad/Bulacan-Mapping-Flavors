@@ -1,7 +1,8 @@
+// src/pages/admin/AdminLogin.tsx
 import { useState } from 'react';
 
 export default function AdminLogin() {
-  const [email, setEmail] = useState('owner@example.com');
+  const [email, setEmail] = useState('admin@example.com'); // ← match seeded admin
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
@@ -15,7 +16,7 @@ export default function AdminLogin() {
       body: JSON.stringify({ email, password })
     });
     if (!res.ok) { setErr((await res.json()).error || 'Login failed'); return; }
-    window.location.href = '/#/admin'; // or your router navigate
+    window.location.href = '/#/admin';
   };
 
   return (
