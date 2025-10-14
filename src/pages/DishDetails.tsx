@@ -19,7 +19,7 @@ import {
   Utensils as UtensilsIcon,
 } from "lucide-react";
 
-/** Safely coerce DB JSON columns (which may arrive as strings) into arrays */
+/** Safely coerce DB JSON columns into arrays */
 function toArray(v: unknown): string[] {
   if (Array.isArray(v)) return v as string[];
   if (v == null) return [];
@@ -27,31 +27,27 @@ function toArray(v: unknown): string[] {
     try {
       const parsed = JSON.parse(v);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   }
   return [];
 }
 
 export default function DishDetails() {
-  // Accept either /dish/:slug or /dish/:id
-  const params = useParams();
+  const params = useParams<{ slug?: string; id?: string }>();
   const idOrSlug = (params.slug ?? params.id ?? "").toString();
   const isNumericId = /^\d+$/.test(idOrSlug);
   const [tab, setTab] =
     useState<"overview" | "history" | "ingredients" | "restaurants">("overview");
 
-  // Load ONE dish (pref: exact slug via q=; fallback: by numeric id)
   const dishQ = useQuery<Dish>({
     queryKey: ["dish", idOrSlug],
     enabled: !!idOrSlug,
     queryFn: async () => {
-      // 1) try match by slug using q=
+      // Try: exact slug match via q=
       const byQuery = await fetchDishes({ q: idOrSlug });
       let d = byQuery.find((x) => x.slug === idOrSlug);
 
-      // 2) fallback by numeric id
+      // Fallback: numeric id lookup (last resort)
       if (!d && isNumericId) {
         const all = await fetchDishes();
         d = all.find((x) => String(x.id) === idOrSlug);
@@ -63,7 +59,6 @@ export default function DishDetails() {
     retry: 0,
   });
 
-  // Load municipalities to label origin
   const muniQ = useQuery<Municipality[]>({
     queryKey: ["municipalities"],
     queryFn: fetchMunicipalities,
@@ -78,7 +73,6 @@ export default function DishDetails() {
     [dishQ.data, muniQ.data]
   );
 
-  // Where to try this dish
   const placesQ = useQuery<Restaurant[]>({
     queryKey: ["where-to-try", dishQ.data?.id],
     enabled: !!dishQ.data?.id,
@@ -86,7 +80,6 @@ export default function DishDetails() {
     staleTime: 60_000,
   });
 
-  // Loading
   if (dishQ.isLoading) {
     return (
       <div className="pt-20 pb-16 bg-neutral-50 min-h-screen">
@@ -105,7 +98,6 @@ export default function DishDetails() {
     );
   }
 
-  // Error / not found
   if (dishQ.error || !dishQ.data) {
     return (
       <div className="pt-24 pb-16 flex items-center justify-center min-h-screen bg-neutral-50">
@@ -152,7 +144,12 @@ export default function DishDetails() {
         {/* Hero */}
         <div className="bg-white rounded-lg shadow-md overflow-hidden mb-8">
           <div className="relative h-64 md:h-96">
-            <img src={hero} alt={dish.name} className="w-full h-full object-cover" />
+            <img
+              src={hero}
+              alt={dish.name}
+              className="w-full h-full object-cover"
+              onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/1600x900?text=Dish"))}
+            />
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex items-end">
               <div className="p-6 w-full">
                 <div className="flex items-center mb-2">
@@ -344,3 +341,4 @@ export default function DishDetails() {
     </motion.div>
   );
 }
+  

@@ -12,6 +12,7 @@ import HomePage from "./pages/HomePage";
 import MapExplorer from "./pages/MapExplorer";
 import DishesPage from "./pages/DishesPage";
 import DishDetails from "./pages/DishDetails";
+
 import RestaurantList from "./pages/RestaurantList";
 import RestaurantDetails from "./pages/RestaurantDetails";
 import Admin from "./pages/Admin";
@@ -26,6 +27,8 @@ function Routed() {
       <Routes location={location} key={location.pathname}>
         <Route path="/" element={<PageTransition><HomePage /></PageTransition>} />
         <Route path="/map" element={<PageTransition><MapExplorer /></PageTransition>} />
+        <Route path="/admin/login" element={<PageTransition><Admin /></PageTransition>} />
+        <Route path="/admin/*" element={<PageTransition><AdminDashboard /></PageTransition>} />
         <Route path="/dishes" element={<PageTransition><DishesPage /></PageTransition>} />
         <Route path="/dish/:slug" element={<PageTransition><DishDetails /></PageTransition>} />
         <Route path="/restaurants" element={<PageTransition><RestaurantList /></PageTransition>} />
