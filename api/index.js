@@ -7,11 +7,15 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
-
 const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'dev-secret-change-me';
 const app = express();
+const params = new URLSearchParams();
+if (municipalityId) params.set("municipalityId", String(municipalityId));
+const qs = params.toString() ? `?${params.toString()}` : "";
 
-// So secure cookies work behind reverse proxies/tunnels (Cloudflare/localhost.run/etc)
+const overview = await adminGet<OverviewStats>(`/api/admin/stats/overview${qs}`);
+const topDishes = await adminGet<any[]>(`/api/admin/stats/top-dishes${qs}`);
+const topRestos = await adminGet<any[]>(`/api/admin/stats/top-restaurants${qs}`);
 app.set('trust proxy', 1);
 
 // ---- CORS (single source of truth) ----

@@ -1,11 +1,14 @@
+
 import React, { useEffect, useMemo, useState } from "react";
+import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
+import useDebounce from "../../hooks/useDebounce";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
 
-/** ========= Config & Types ========= */
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
+/* ==================== Types ==================== */
 type AdminMe = { ok: boolean; admin: { sub: number; name: string; email: string } };
 
 type Dish = {
@@ -29,124 +32,139 @@ type OverviewStats = {
   municipalities: number; dishes: number; delicacies: number; restaurants: number; links: number;
 };
 
-/** ========= Utilities ========= */
+/* ==================== Fetch helpers ==================== */
 async function jget<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`, { credentials: "include" });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `${res.status}`);
+  return text ? (JSON.parse(text) as T) : (null as T);
 }
-async function jpost<T>(path: string, body: any, method: "POST"|"PATCH"|"DELETE"="POST"): Promise<T> {
+async function jsend<T>(path: string, body: any, method: "POST"|"PATCH"|"DELETE"="POST"): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method,
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `${res.status}`);
+  return text ? (JSON.parse(text) as T) : (null as T);
 }
 
-/** ========= Auth small hook ========= */
-function useAdminGuard() {
-  const [me, setMe] = useState<AdminMe | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await jget<AdminMe>("/api/admin/auth/me");
-        setMe(data);
-      } catch {
-        setMe(null);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-  return { me, loading };
+/* ==================== Tiny Tabs (no dependency) ==================== */
+function Tabs({
+  value, onValueChange, children,
+}: { value: string; onValueChange: (v: string) => void; children: React.ReactNode }) {
+  return <div>{React.Children.map(children, (child: any) => {
+    if (!React.isValidElement(child)) return child;
+    return React.cloneElement(child, { __tabsValue: value, __setTabsValue: onValueChange });
+  })}</div>;
+}
+function TabsList({ children, __tabsValue, __setTabsValue }: any) {
+  return <div className="flex gap-2 mb-4">{React.Children.map(children, (c: any) =>
+    React.cloneElement(c, { __tabsValue, __setTabsValue }))}</div>;
+}
+function TabsTrigger({ value, children, __tabsValue, __setTabsValue }: any) {
+  const active = __tabsValue === value;
+  return (
+    <button
+      onClick={() => __setTabsValue(value)}
+      className={`px-3 py-1 rounded ${active ? "bg-primary-600 text-white" : "bg-neutral-100"}`}
+    >
+      {children}
+    </button>
+  );
+}
+function TabsContent({ value, children, __tabsValue }: any) {
+  if (__tabsValue !== value) return null;
+  return <div>{children}</div>;
 }
 
-/** ========= Main Shell with Tabs ========= */
-type TabKey = "analytics" | "manage" | "link" | "curation";
-
+/* ==================== Admin Dashboard ==================== */
 export default function AdminDashboard() {
-  const { me, loading } = useAdminGuard();
-  const [tab, setTab] = useState<TabKey>("analytics");
-
-  useEffect(() => {
-    if (!loading && !me?.ok) {
-      // Not logged in
-      window.location.href = "/#/admin/login";
-    }
-  }, [loading, me]);
-
-  if (loading || !me?.ok) return <div className="p-6">Loading…</div>;
+  // global filters
+  const [selectedMuniId, setSelectedMuniId] = useState<number | null>(null);
+  const [searchRaw, setSearchRaw] = useState("");
+  const search = useDebounce(searchRaw, 250);
+  const [tab, setTab] = useState<"analytics"|"manage"|"curation"|"link">("analytics");
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
-        <button
-          className="text-sm px-3 py-2 rounded border"
-          onClick={async () => {
-            await jpost("/api/admin/auth/logout", {}, "POST");
-            window.location.href = "/#/admin/login";
-          }}
-        >
-          Logout
-        </button>
-      </header>
+    <div className="p-4 md:p-6">
+      {/* top filter bar */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+        <div className="text-lg font-semibold">Admin Dashboard</div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <MunicipalitySelect
+            value={selectedMuniId}
+            onChange={setSelectedMuniId}
+            placeholder="All municipalities"
+            allowAll
+          />
+          <input
+            className="border rounded px-3 py-2 w-72"
+            placeholder="Search (dish / delicacy / restaurant)…"
+            value={searchRaw}
+            onChange={(e) => setSearchRaw(e.target.value)}
+          />
+        </div>
+      </div>
 
-      {/* Tabs */}
-      <nav className="flex gap-2 border-b">
-        {[
-          ["analytics", "Analytics"],
-          ["manage", "Manage"],
-          ["link", "Linking"],
-          ["curation", "Curation"],
-        ].map(([k, label]) => (
-          <button
-            key={k}
-            className={`px-3 py-2 -mb-px border-b-2 ${
-              tab === (k as TabKey) ? "border-primary-600 text-primary-700" : "border-transparent text-neutral-500"
-            }`}
-            onClick={() => setTab(k as TabKey)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
+      <Tabs value={tab} onValueChange={v=>setTab(v as any)}>
+        <TabsList>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <TabsTrigger value="manage">Manage</TabsTrigger>
+          <TabsTrigger value="curation">Curation</TabsTrigger>
+          <TabsTrigger value="link">Link</TabsTrigger>
+        </TabsList>
 
-      {tab === "analytics" && <AnalyticsTab />}
-      {tab === "manage" && <ManageTab />}
-      {tab === "link" && <LinkTab />}
-      {tab === "curation" && <CurationTab />}
+        <TabsContent value="analytics">
+          <AnalyticsTab municipalityId={selectedMuniId} />
+        </TabsContent>
+
+        <TabsContent value="manage">
+          <ManageTab municipalityId={selectedMuniId} q={search} />
+        </TabsContent>
+
+        <TabsContent value="curation">
+          <CurationTab municipalityId={selectedMuniId} />
+        </TabsContent>
+
+        <TabsContent value="link">
+          <LinkTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-/** ========= Tab A: Analytics ========= */
-function AnalyticsTab() {
+/* ==================== Analytics Tab ==================== */
+function AnalyticsTab({ municipalityId }: { municipalityId: number | null }) {
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [topDishes, setTopDishes] = useState<any[]>([]);
   const [topRestos, setTopRestos] = useState<any[]>([]);
 
-useEffect(() => {
-  (async () => {
-    try {
-      const [a, b, c] = await Promise.all([
-        jget<OverviewStats>("/api/admin/stats/overview"),
-        jget<any[]>("/api/admin/stats/top-dishes?limit=7"),
-        jget<any[]>("/api/admin/stats/top-restaurants?limit=7"),
-      ]);
-      setOverview(a); setTopDishes(b); setTopRestos(c);
-    } catch (e) {
-      // Gracefully degrade if stats endpoints aren't ready
-      setOverview({ municipalities: 0, dishes: 0, delicacies: 0, restaurants: 0, links: 0 });
-      setTopDishes([]); setTopRestos([]);
-      console.warn("Admin stats endpoints not available yet:", e);
-    }
-  })();
-}, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        if (municipalityId) qs.set("municipalityId", String(municipalityId));
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        const [a, b, c] = await Promise.all([
+          jget<OverviewStats>(`/api/admin/stats/overview${suffix}`),
+          jget<any[]>(`/api/admin/stats/top-dishes${suffix}&limit=7`.replace("?&","?")),
+          jget<any[]>(`/api/admin/stats/top-restaurants${suffix}&limit=7`.replace("?&","?")),
+        ]);
+        setOverview(a);
+        setTopDishes(Array.isArray(b) ? b : []);
+        setTopRestos(Array.isArray(c) ? c : []);
+      } catch (e) {
+        // Degrade gracefully if admin stats not implemented yet
+        setOverview({ municipalities: 0, dishes: 0, delicacies: 0, restaurants: 0, links: 0 });
+        setTopDishes([]); setTopRestos([]);
+        console.warn("Admin stats endpoints not available yet:", e);
+      }
+    })();
+  }, [municipalityId]);
 
   return (
     <div className="space-y-8">
@@ -170,6 +188,7 @@ useEffect(() => {
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
+
         <ChartCard title="Top Restaurants (by dish count)">
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={topRestos}>
@@ -201,8 +220,8 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-/** ========= Tab B: Manage (CRUD + Edit) ========= */
-function ManageTab() {
+/* ==================== Manage Tab (CRUD) ==================== */
+function ManageTab({ municipalityId, q }: { municipalityId: number | null; q: string }) {
   const [active, setActive] = useState<"dishes" | "restaurants">("dishes");
   return (
     <div className="space-y-4">
@@ -220,35 +239,35 @@ function ManageTab() {
           Restaurants
         </button>
       </div>
-      {active === "dishes" ? <ManageDishes /> : <ManageRestaurants />}
+      {active === "dishes"
+        ? <ManageDishes municipalityId={municipalityId} q={q} />
+        : <ManageRestaurants municipalityId={municipalityId} q={q} />
+      }
     </div>
   );
 }
 
-/** --- Dishes CRUD --- */
-function ManageDishes() {
+/* -------- Dishes CRUD -------- */
+function ManageDishes({ municipalityId, q }: { municipalityId: number | null; q: string }) {
   const [list, setList] = useState<Dish[]>([]);
-  const [q, setQ] = useState("");
-  const [muni, setMuni] = useState<number | "">("");
   const [cat, setCat] = useState<"" | "food" | "delicacy" | "drink">("");
-
   const [editing, setEditing] = useState<Dish | null>(null);
 
   const reload = async () => {
     const qs = new URLSearchParams();
     if (q) qs.set("q", q);
-    if (muni) qs.set("municipalityId", String(muni));
+    if (municipalityId) qs.set("municipalityId", String(municipalityId));
     if (cat) qs.set("category", cat);
     qs.set("limit", "200");
     const rows = await jget<Dish[]>(`/api/dishes?${qs.toString()}`);
     // ensure arrays are arrays
     setList(rows.map(r => ({
       ...r,
-      flavor_profile: Array.isArray(r.flavor_profile) ? r.flavor_profile : (r.flavor_profile ? JSON.parse(String(r.flavor_profile)) : null),
-      ingredients: Array.isArray(r.ingredients) ? r.ingredients : (r.ingredients ? JSON.parse(String(r.ingredients)) : null),
+      flavor_profile: Array.isArray(r.flavor_profile) ? r.flavor_profile : (r.flavor_profile ? safeJsonArray(r.flavor_profile) : []),
+      ingredients: Array.isArray(r.ingredients) ? r.ingredients : (r.ingredients ? safeJsonArray(r.ingredients) : []),
     })));
   };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [municipalityId, q, cat]);
 
   const create = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -259,15 +278,13 @@ function ManageDishes() {
       name: String(fd.get("name")),
       slug: String(fd.get("slug")),
       description: String(fd.get("description") || ""),
-      flavor_profile: String(fd.get("flavor_profile") || "")
-        .split(",").map(s => s.trim()).filter(Boolean),
-      ingredients: String(fd.get("ingredients") || "")
-        .split(",").map(s => s.trim()).filter(Boolean),
+      flavor_profile: toList(fd.get("flavor_profile")),
+      ingredients: toList(fd.get("ingredients")),
       image_url: String(fd.get("image_url") || "") || null,
       popularity: Number(fd.get("popularity") || 0),
       rating: Number(fd.get("rating") || 0),
     };
-    await jpost("/api/admin/dishes", payload, "POST");
+    await jsend("/api/admin/dishes", payload, "POST");
     (e.target as HTMLFormElement).reset();
     reload();
   };
@@ -286,7 +303,7 @@ function ManageDishes() {
       popularity: editing.popularity ?? 0,
       rating: editing.rating ?? 0,
     };
-    await jpost(`/api/admin/dishes/${editing.id}`, body, "PATCH");
+    await jsend(`/api/admin/dishes/${editing.id}`, body, "PATCH");
     setEditing(null);
     reload();
   };
@@ -295,11 +312,10 @@ function ManageDishes() {
     <div className="grid md:grid-cols-3 gap-6">
       {/* Left: filters + list */}
       <div className="md:col-span-2 space-y-3">
-        <div className="flex gap-2">
-          <input className="input flex-1" placeholder="Search name…" value={q} onChange={e=>setQ(e.target.value)} />
-          <input className="input w-32" placeholder="Municipality ID" value={muni} onChange={e=>setMuni((e.target.value as any) || "")} />
+        <div className="flex gap-2 items-center">
+          <div className="text-sm text-neutral-500">Category</div>
           <select className="input w-40" value={cat} onChange={e=>setCat(e.target.value as any)}>
-            <option value="">All categories</option>
+            <option value="">All</option>
             <option value="food">Food</option>
             <option value="delicacy">Delicacy</option>
             <option value="drink">Drink</option>
@@ -376,8 +392,8 @@ function ManageDishes() {
                 <option value="drink">Drink</option>
               </select>
               <textarea className="input" value={editing.description ?? ""} onChange={e=>setEditing({...editing, description:e.target.value})} />
-              <input className="input" value={(editing.flavor_profile??[]).join(", ")} onChange={e=>setEditing({...editing, flavor_profile:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})} />
-              <input className="input" value={(editing.ingredients??[]).join(", ")} onChange={e=>setEditing({...editing, ingredients:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})} />
+              <input className="input" value={(editing.flavor_profile??[]).join(", ")} onChange={e=>setEditing({...editing, flavor_profile:toList(e.target.value)})} />
+              <input className="input" value={(editing.ingredients??[]).join(", ")} onChange={e=>setEditing({...editing, ingredients:toList(e.target.value)})} />
               <input className="input" value={editing.image_url ?? ""} onChange={e=>setEditing({...editing, image_url:e.target.value||null})} />
               <div className="flex gap-2">
                 <input className="input" type="number" step="1" value={editing.popularity ?? 0} onChange={e=>setEditing({...editing, popularity:Number(e.target.value)||0})} />
@@ -395,26 +411,23 @@ function ManageDishes() {
   );
 }
 
-/** --- Restaurants CRUD --- */
-function ManageRestaurants() {
+/* -------- Restaurants CRUD -------- */
+function ManageRestaurants({ municipalityId, q }: { municipalityId: number | null; q: string }) {
   const [list, setList] = useState<Restaurant[]>([]);
-  const [q, setQ] = useState("");
-  const [muni, setMuni] = useState<number | "">("");
-
   const [editing, setEditing] = useState<Restaurant | null>(null);
 
   const reload = async () => {
     const qs = new URLSearchParams();
     if (q) qs.set("q", q);
-    if (muni) qs.set("municipalityId", String(muni));
+    if (municipalityId) qs.set("municipalityId", String(municipalityId));
     qs.set("limit", "200");
     const rows = await jget<Restaurant[]>(`/api/restaurants?${qs.toString()}`);
     setList(rows.map(r => ({
       ...r,
-      cuisine_types: Array.isArray(r.cuisine_types) ? r.cuisine_types : (r.cuisine_types ? JSON.parse(String(r.cuisine_types)) : null),
+      cuisine_types: Array.isArray(r.cuisine_types) ? r.cuisine_types : (r.cuisine_types ? safeJsonArray(r.cuisine_types) : []),
     })));
   };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [municipalityId, q]);
 
   const create = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -429,8 +442,7 @@ function ManageRestaurants() {
       lng: Number(fd.get("lng")),
       description: String(fd.get("description") || "") || null,
       price_range: String(fd.get("price_range") || "moderate"),
-      cuisine_types: String(fd.get("cuisine_types") || "")
-        .split(",").map(s => s.trim()).filter(Boolean),
+      cuisine_types: toList(fd.get("cuisine_types")),
       phone: String(fd.get("phone") || "") || null,
       email: String(fd.get("email") || "") || null,
       website: String(fd.get("website") || "") || null,
@@ -439,7 +451,7 @@ function ManageRestaurants() {
       opening_hours: String(fd.get("opening_hours") || "") || null,
       rating: Number(fd.get("rating") || 0),
     };
-    await jpost("/api/admin/restaurants", payload, "POST");
+    await jsend("/api/admin/restaurants", payload, "POST");
     (e.target as HTMLFormElement).reset();
     reload();
   };
@@ -461,21 +473,15 @@ function ManageRestaurants() {
       rating: editing.rating,
       lat: editing.lat, lng: editing.lng,
     };
-    await jpost(`/api/admin/restaurants/${editing.id}`, body, "PATCH");
+    await jsend(`/api/admin/restaurants/${editing.id}`, body, "PATCH");
     setEditing(null);
     reload();
   };
 
   return (
     <div className="grid md:grid-cols-3 gap-6">
-      {/* Left: filters + list */}
-      <div className="md:col-span-2 space-y-3">
-        <div className="flex gap-2">
-          <input className="input flex-1" placeholder="Search name…" value={q} onChange={e=>setQ(e.target.value)} />
-          <input className="input w-32" placeholder="Municipality ID" value={muni} onChange={e=>setMuni((e.target.value as any) || "")} />
-          <button className="btn" onClick={reload}>Reload</button>
-        </div>
-
+      {/* Left: list */}
+      <div className="md:col-span-2">
         <div className="border rounded overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-neutral-50">
@@ -565,7 +571,7 @@ function ManageRestaurants() {
                 <option>budget</option><option>moderate</option><option>expensive</option>
               </select>
               <textarea className="input" value={editing.description ?? ""} onChange={e=>setEditing({...editing, description:e.target.value||null})} />
-              <input className="input" value={(editing.cuisine_types??[]).join(", ")} onChange={e=>setEditing({...editing, cuisine_types:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})} />
+              <input className="input" value={(editing.cuisine_types??[]).join(", ")} onChange={e=>setEditing({...editing, cuisine_types:toList(e.target.value)})} />
               <input className="input" value={editing.phone ?? ""} onChange={e=>setEditing({...editing, phone:e.target.value||null})} />
               <input className="input" value={editing.website ?? ""} onChange={e=>setEditing({...editing, website:e.target.value||null})} />
               <input className="input" value={editing.facebook ?? ""} onChange={e=>setEditing({...editing, facebook:e.target.value||null})} />
@@ -584,7 +590,7 @@ function ManageRestaurants() {
   );
 }
 
-/** ========= Tab C: Link dish ↔ restaurant (by name) ========= */
+/* ==================== Link Tab (dish ↔ restaurant) ==================== */
 function LinkTab() {
   const [dishQ, setDishQ] = useState("");
   const [restoQ, setRestoQ] = useState("");
@@ -604,7 +610,7 @@ function LinkTab() {
   };
   const link = async () => {
     if (!dishId || !restoId) { setMsg("Pick both dish and restaurant"); return; }
-    await jpost("/api/admin/dish-restaurants", { dish_id: dishId, restaurant_id: restoId }, "POST");
+    await jsend("/api/admin/dish-restaurants", { dish_id: dishId, restaurant_id: restoId }, "POST");
     setMsg("Linked!");
   };
 
@@ -658,38 +664,38 @@ function LinkTab() {
   );
 }
 
-/** ========= Tab D: Curation (Top 3) ========= */
-function CurationTab() {
-  const [municipalityId, setMunicipalityId] = useState<number>(1);
+/* ==================== Curation Tab (Top 3 per muni) ==================== */
+function CurationTab({ municipalityId }: { municipalityId: number | null }) {
+  const muni = municipalityId ?? 1;
   const [foods, setFoods] = useState<Dish[]>([]);
   const [delics, setDelics] = useState<Dish[]>([]);
   const [restos, setRestos] = useState<Restaurant[]>([]);
 
   const reload = async () => {
     const [a,b,c] = await Promise.all([
-      jget<Dish[]>(`/api/dishes?municipalityId=${municipalityId}&category=food&limit=100`),
-      jget<Dish[]>(`/api/dishes?municipalityId=${municipalityId}&category=delicacy&limit=100`),
-      jget<Restaurant[]>(`/api/restaurants?municipalityId=${municipalityId}&limit=100`),
+      jget<Dish[]>(`/api/dishes?municipalityId=${muni}&category=food&limit=100`),
+      jget<Dish[]>(`/api/dishes?municipalityId=${muni}&category=delicacy&limit=100`),
+      jget<Restaurant[]>(`/api/restaurants?municipalityId=${muni}&limit=100`),
     ]);
-    setFoods(a); setDelics(b); setRestos(c);
+    setFoods(normalizeDishes(a));
+    setDelics(normalizeDishes(b));
+    setRestos(normalizeRestos(c));
   };
-  useEffect(() => { reload(); }, [municipalityId]);
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [municipalityId]);
 
   const setDishRank = async (id:number, rank:number|null) => {
-    await jpost(`/api/admin/dishes/${id}`, { is_signature: rank!=null, panel_rank: rank }, "PATCH");
+    await jsend(`/api/admin/dishes/${id}`, { is_signature: rank!=null ? 1 : 0, panel_rank: rank }, "PATCH");
     reload();
   };
   const setRestoRank = async (id:number, rank:number|null) => {
-    await jpost(`/api/admin/restaurants/${id}`, { is_featured: rank!=null, panel_rank: rank }, "PATCH");
+    await jsend(`/api/admin/restaurants/${id}`, { is_featured: rank!=null ? 1 : 0, panel_rank: rank }, "PATCH");
     reload();
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex gap-2 items-center">
-        <div className="font-semibold">Municipality ID</div>
-        <input className="input w-32" value={municipalityId} onChange={e=>setMunicipalityId(Number(e.target.value)||1)} />
-        <button className="btn" onClick={reload}>Reload</button>
+      <div className="text-sm text-neutral-600">
+        Curation for <span className="font-medium">municipality #{muni}</span> (use the selector on top to change).
       </div>
 
       <CurationList title="Top Dishes" items={foods} onRank={setDishRank} />
@@ -706,10 +712,10 @@ function CurationList({
       <h3 className="font-semibold mb-2">{title}</h3>
       <div className="grid md:grid-cols-2 gap-2">
         {items.map(it => (
-          <div key={it.id} className="p-3 border rounded flex items-center justify-between">
+          <div key={(it as any).id} className="p-3 border rounded flex items-center justify-between">
             <div className="min-w-0">
               <div className="font-medium truncate">{(it as any).name}</div>
-              <div className="text-xs text-neutral-500 truncate">{(it as any).slug}</div>
+              <div className="text-xs text-neutral-500 truncate">{(it as any).slug ?? ""}</div>
             </div>
             <div className="flex items-center gap-2">
               {[1,2,3].map(n => (
@@ -729,9 +735,29 @@ function CurationList({
   );
 }
 
-/** ========= Tiny inputs CSS (optional) =========
-Add these to your global CSS if you don't have input/btn classes:
-.input { @apply w-full px-3 py-2 border rounded outline-none focus:ring; }
-.btn { @apply px-3 py-2 rounded border; }
-.btn-primary { @apply bg-primary-600 text-white border-primary-600; }
-*/
+/* ==================== Helpers ==================== */
+function safeJsonArray(v: unknown): string[] {
+  try {
+    const arr = typeof v === "string" ? JSON.parse(v) : v;
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function toList(v: FormDataEntryValue | null): string[] {
+  return String(v || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+function normalizeDishes(rows: Dish[]): Dish[] {
+  return rows.map(r => ({
+    ...r,
+    flavor_profile: Array.isArray(r.flavor_profile) ? r.flavor_profile : (r.flavor_profile ? safeJsonArray(r.flavor_profile) : []),
+    ingredients: Array.isArray(r.ingredients) ? r.ingredients : (r.ingredients ? safeJsonArray(r.ingredients) : []),
+  }));
+}
+function normalizeRestos(rows: Restaurant[]): Restaurant[] {
+  return rows.map(r => ({
+    ...r,
+    cuisine_types: Array.isArray(r.cuisine_types) ? r.cuisine_types : (r.cuisine_types ? safeJsonArray(r.cuisine_types) : []),
+  }));
+}

@@ -6,11 +6,10 @@ import { AnimatePresence } from "framer-motion";
 
 import Layout from "./components/layout/Layout";
 import PageTransition from "./components/common/PageTransition";
-import ErrorBoundary from "./components/common/ErrorBoundary"; // ← use your existing one
+import ErrorBoundary from "./components/common/ErrorBoundary";
 import AdminLogin from "./pages/admin/AdminLogin";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ProtectedRoute from "./components/admin/ProtectedRoute";
-import Admin from "./pages/admin/LegacyQuickAdmin"; // optional
 import HomePage from "./pages/HomePage";
 import MapExplorer from "./pages/MapExplorer";
 import DishesPage from "./pages/DishesPage";
@@ -24,7 +23,6 @@ function Routed() {
   const location = useLocation();
   return (
     <AnimatePresence mode="wait">
-// src/App.tsx (only the Routes block shown)
 <Routes location={location} key={location.pathname}>
   <Route path="/" element={<PageTransition><HomePage /></PageTransition>} />
   <Route path="/map" element={<PageTransition><MapExplorer /></PageTransition>} />
@@ -32,7 +30,7 @@ function Routed() {
   {/* Admin Auth */}
   <Route path="/admin/login" element={<PageTransition><AdminLogin /></PageTransition>} />
 
-  {/* Protected Admin Dashboard (the "new" admin) */}
+  {/* Protected Admin Dashboard (single source of truth) */}
   <Route
     path="/admin/*"
     element={
@@ -42,19 +40,12 @@ function Routed() {
     }
   />
 
-  {/* OPTIONAL: keep the old mini admin under a hidden path */}
-  <Route
-    path="/admin/quick-seed"
-    element={<PageTransition><Admin /></PageTransition>}
-  />
-
   {/* Public pages */}
   <Route path="/dishes" element={<PageTransition><DishesPage /></PageTransition>} />
   <Route path="/dish/:slug" element={<PageTransition><DishDetails /></PageTransition>} />
   <Route path="/restaurants" element={<PageTransition><RestaurantList /></PageTransition>} />
   <Route path="/restaurant/:slug" element={<PageTransition><RestaurantDetails /></PageTransition>} />
 </Routes>
-
     </AnimatePresence>
   );
 }
