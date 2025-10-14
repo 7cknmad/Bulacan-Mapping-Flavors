@@ -1,12 +1,30 @@
-
 import React, { useEffect, useMemo, useState } from "react";
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
 import useDebounce from "../../hooks/useDebounce";
+import { useForm, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  LineChart, Line, AreaChart, Area
 } from "recharts";
 
+
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function toListFromInput(v: string): string[] {
+  return (v || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 /* ==================== Types ==================== */
 type AdminMe = { ok: boolean; admin: { sub: number; name: string; email: string } };
@@ -142,6 +160,12 @@ function AnalyticsTab({ municipalityId }: { municipalityId: number | null }) {
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [topDishes, setTopDishes] = useState<any[]>([]);
   const [topRestos, setTopRestos] = useState<any[]>([]);
+  const [dishChart, setDishChart] = useState<"bar" | "line" | "area">("bar");
+  const [restoChart, setRestoChart] = useState<"bar" | "line" | "area">("bar");
+
+  const COLORS = [
+    "#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#7c3aed", "#0ea5e9", "#22c55e",
+  ];
 
   useEffect(() => {
     (async () => {
@@ -151,14 +175,13 @@ function AnalyticsTab({ municipalityId }: { municipalityId: number | null }) {
         const suffix = qs.toString() ? `?${qs.toString()}` : "";
         const [a, b, c] = await Promise.all([
           jget<OverviewStats>(`/api/admin/stats/overview${suffix}`),
-          jget<any[]>(`/api/admin/stats/top-dishes${suffix}&limit=7`.replace("?&","?")),
-          jget<any[]>(`/api/admin/stats/top-restaurants${suffix}&limit=7`.replace("?&","?")),
+          jget<any[]>(`/api/admin/stats/top-dishes${suffix}&limit=7`.replace("?&", "?")),
+          jget<any[]>(`/api/admin/stats/top-restaurants${suffix}&limit=7`.replace("?&", "?")),
         ]);
         setOverview(a);
         setTopDishes(Array.isArray(b) ? b : []);
         setTopRestos(Array.isArray(c) ? c : []);
       } catch (e) {
-        // Degrade gracefully if admin stats not implemented yet
         setOverview({ municipalities: 0, dishes: 0, delicacies: 0, restaurants: 0, links: 0 });
         setTopDishes([]); setTopRestos([]);
         console.warn("Admin stats endpoints not available yet:", e);
@@ -178,31 +201,138 @@ function AnalyticsTab({ municipalityId }: { municipalityId: number | null }) {
       )}
 
       <div className="grid md:grid-cols-2 gap-6">
-        <ChartCard title="Top Dishes (by places)">
+        <ChartCard
+          title="Top Dishes (by places)"
+          control={
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={dishChart}
+              onChange={(e) => setDishChart(e.target.value as any)}
+            >
+              <option value="bar">Bar</option>
+              <option value="line">Line</option>
+              <option value="area">Area</option>
+            </select>
+          }
+        >
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={topDishes}>
-              <XAxis dataKey="name" hide />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="places" />
-            </BarChart>
+            {dishChart === "bar" ? (
+              <BarChart data={topDishes}>
+                <XAxis dataKey="name" hide />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="places">
+                  {topDishes.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            ) : dishChart === "line" ? (
+              <LineChart data={topDishes}>
+                <XAxis dataKey="name" hide />
+                <YAxis />
+                <Tooltip />
+                <Line
+                  type="monotone"
+                  dataKey="places"
+                  stroke="#2563eb"
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            ) : (
+              <AreaChart data={topDishes}>
+                <XAxis dataKey="name" hide />
+                <YAxis />
+                <Tooltip />
+                <Area
+                  type="monotone"
+                  dataKey="places"
+                  stroke="#22c55e"
+                  fill="#22c55e33"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            )}
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Top Restaurants (by dish count)">
+        <ChartCard
+          title="Top Restaurants (by dish count)"
+          control={
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={restoChart}
+              onChange={(e) => setRestoChart(e.target.value as any)}
+            >
+              <option value="bar">Bar</option>
+              <option value="line">Line</option>
+              <option value="area">Area</option>
+            </select>
+          }
+        >
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={topRestos}>
-              <XAxis dataKey="name" hide />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="dishes" />
-            </BarChart>
+            {restoChart === "bar" ? (
+              <BarChart data={topRestos}>
+                <XAxis dataKey="name" hide />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="dishes">
+                  {topRestos.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            ) : restoChart === "line" ? (
+              <LineChart data={topRestos}>
+                <XAxis dataKey="name" hide />
+                <YAxis />
+                <Tooltip />
+                <Line
+                  type="monotone"
+                  dataKey="dishes"
+                  stroke="#7c3aed"
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            ) : (
+              <AreaChart data={topRestos}>
+                <XAxis dataKey="name" hide />
+                <YAxis />
+                <Tooltip />
+                <Area
+                  type="monotone"
+                  dataKey="dishes"
+                  stroke="#f59e0b"
+                  fill="#f59e0b33"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            )}
           </ResponsiveContainer>
         </ChartCard>
       </div>
     </div>
   );
 }
+
+function ChartCard({
+  title, control, children
+}: { title: string; control?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="p-4 rounded-lg border bg-white shadow-sm">
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold">{title}</div>
+        {control}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="p-4 rounded-lg border bg-white shadow-sm">
@@ -211,15 +341,6 @@ function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
     </div>
   );
 }
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="p-4 rounded-lg border bg-white shadow-sm">
-      <div className="font-semibold mb-2">{title}</div>
-      {children}
-    </div>
-  );
-}
-
 /* ==================== Manage Tab (CRUD) ==================== */
 function ManageTab({ municipalityId, q }: { municipalityId: number | null; q: string }) {
   const [active, setActive] = useState<"dishes" | "restaurants">("dishes");
@@ -247,12 +368,53 @@ function ManageTab({ municipalityId, q }: { municipalityId: number | null; q: st
   );
 }
 
-/* -------- Dishes CRUD -------- */
+/* -------- Dishes CRUD (react-hook-form + Zod) -------- */
+const dishSchema = z.object({
+  municipality_id: z.number().int().positive({ message: "Municipality is required" }),
+  category_code: z.enum(["food", "delicacy", "drink"]),
+  name: z.string().min(2, "Name is too short"),
+  slug: z.string().min(2, "Slug is too short").regex(/^[a-z0-9-]+$/, "Lowercase letters, numbers and dashes only"),
+  description: z.string().optional(),
+  flavor_profile_csv: z.string().optional(),  // CSV in UI → array on submit
+  ingredients_csv: z.string().optional(),
+  image_url: z.string().url("Enter a valid URL").optional().or(z.literal("")),
+  popularity: z.coerce.number().min(0).max(100).default(0),
+  rating: z.coerce.number().min(0).max(5).default(0),
+});
+type DishForm = z.infer<typeof dishSchema>;
+
 function ManageDishes({ municipalityId, q }: { municipalityId: number | null; q: string }) {
   const [list, setList] = useState<Dish[]>([]);
   const [cat, setCat] = useState<"" | "food" | "delicacy" | "drink">("");
   const [editing, setEditing] = useState<Dish | null>(null);
+  const [autoSlug, setAutoSlug] = useState(true);
 
+  const {
+    register, handleSubmit, control, setValue, watch, reset,
+    formState: { errors, isSubmitting }
+  } = useForm<DishForm>({
+    resolver: zodResolver(dishSchema),
+    defaultValues: {
+      municipality_id: municipalityId ?? undefined,
+      category_code: "food",
+      name: "",
+      slug: "",
+      description: "",
+      flavor_profile_csv: "",
+      ingredients_csv: "",
+      image_url: "",
+      popularity: 0,
+      rating: 0,
+    }
+  });
+
+  // Auto-slug: keep slug in sync with name unless turned off
+  const nameWatch = watch("name");
+  useEffect(() => {
+    if (autoSlug) setValue("slug", slugify(nameWatch || ""));
+  }, [nameWatch, autoSlug, setValue]);
+
+  // Reload grid
   const reload = async () => {
     const qs = new URLSearchParams();
     if (q) qs.set("q", q);
@@ -260,51 +422,81 @@ function ManageDishes({ municipalityId, q }: { municipalityId: number | null; q:
     if (cat) qs.set("category", cat);
     qs.set("limit", "200");
     const rows = await jget<Dish[]>(`/api/dishes?${qs.toString()}`);
-    // ensure arrays are arrays
-    setList(rows.map(r => ({
+    setList(rows.map((r) => ({
       ...r,
       flavor_profile: Array.isArray(r.flavor_profile) ? r.flavor_profile : (r.flavor_profile ? safeJsonArray(r.flavor_profile) : []),
       ingredients: Array.isArray(r.ingredients) ? r.ingredients : (r.ingredients ? safeJsonArray(r.ingredients) : []),
     })));
   };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [municipalityId, q, cat]);
+  useEffect(() => { reload(); /* eslint-disable-line */ }, [municipalityId, q, cat]);
 
-  const create = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+  // Create
+  const onCreate = async (data: DishForm) => {
     const payload = {
-      municipality_id: Number(fd.get("municipality_id")),
-      category_code: String(fd.get("category_code")),
-      name: String(fd.get("name")),
-      slug: String(fd.get("slug")),
-      description: String(fd.get("description") || ""),
-      flavor_profile: toList(fd.get("flavor_profile")),
-      ingredients: toList(fd.get("ingredients")),
-      image_url: String(fd.get("image_url") || "") || null,
-      popularity: Number(fd.get("popularity") || 0),
-      rating: Number(fd.get("rating") || 0),
+      municipality_id: data.municipality_id,
+      category_code: data.category_code,
+      name: data.name.trim(),
+      slug: data.slug.trim(),
+      description: data.description || null,
+      flavor_profile: toListFromInput(data.flavor_profile_csv || ""),
+      ingredients: toListFromInput(data.ingredients_csv || ""),
+      image_url: data.image_url || null,
+      popularity: data.popularity ?? 0,
+      rating: data.rating ?? 0,
     };
     await jsend("/api/admin/dishes", payload, "POST");
-    (e.target as HTMLFormElement).reset();
+    reset({
+      municipality_id: municipalityId ?? undefined,
+      category_code: "food",
+      name: "",
+      slug: "",
+      description: "",
+      flavor_profile_csv: "",
+      ingredients_csv: "",
+      image_url: "",
+      popularity: 0,
+      rating: 0,
+    });
+    setAutoSlug(true);
     reload();
   };
 
-  const saveEdit = async () => {
+  // Edit (fill form with row)
+  const startEdit = (d: Dish) => {
+    setEditing(d);
+    reset({
+      municipality_id: d.municipality_id,
+      category_code: d.category,
+      name: d.name,
+      slug: d.slug,
+      description: d.description ?? "",
+      flavor_profile_csv: (d.flavor_profile ?? []).join(", "),
+      ingredients_csv: (d.ingredients ?? []).join(", "),
+      image_url: d.image_url ?? "",
+      popularity: d.popularity ?? 0,
+      rating: d.rating ?? 0,
+    });
+    setAutoSlug(false);
+  };
+
+  const saveEdit = async (data: DishForm) => {
     if (!editing) return;
     const body = {
-      name: editing.name,
-      slug: editing.slug,
-      municipality_id: editing.municipality_id,
-      category_code: editing.category,
-      description: editing.description,
-      flavor_profile: editing.flavor_profile,
-      ingredients: editing.ingredients,
-      image_url: editing.image_url,
-      popularity: editing.popularity ?? 0,
-      rating: editing.rating ?? 0,
+      municipality_id: data.municipality_id,
+      category_code: data.category_code,
+      name: data.name.trim(),
+      slug: data.slug.trim(),
+      description: data.description || null,
+      flavor_profile: toListFromInput(data.flavor_profile_csv || ""),
+      ingredients: toListFromInput(data.ingredients_csv || ""),
+      image_url: data.image_url || null,
+      popularity: data.popularity ?? 0,
+      rating: data.rating ?? 0,
     };
     await jsend(`/api/admin/dishes/${editing.id}`, body, "PATCH");
     setEditing(null);
+    reset();
+    setAutoSlug(true);
     reload();
   };
 
@@ -314,7 +506,7 @@ function ManageDishes({ municipalityId, q }: { municipalityId: number | null; q:
       <div className="md:col-span-2 space-y-3">
         <div className="flex gap-2 items-center">
           <div className="text-sm text-neutral-500">Category</div>
-          <select className="input w-40" value={cat} onChange={e=>setCat(e.target.value as any)}>
+          <select className="input w-40" value={cat} onChange={(e) => setCat(e.target.value as any)}>
             <option value="">All</option>
             <option value="food">Food</option>
             <option value="delicacy">Delicacy</option>
@@ -335,86 +527,178 @@ function ManageDishes({ municipalityId, q }: { municipalityId: number | null; q:
               </tr>
             </thead>
             <tbody>
-              {list.map(d => (
+              {list.map((d) => (
                 <tr key={d.id} className="border-t">
                   <td className="p-2">{d.name}</td>
                   <td className="p-2 text-center">{d.category}</td>
                   <td className="p-2 text-center">{d.municipality_id}</td>
                   <td className="p-2 text-center">{d.panel_rank ?? "—"}</td>
                   <td className="p-2 text-center">
-                    <button className="text-primary-600 underline" onClick={()=>setEditing(d)}>Edit</button>
+                    <button className="text-primary-600 underline" onClick={() => startEdit(d)}>Edit</button>
                   </td>
                 </tr>
               ))}
               {list.length === 0 && (
-                <tr><td colSpan={5} className="p-4 text-center text-neutral-500">No results.</td></tr>
+                <tr>
+                  <td colSpan={5} className="p-4 text-center text-neutral-500">
+                    No results.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Right: Create or Edit */}
+      {/* Right: Create or Edit (single form) */}
       <div className="space-y-3">
-        {!editing ? (
-          <>
-            <h3 className="font-semibold">Create Dish</h3>
-            <form className="space-y-2" onSubmit={create}>
-              <input className="input" name="name" placeholder="Name" required />
-              <input className="input" name="slug" placeholder="slug-like-this" required />
-              <input className="input" name="municipality_id" placeholder="Municipality ID" required />
-              <select className="input" name="category_code" required>
-                <option value="food">Food</option>
-                <option value="delicacy">Delicacy</option>
-                <option value="drink">Drink</option>
-              </select>
-              <textarea className="input" name="description" placeholder="Description" />
-              <input className="input" name="flavor_profile" placeholder="Flavor profile (comma-sep)" />
-              <input className="input" name="ingredients" placeholder="Ingredients (comma-sep)" />
-              <input className="input" name="image_url" placeholder="Image URL" />
-              <div className="flex gap-2">
-                <input className="input" name="popularity" type="number" step="1" placeholder="Popularity" />
-                <input className="input" name="rating" type="number" step="0.1" placeholder="Rating" />
-              </div>
-              <button className="btn btn-primary w-full">Create</button>
-            </form>
-          </>
-        ) : (
-          <>
-            <h3 className="font-semibold">Edit Dish</h3>
-            <div className="space-y-2">
-              <input className="input" value={editing.name} onChange={e=>setEditing({...editing, name:e.target.value})} />
-              <input className="input" value={editing.slug} onChange={e=>setEditing({...editing, slug:e.target.value})} />
-              <input className="input" value={editing.municipality_id} onChange={e=>setEditing({...editing, municipality_id:Number(e.target.value)||0})} />
-              <select className="input" value={editing.category} onChange={e=>setEditing({...editing, category:e.target.value as any})}>
-                <option value="food">Food</option>
-                <option value="delicacy">Delicacy</option>
-                <option value="drink">Drink</option>
-              </select>
-              <textarea className="input" value={editing.description ?? ""} onChange={e=>setEditing({...editing, description:e.target.value})} />
-              <input className="input" value={(editing.flavor_profile??[]).join(", ")} onChange={e=>setEditing({...editing, flavor_profile:toList(e.target.value)})} />
-              <input className="input" value={(editing.ingredients??[]).join(", ")} onChange={e=>setEditing({...editing, ingredients:toList(e.target.value)})} />
-              <input className="input" value={editing.image_url ?? ""} onChange={e=>setEditing({...editing, image_url:e.target.value||null})} />
-              <div className="flex gap-2">
-                <input className="input" type="number" step="1" value={editing.popularity ?? 0} onChange={e=>setEditing({...editing, popularity:Number(e.target.value)||0})} />
-                <input className="input" type="number" step="0.1" value={editing.rating ?? 0} onChange={e=>setEditing({...editing, rating:Number(e.target.value)||0})} />
-              </div>
-              <div className="flex gap-2">
-                <button className="btn btn-primary" onClick={saveEdit}>Save</button>
-                <button className="btn" onClick={()=>setEditing(null)}>Cancel</button>
-              </div>
+        <h3 className="font-semibold">{editing ? "Edit Dish" : "Create Dish"}</h3>
+
+        <form
+          className="space-y-2"
+          onSubmit={editing ? handleSubmit(saveEdit) : handleSubmit(onCreate)}
+        >
+          {/* Municipality dropdown */}
+          <div>
+            <div className="text-xs text-neutral-500 mb-1">Municipality</div>
+            <Controller
+              name="municipality_id"
+              control={control}
+              render={({ field }) => (
+                <MunicipalitySelect
+                  value={field.value ?? null}
+                  onChange={(id) => field.onChange(id ?? undefined)}
+                  placeholder="Select municipality…"
+                  allowAll={false}
+                />
+              )}
+            />
+            {errors.municipality_id && (
+              <div className="text-xs text-red-600 mt-1">{errors.municipality_id.message}</div>
+            )}
+          </div>
+
+          {/* Name + Slug (auto) */}
+          <div>
+            <div className="text-xs text-neutral-500 mb-1">Name</div>
+            <input className="input w-full" {...register("name")} placeholder="e.g. Valenciana (SJDM)" />
+            {errors.name && <div className="text-xs text-red-600 mt-1">{errors.name.message}</div>}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <div className="text-xs text-neutral-500 mb-1">Slug</div>
+              <input className="input w-full" {...register("slug")} placeholder="auto-generated-from-name" />
+              {errors.slug && <div className="text-xs text-red-600 mt-1">{errors.slug.message}</div>}
             </div>
-          </>
-        )}
+            <label className="text-xs flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={autoSlug}
+                onChange={(e) => setAutoSlug(e.target.checked)}
+              />
+              Auto-slug
+            </label>
+          </div>
+
+          {/* Category */}
+          <div>
+            <div className="text-xs text-neutral-500 mb-1">Category</div>
+            <select className="input w-full" {...register("category_code")}>
+              <option value="food">Food</option>
+              <option value="delicacy">Delicacy</option>
+              <option value="drink">Drink</option>
+            </select>
+          </div>
+
+          <textarea className="input" {...register("description")} placeholder="Description" />
+          <input className="input" {...register("flavor_profile_csv")} placeholder="Flavor profile (comma-sep)" />
+          <input className="input" {...register("ingredients_csv")} placeholder="Ingredients (comma-sep)" />
+          <input className="input" {...register("image_url")} placeholder="Image URL" />
+          {errors.image_url && <div className="text-xs text-red-600 mt-1">{errors.image_url.message}</div>}
+
+          <div className="flex gap-2">
+            <input className="input" type="number" step="1" {...register("popularity", { valueAsNumber: true })} placeholder="Popularity" />
+            <input className="input" type="number" step="0.1" {...register("rating", { valueAsNumber: true })} placeholder="Rating" />
+          </div>
+
+          <div className="flex gap-2">
+            <button className="btn btn-primary" disabled={isSubmitting}>
+              {editing ? "Save" : "Create"}
+            </button>
+            {editing && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setEditing(null);
+                  reset();
+                  setAutoSlug(true);
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
       </div>
     </div>
   );
 }
 
+
 /* -------- Restaurants CRUD -------- */
+/* -------- Restaurants CRUD (react-hook-form + Zod) -------- */
+const restoSchema = z.object({
+  municipality_id: z.number().int().positive({ message: "Municipality is required" }),
+  name: z.string().min(2, "Name is too short"),
+  slug: z.string().min(2).regex(/^[a-z0-9-]+$/, "Lowercase letters, numbers and dashes only"),
+  kind: z.enum(["restaurant", "stall", "store", "dealer", "market", "home-based"]).default("restaurant"),
+  address: z.string().min(3, "Address is required"),
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  description: z.string().optional(),
+  price_range: z.enum(["budget", "moderate", "expensive"]).default("moderate"),
+  cuisine_csv: z.string().optional(),
+  phone: z.string().optional(),
+  website: z.string().url().optional().or(z.literal("")),
+  facebook: z.string().url().optional().or(z.literal("")),
+  instagram: z.string().url().optional().or(z.literal("")),
+  opening_hours: z.string().optional(),
+  rating: z.coerce.number().min(0).max(5).default(0),
+});
+type RestoForm = z.infer<typeof restoSchema>;
+
 function ManageRestaurants({ municipalityId, q }: { municipalityId: number | null; q: string }) {
   const [list, setList] = useState<Restaurant[]>([]);
   const [editing, setEditing] = useState<Restaurant | null>(null);
+
+  const {
+    register, handleSubmit, control, setValue, reset,
+    formState: { errors, isSubmitting }
+  } = useForm<RestoForm>({
+    resolver: zodResolver(restoSchema),
+    defaultValues: {
+      municipality_id: municipalityId ?? undefined,
+      name: "", slug: "",
+      kind: "restaurant",
+      address: "",
+      lat: 0, lng: 0,
+      description: "",
+      price_range: "moderate",
+      cuisine_csv: "",
+      phone: "",
+      website: "", facebook: "", instagram: "",
+      opening_hours: "",
+      rating: 0,
+    }
+  });
+
+  const nameWatch = watchSafe(register, "name");
+  const [autoSlug, setAutoSlug] = useState(true);
+  useEffect(() => {
+    if (autoSlug) setValue("slug", slugify(nameWatch || ""));
+  }, [nameWatch, autoSlug, setValue]);
 
   const reload = async () => {
     const qs = new URLSearchParams();
@@ -422,65 +706,82 @@ function ManageRestaurants({ municipalityId, q }: { municipalityId: number | nul
     if (municipalityId) qs.set("municipalityId", String(municipalityId));
     qs.set("limit", "200");
     const rows = await jget<Restaurant[]>(`/api/restaurants?${qs.toString()}`);
-    setList(rows.map(r => ({
+    setList(rows.map((r) => ({
       ...r,
       cuisine_types: Array.isArray(r.cuisine_types) ? r.cuisine_types : (r.cuisine_types ? safeJsonArray(r.cuisine_types) : []),
     })));
   };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [municipalityId, q]);
+  useEffect(() => { reload(); /* eslint-disable-line */ }, [municipalityId, q]);
 
-  const create = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+  const onCreate = async (data: RestoForm) => {
     const payload = {
-      municipality_id: Number(fd.get("municipality_id")),
-      name: String(fd.get("name")),
-      slug: String(fd.get("slug")),
-      kind: String(fd.get("kind") || "restaurant"),
-      address: String(fd.get("address")),
-      lat: Number(fd.get("lat")),
-      lng: Number(fd.get("lng")),
-      description: String(fd.get("description") || "") || null,
-      price_range: String(fd.get("price_range") || "moderate"),
-      cuisine_types: toList(fd.get("cuisine_types")),
-      phone: String(fd.get("phone") || "") || null,
-      email: String(fd.get("email") || "") || null,
-      website: String(fd.get("website") || "") || null,
-      facebook: String(fd.get("facebook") || "") || null,
-      instagram: String(fd.get("instagram") || "") || null,
-      opening_hours: String(fd.get("opening_hours") || "") || null,
-      rating: Number(fd.get("rating") || 0),
+      municipality_id: data.municipality_id,
+      name: data.name.trim(),
+      slug: data.slug.trim(),
+      kind: data.kind,
+      address: data.address.trim(),
+      lat: data.lat, lng: data.lng,
+      description: data.description || null,
+      price_range: data.price_range,
+      cuisine_types: toListFromInput(data.cuisine_csv || ""),
+      phone: data.phone || null,
+      website: data.website || null,
+      facebook: data.facebook || null,
+      instagram: data.instagram || null,
+      opening_hours: data.opening_hours || null,
+      rating: data.rating ?? 0,
     };
     await jsend("/api/admin/restaurants", payload, "POST");
-    (e.target as HTMLFormElement).reset();
+    reset({ municipality_id: municipalityId ?? undefined, kind: "restaurant", price_range: "moderate" } as any);
+    setAutoSlug(true);
     reload();
   };
 
-  const saveEdit = async () => {
+  const startEdit = (r: Restaurant) => {
+    setEditing(r);
+    reset({
+      municipality_id: r.municipality_id ?? municipalityId ?? undefined,
+      name: r.name, slug: r.slug, kind: (r.kind as any) || "restaurant",
+      address: r.address, lat: r.lat, lng: r.lng,
+      description: r.description ?? "",
+      price_range: r.price_range,
+      cuisine_csv: (r.cuisine_types ?? []).join(", "),
+      phone: r.phone ?? "",
+      website: r.website ?? "", facebook: r.facebook ?? "", instagram: r.instagram ?? "",
+      opening_hours: r.opening_hours ?? "",
+      rating: r.rating ?? 0,
+    });
+    setAutoSlug(false);
+  };
+
+  const saveEdit = async (data: RestoForm) => {
     if (!editing) return;
     const body = {
-      name: editing.name,
-      slug: editing.slug,
-      kind: editing.kind,
-      description: editing.description,
-      municipality_id: editing.municipality_id,
-      address: editing.address,
-      phone: editing.phone, email: undefined, website: editing.website,
-      facebook: editing.facebook, instagram: editing.instagram,
-      opening_hours: editing.opening_hours,
-      price_range: editing.price_range,
-      cuisine_types: editing.cuisine_types,
-      rating: editing.rating,
-      lat: editing.lat, lng: editing.lng,
+      municipality_id: data.municipality_id,
+      name: data.name.trim(),
+      slug: data.slug.trim(),
+      kind: data.kind,
+      address: data.address.trim(),
+      lat: data.lat, lng: data.lng,
+      description: data.description || null,
+      price_range: data.price_range,
+      cuisine_types: toListFromInput(data.cuisine_csv || ""),
+      phone: data.phone || null,
+      website: data.website || null,
+      facebook: data.facebook || null,
+      instagram: data.instagram || null,
+      opening_hours: data.opening_hours || null,
+      rating: data.rating ?? 0,
     };
     await jsend(`/api/admin/restaurants/${editing.id}`, body, "PATCH");
     setEditing(null);
+    reset();
+    setAutoSlug(true);
     reload();
   };
 
   return (
     <div className="grid md:grid-cols-3 gap-6">
-      {/* Left: list */}
       <div className="md:col-span-2">
         <div className="border rounded overflow-hidden">
           <table className="w-full text-sm">
@@ -494,14 +795,14 @@ function ManageRestaurants({ municipalityId, q }: { municipalityId: number | nul
               </tr>
             </thead>
             <tbody>
-              {list.map(r => (
+              {list.map((r) => (
                 <tr key={r.id} className="border-t">
                   <td className="p-2">{r.name}</td>
                   <td className="p-2 text-center">{r.municipality_id ?? "—"}</td>
                   <td className="p-2 text-center">{r.price_range}</td>
                   <td className="p-2 text-center">{r.panel_rank ?? "—"}</td>
                   <td className="p-2 text-center">
-                    <button className="text-primary-600 underline" onClick={()=>setEditing(r)}>Edit</button>
+                    <button className="text-primary-600 underline" onClick={() => startEdit(r)}>Edit</button>
                   </td>
                 </tr>
               ))}
@@ -513,82 +814,110 @@ function ManageRestaurants({ municipalityId, q }: { municipalityId: number | nul
         </div>
       </div>
 
-      {/* Right: Create or Edit */}
       <div className="space-y-3">
-        {!editing ? (
-          <>
-            <h3 className="font-semibold">Create Restaurant</h3>
-            <form className="space-y-2" onSubmit={create}>
-              <input className="input" name="name" placeholder="Name" required />
-              <input className="input" name="slug" placeholder="slug-like-this" required />
-              <input className="input" name="municipality_id" placeholder="Municipality ID" required />
-              <input className="input" name="address" placeholder="Address" required />
-              <div className="flex gap-2">
-                <input className="input" name="lat" placeholder="Lat" required />
-                <input className="input" name="lng" placeholder="Lng" required />
-              </div>
-              <select className="input" name="kind" defaultValue="restaurant">
-                <option>restaurant</option>
-                <option>stall</option>
-                <option>store</option>
-                <option>dealer</option>
-                <option>market</option>
-                <option>home-based</option>
-              </select>
-              <select className="input" name="price_range" defaultValue="moderate">
-                <option>budget</option>
-                <option>moderate</option>
-                <option>expensive</option>
-              </select>
-              <textarea className="input" name="description" placeholder="Description" />
-              <input className="input" name="cuisine_types" placeholder="Cuisines (comma-sep)" />
-              <input className="input" name="phone" placeholder="Phone" />
-              <input className="input" name="website" placeholder="Website" />
-              <input className="input" name="facebook" placeholder="Facebook" />
-              <input className="input" name="instagram" placeholder="Instagram" />
-              <input className="input" name="opening_hours" placeholder="Opening hours" />
-              <input className="input" name="rating" type="number" step="0.1" placeholder="Rating" />
-              <button className="btn btn-primary w-full">Create</button>
-            </form>
-          </>
-        ) : (
-          <>
-            <h3 className="font-semibold">Edit Restaurant</h3>
-            <div className="space-y-2">
-              <input className="input" value={editing.name} onChange={e=>setEditing({...editing, name:e.target.value})} />
-              <input className="input" value={editing.slug} onChange={e=>setEditing({...editing, slug:e.target.value})} />
-              <input className="input" value={editing.municipality_id ?? 0} onChange={e=>setEditing({...editing, municipality_id:Number(e.target.value)||0})} />
-              <input className="input" value={editing.address} onChange={e=>setEditing({...editing, address:e.target.value})} />
-              <div className="flex gap-2">
-                <input className="input" value={editing.lat} onChange={e=>setEditing({...editing, lat:Number(e.target.value)||0})} />
-                <input className="input" value={editing.lng} onChange={e=>setEditing({...editing, lng:Number(e.target.value)||0})} />
-              </div>
-              <select className="input" value={editing.kind} onChange={e=>setEditing({...editing, kind:e.target.value})}>
-                <option>restaurant</option><option>stall</option><option>store</option>
-                <option>dealer</option><option>market</option><option>home-based</option>
-              </select>
-              <select className="input" value={editing.price_range} onChange={e=>setEditing({...editing, price_range:e.target.value as any})}>
-                <option>budget</option><option>moderate</option><option>expensive</option>
-              </select>
-              <textarea className="input" value={editing.description ?? ""} onChange={e=>setEditing({...editing, description:e.target.value||null})} />
-              <input className="input" value={(editing.cuisine_types??[]).join(", ")} onChange={e=>setEditing({...editing, cuisine_types:toList(e.target.value)})} />
-              <input className="input" value={editing.phone ?? ""} onChange={e=>setEditing({...editing, phone:e.target.value||null})} />
-              <input className="input" value={editing.website ?? ""} onChange={e=>setEditing({...editing, website:e.target.value||null})} />
-              <input className="input" value={editing.facebook ?? ""} onChange={e=>setEditing({...editing, facebook:e.target.value||null})} />
-              <input className="input" value={editing.instagram ?? ""} onChange={e=>setEditing({...editing, instagram:e.target.value||null})} />
-              <input className="input" value={editing.opening_hours ?? ""} onChange={e=>setEditing({...editing, opening_hours:e.target.value||null})} />
-              <input className="input" type="number" step="0.1" value={editing.rating} onChange={e=>setEditing({...editing, rating:Number(e.target.value)||0})} />
-              <div className="flex gap-2">
-                <button className="btn btn-primary" onClick={saveEdit}>Save</button>
-                <button className="btn" onClick={()=>setEditing(null)}>Cancel</button>
-              </div>
+        <h3 className="font-semibold">{editing ? "Edit Restaurant" : "Create Restaurant"}</h3>
+
+        <form
+          className="space-y-2"
+          onSubmit={editing ? handleSubmit(saveEdit) : handleSubmit(onCreate)}
+        >
+          {/* Municipality dropdown */}
+          <div>
+            <div className="text-xs text-neutral-500 mb-1">Municipality</div>
+            <Controller
+              name="municipality_id"
+              control={control}
+              render={({ field }) => (
+                <MunicipalitySelect
+                  value={field.value ?? null}
+                  onChange={(id) => field.onChange(id ?? undefined)}
+                  placeholder="Select municipality…"
+                  allowAll={false}
+                />
+              )}
+            />
+            {errors.municipality_id && (
+              <div className="text-xs text-red-600 mt-1">{errors.municipality_id.message}</div>
+            )}
+          </div>
+
+          {/* Name + Slug */}
+          <div>
+            <div className="text-xs text-neutral-500 mb-1">Name</div>
+            <input className="input w-full" {...register("name")} placeholder="Name" />
+            {errors.name && <div className="text-xs text-red-600 mt-1">{errors.name.message}</div>}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <div className="text-xs text-neutral-500 mb-1">Slug</div>
+              <input className="input w-full" {...register("slug")} placeholder="slug-like-this" />
+              {errors.slug && <div className="text-xs text-red-600 mt-1">{errors.slug.message}</div>}
             </div>
-          </>
-        )}
+            <label className="text-xs flex items-center gap-1">
+              <input type="checkbox" checked={autoSlug} onChange={(e) => setAutoSlug(e.target.checked)} />
+              Auto-slug
+            </label>
+          </div>
+
+          <select className="input" {...register("kind")}>
+            <option>restaurant</option><option>stall</option><option>store</option>
+            <option>dealer</option><option>market</option><option>home-based</option>
+          </select>
+
+          <input className="input" {...register("address")} placeholder="Address" />
+          {errors.address && <div className="text-xs text-red-600 mt-1">{errors.address.message}</div>}
+
+          <div className="flex gap-2">
+            <input className="input" type="number" step="0.000001" {...register("lat", { valueAsNumber: true })} placeholder="Lat" />
+            <input className="input" type="number" step="0.000001" {...register("lng", { valueAsNumber: true })} placeholder="Lng" />
+          </div>
+          {(errors.lat || errors.lng) && (
+            <div className="text-xs text-red-600 mt-1">Latitude/Longitude invalid</div>
+          )}
+
+          <select className="input" {...register("price_range")}>
+            <option>budget</option><option>moderate</option><option>expensive</option>
+          </select>
+
+          <textarea className="input" {...register("description")} placeholder="Description" />
+          <input className="input" {...register("cuisine_csv")} placeholder="Cuisines (comma-sep)" />
+          <input className="input" {...register("phone")} placeholder="Phone" />
+          <input className="input" {...register("website")} placeholder="Website URL" />
+          <input className="input" {...register("facebook")} placeholder="Facebook URL" />
+          <input className="input" {...register("instagram")} placeholder="Instagram URL" />
+          <input className="input" {...register("opening_hours")} placeholder="Opening hours" />
+          <input className="input" type="number" step="0.1" {...register("rating", { valueAsNumber: true })} placeholder="Rating" />
+
+          <div className="flex gap-2">
+            <button className="btn btn-primary" disabled={isSubmitting}>
+              {editing ? "Save" : "Create"}
+            </button>
+            {editing && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setEditing(null);
+                  reset();
+                  setAutoSlug(true);
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
       </div>
     </div>
   );
 }
+
+// small helper so RHF watch doesn't explode if not used
+function watchSafe(registerFn: any, name: string) {
+  try { return (registerFn as any)._f?.name ? undefined : ""; } catch { return ""; }
+}
+
 
 /* ==================== Link Tab (dish ↔ restaurant) ==================== */
 function LinkTab() {
