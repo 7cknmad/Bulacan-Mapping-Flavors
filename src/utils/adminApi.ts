@@ -108,13 +108,7 @@ export const list = {
     return get<Restaurant[]>(`/api/restaurants${suffix}`);
   },
   restaurantsByDish: (dishId: number) => get<(Restaurant & { price_note: string|null; availability: string })[]>(`/api/restaurants/by-dish/${dishId}`),
-  dishesByMunicipality: (municipalityId: number, category?: string, signature?: boolean) => {
-    const qs = new URLSearchParams();
-    if (category) qs.set("category", category);
-    if (signature) qs.set("signature", "1");
-    const suffix = `?${qs.toString()}`;
-    return get<Dish[]>(`/api/municipalities/${municipalityId}/dishes${suffix}`);
-  },
+  dishesByMunicipality: (municipalityId: number) => get<Dish[]>(`/api/municipalities/${municipalityId}/dishes`),
   restaurantsByMunicipality: (municipalityId: number, featured?: boolean) => {
     const qs = new URLSearchParams();
     if (featured) qs.set("featured", "1");
@@ -127,18 +121,18 @@ export const list = {
 
 /** ====== Admin CRUD + Linking ====== */
 export const adminData = {
-  // live search
+  // (Optional) live search endpoints if present
   searchDishes: (q: string) => get<Array<{ id: number; name: string; slug: string; category: string }>>(`/api/admin/search/dishes?q=${encodeURIComponent(q)}`),
   searchRestaurants: (q: string) => get<Array<{ id: number; name: string; slug: string }>>(`/api/admin/search/restaurants?q=${encodeURIComponent(q)}`),
 
-  // Dishes
+  // Dishes — UPDATE via POST (upsert) so it works even if PATCH not implemented
   createDish: (payload: any) => post<{ id: number }>("/api/admin/dishes", payload),
-  updateDish: (id: number, payload: any) => patch<{ ok: true }>(`/api/admin/dishes/${id}`, payload),
+  updateDish: (id: number, payload: any) => post<{ id: number }>("/api/admin/dishes", { ...payload }), // relies on slug upsert
   deleteDish: (id: number) => del<{ ok: true }>(`/api/admin/dishes/${id}`),
 
-  // Restaurants
+  // Restaurants — UPDATE via POST (upsert)
   createRestaurant: (payload: any) => post<{ id: number }>("/api/admin/restaurants", payload),
-  updateRestaurant: (id: number, payload: any) => patch<{ ok: true }>(`/api/admin/restaurants/${id}`, payload),
+  updateRestaurant: (id: number, payload: any) => post<{ id: number }>("/api/admin/restaurants", { ...payload }),
   deleteRestaurant: (id: number) => del<{ ok: true }>(`/api/admin/restaurants/${id}`),
 
   // Linking

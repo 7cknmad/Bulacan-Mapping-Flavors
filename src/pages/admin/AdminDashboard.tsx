@@ -11,7 +11,7 @@ import {
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from "recharts";
 
-/* ========== Helpers ========== */
+/* ========== helpers ========== */
 const slugify = (s: string) =>
   s.toLowerCase()
    .trim()
@@ -19,19 +19,28 @@ const slugify = (s: string) =>
    .replace(/[^a-z0-9]+/g, "-")
    .replace(/^-+|-+$/g, "");
 
+function useDebounced<T>(value: T, ms = 250) {
+  const [deb, setDeb] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDeb(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return deb;
+}
+
 const COLORS = ["#2563eb", "#22c55e", "#f59e0b", "#ef4444", "#14b8a6", "#a855f7"];
 
 /* ========== Schemas ========== */
 const DishSchema = z.object({
   id: z.number().optional(),
   municipality_id: z.number({ required_error: "Municipality is required" }),
-  category_code: z.enum(["food", "delicacy", "drink"]),
-  name: z.string().min(2),
-  slug: z.string().min(2),
+  category_code: z.enum(["food", "delicacy", "drink"], { required_error: "Category is required" }),
+  name: z.string().min(2, "Name is required"),
+  slug: z.string().min(2, "Slug is required"),
   description: z.string().optional().nullable(),
-  image_url: z.string().url().optional().or(z.literal("")).nullable(),
-  flavor_profile_csv: z.string().optional().nullable(), // UI only
-  ingredients_csv: z.string().optional().nullable(),    // UI only
+  image_url: z.string().url("Must be a valid URL").optional().or(z.literal("")).nullable(),
+  flavor_profile_csv: z.string().optional().nullable(),
+  ingredients_csv: z.string().optional().nullable(),
   popularity: z.number().min(0).max(100).default(0).optional(),
   rating: z.number().min(0).max(5).default(0).optional(),
 });
@@ -40,15 +49,15 @@ type DishForm = z.infer<typeof DishSchema>;
 const RestaurantSchema = z.object({
   id: z.number().optional(),
   municipality_id: z.number({ required_error: "Municipality is required" }),
-  name: z.string().min(2),
-  slug: z.string().min(2),
-  kind: z.enum(["restaurant","stall","store","dealer","market","home-based"]).default("restaurant"),
-  address: z.string().min(3),
-  lat: z.number(),
-  lng: z.number(),
+  name: z.string().min(2, "Name is required"),
+  slug: z.string().min(2, "Slug is required"),
+  kind: z.enum(["restaurant","stall","store","dealer","market","home-based"]),
+  address: z.string().min(3, "Address is required"),
+  lat: z.number({ required_error: "Latitude is required" }),
+  lng: z.number({ required_error: "Longitude is required" }),
   description: z.string().optional().nullable(),
-  price_range: z.enum(["budget","moderate","expensive"]).default("moderate"),
-  cuisine_csv: z.string().optional().nullable(), // UI only
+  price_range: z.enum(["budget","moderate","expensive"]),
+  cuisine_csv: z.string().optional().nullable(),
   phone: z.string().nullable().optional(),
   email: z.string().nullable().optional(),
   website: z.string().nullable().optional(),
@@ -60,6 +69,17 @@ const RestaurantSchema = z.object({
 type RestaurantForm = z.infer<typeof RestaurantSchema>;
 
 /* ========== Small UI bits ========== */
+function Label({ children, required }: { children: React.ReactNode; required?: boolean }) {
+  return (
+    <div className="text-sm text-neutral-700">
+      {children}{required && <span className="text-red-600 ml-0.5">*</span>}
+    </div>
+  );
+}
+function FieldError({ msg }: { msg?: string }) {
+  if (!msg) return null;
+  return <div className="text-xs text-red-600 mt-1">{msg}</div>;
+}
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <section className="rounded-lg border bg-white shadow-sm">
@@ -71,7 +91,6 @@ function Section({ title, children, right }: { title: string; children: React.Re
     </section>
   );
 }
-
 function SearchBox({ placeholder, value, onChange }: { placeholder: string; value: string; onChange: (v: string) => void }) {
   return (
     <input
@@ -88,7 +107,7 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState<"analytics"|"dishes"|"restaurants"|"linking"|"curation">("analytics");
   const qc = useQueryClient();
 
-  /* ---- Shared municipal data ---- */
+  /* ---- Shared muni list ---- */
   const muniQ = useQuery<Municipality[]>({
     queryKey: ["admin:municipalities:list"],
     queryFn: list.municipalities,
@@ -105,13 +124,11 @@ export default function AdminDashboard() {
     queryFn: adminStats.overview,
     staleTime: 60_000,
   });
-
   const topDishesQ = useQuery({
     queryKey: ["admin:stats:top-dishes", analyticsMuniId ?? undefined],
     queryFn: () => adminStats.topDishes(analyticsMuniId ?? undefined, undefined, 8),
     staleTime: 60_000,
   });
-
   const topRestaurantsQ = useQuery({
     queryKey: ["admin:stats:top-restaurants", analyticsMuniId ?? undefined],
     queryFn: () => adminStats.topRestaurants(analyticsMuniId ?? undefined, 8),
@@ -136,13 +153,20 @@ export default function AdminDashboard() {
   }, [topDishesQ.data]);
 
   /* =========================
-     DISHES — CRUD + search
+     DISHES — CRUD + muni filter + always list
   ========================== */
+  const [dishMuniFilter, setDishMuniFilter] = useState<number | null>(null);
   const [dishSearch, setDishSearch] = useState("");
-  const dishSearchQ = useQuery({
-    queryKey: ["admin:search:dishes", dishSearch],
-    queryFn: () => dishSearch.trim().length >= 2 ? adminData.searchDishes(dishSearch.trim()) : Promise.resolve([]),
-    staleTime: 5_000,
+  const dishQDeb = useDebounced(dishSearch, 300);
+
+  const dishesListQ = useQuery({
+    queryKey: ["admin:list:dishes", { muni: dishMuniFilter, q: dishQDeb }],
+    queryFn: () => list.dishes({
+      municipalityId: dishMuniFilter ?? undefined,
+      q: dishQDeb.trim() || undefined,
+      limit: 200,
+    }),
+    staleTime: 15_000,
   });
 
   const dishForm = useForm<DishForm>({
@@ -155,23 +179,23 @@ export default function AdminDashboard() {
       popularity: 0, rating: 0
     },
   });
+  const [autoSlugDish, setAutoSlugDish] = useState(true);
 
-  function loadDish(d: { slug: string }) {
-    list.dishBySlug(d.slug).then((full) => {
-      if (!full) return;
-      dishForm.reset({
-        id: full.id,
-        municipality_id: full.municipality_id,
-        category_code: full.category,
-        name: full.name,
-        slug: full.slug,
-        description: full.description ?? "",
-        image_url: full.image_url ?? "",
-        flavor_profile_csv: (full.flavor_profile ?? []).join(", "),
-        ingredients_csv: (full.ingredients ?? []).join(", "),
-        popularity: full.popularity ?? 0,
-        rating: full.rating ?? 0,
-      });
+  function loadDishById(id: number) {
+    const full = (dishesListQ.data ?? []).find(d => d.id === id);
+    if (!full) return;
+    dishForm.reset({
+      id: full.id,
+      municipality_id: full.municipality_id,
+      category_code: full.category,
+      name: full.name,
+      slug: full.slug,
+      description: full.description ?? "",
+      image_url: full.image_url ?? "",
+      flavor_profile_csv: (full.flavor_profile ?? []).join(", "),
+      ingredients_csv: (full.ingredients ?? []).join(", "),
+      popularity: full.popularity ?? 0,
+      rating: full.rating ?? 0,
     });
   }
 
@@ -190,7 +214,7 @@ export default function AdminDashboard() {
     };
     const action = values.id ? adminData.updateDish(values.id, payload) : adminData.createDish(payload);
     action.then(() => {
-      qc.invalidateQueries({ queryKey: ["admin:search:dishes"] });
+      qc.invalidateQueries({ queryKey: ["admin:list:dishes"] });
       alert("Dish saved.");
     }).catch(e => alert(e.message));
   }
@@ -201,20 +225,26 @@ export default function AdminDashboard() {
     if (!confirm("Delete this dish?")) return;
     adminData.deleteDish(v.id).then(() => {
       dishForm.reset();
-      setDishSearch("");
-      qc.invalidateQueries({ queryKey: ["admin:search:dishes"] });
+      qc.invalidateQueries({ queryKey: ["admin:list:dishes"] });
       alert("Dish deleted.");
-    }).catch(e => alert(e.message));
+    }).catch(e => alert("Delete endpoint not available on API. Please add DELETE /api/admin/dishes/:id"));
   }
 
   /* =========================
-     RESTAURANTS — CRUD + search
+     RESTAURANTS — CRUD + muni filter + always list
   ========================== */
+  const [restMuniFilter, setRestMuniFilter] = useState<number | null>(null);
   const [restSearch, setRestSearch] = useState("");
-  const restSearchQ = useQuery({
-    queryKey: ["admin:search:restaurants", restSearch],
-    queryFn: () => restSearch.trim().length >= 2 ? adminData.searchRestaurants(restSearch.trim()) : Promise.resolve([]),
-    staleTime: 5_000,
+  const restQDeb = useDebounced(restSearch, 300);
+
+  const restaurantsListQ = useQuery({
+    queryKey: ["admin:list:restaurants", { muni: restMuniFilter, q: restQDeb }],
+    queryFn: () => list.restaurants({
+      municipalityId: restMuniFilter ?? undefined,
+      q: restQDeb.trim() || undefined,
+      limit: 200,
+    }),
+    staleTime: 15_000,
   });
 
   const restForm = useForm<RestaurantForm>({
@@ -227,31 +257,27 @@ export default function AdminDashboard() {
       rating: 0
     },
   });
+  const [autoSlugRest, setAutoSlugRest] = useState(true);
 
-  function loadRestaurant(r: { slug: string }) {
-    list.restaurantBySlug(r.slug).then((full) => {
-      if (!full) return;
-      restForm.reset({
-        id: full.id,
-        municipality_id: (full as any).municipality_id ?? undefined, // if not in type, backend still has it
-        name: full.name,
-        slug: full.slug,
-        kind: full.kind,
-        address: full.address,
-        lat: full.lat,
-        lng: full.lng,
-        description: full.description ?? "",
-        price_range: full.price_range,
-        cuisine_csv: (full.cuisine_types ?? []).join(", "),
-        phone: full.phone ?? "",
-        email: (full as any).email ?? "",
-        website: full.website ?? "",
-        facebook: full.facebook ?? "",
-        instagram: full.instagram ?? "",
-        opening_hours: full.opening_hours ?? "",
-        rating: full.rating ?? 0,
-      } as any);
-    });
+  function loadRestaurantById(id: number) {
+    const full = (restaurantsListQ.data ?? []).find(r => r.id === id);
+    if (!full) return;
+    restForm.reset({
+      id: full.id,
+      municipality_id: (full as any).municipality_id ?? restMuniFilter ?? undefined as unknown as number,
+      name: full.name, slug: full.slug, kind: full.kind,
+      address: full.address, lat: full.lat, lng: full.lng,
+      description: full.description ?? "",
+      price_range: full.price_range,
+      cuisine_csv: (full.cuisine_types ?? []).join(", "),
+      phone: full.phone ?? "",
+      email: (full as any).email ?? "",
+      website: full.website ?? "",
+      facebook: full.facebook ?? "",
+      instagram: full.instagram ?? "",
+      opening_hours: full.opening_hours ?? "",
+      rating: full.rating ?? 0,
+    } as any);
   }
 
   function saveRestaurant(values: RestaurantForm) {
@@ -276,7 +302,7 @@ export default function AdminDashboard() {
     };
     const action = values.id ? adminData.updateRestaurant(values.id, payload) : adminData.createRestaurant(payload);
     action.then(() => {
-      qc.invalidateQueries({ queryKey: ["admin:search:restaurants"] });
+      qc.invalidateQueries({ queryKey: ["admin:list:restaurants"] });
       alert("Restaurant saved.");
     }).catch(e => alert(e.message));
   }
@@ -287,23 +313,24 @@ export default function AdminDashboard() {
     if (!confirm("Delete this restaurant?")) return;
     adminData.deleteRestaurant(v.id).then(() => {
       restForm.reset();
-      setRestSearch("");
-      qc.invalidateQueries({ queryKey: ["admin:search:restaurants"] });
+      qc.invalidateQueries({ queryKey: ["admin:list:restaurants"] });
       alert("Restaurant deleted.");
-    }).catch(e => alert(e.message));
+    }).catch(e => alert("Delete endpoint not available on API. Please add DELETE /api/admin/restaurants/:id"));
   }
 
   /* =========================
      LINKING — dish ↔ restaurants
   ========================== */
-  const [linkDish, setLinkDish] = useState<{ id: number; name: string; slug: string } | null>(null);
+  const [linkDish, setLinkDish] = useState<Dish | null>(null);
   const [linkMuniId, setLinkMuniId] = useState<number | null>(null);
+
   const linkedSetQ = useQuery({
     enabled: !!linkDish?.id,
     queryKey: ["admin:link:byDish", linkDish?.id],
     queryFn: () => list.restaurantsByDish(linkDish!.id),
   });
-  const allRestoQ = useQuery({
+
+  const linkRestaurantsQ = useQuery({
     enabled: linkMuniId != null,
     queryKey: ["admin:link:restaurants", linkMuniId],
     queryFn: () => list.restaurants({ municipalityId: linkMuniId ?? undefined, limit: 200 }),
@@ -318,31 +345,19 @@ export default function AdminDashboard() {
     const p = isLinked
       ? adminData.unlinkDishRestaurant(linkDish.id, restaurantId)
       : adminData.linkDishRestaurant(linkDish.id, restaurantId);
-    p.then(() => {
-      qc.invalidateQueries({ queryKey: ["admin:link:byDish", linkDish.id] });
-    }).catch(e => alert(e.message));
+    p.then(() => qc.invalidateQueries({ queryKey: ["admin:link:byDish", linkDish.id] }))
+     .catch(e => alert(e.message));
   }
 
   /* =========================
-     CURATION — top 3 per municipality
+     CURATION — top 3 Food, top 3 Delicacies, top 3 Restaurants
   ========================== */
   const [curateMuniId, setCurateMuniId] = useState<number | null>(null);
 
-  const curatedDishesQ = useQuery({
-    enabled: curateMuniId != null,
-    queryKey: ["admin:curation:dishes:featured", curateMuniId],
-    queryFn: () => list.dishesByMunicipality(curateMuniId!, "food,delicacy", true),
-  });
-  const allDishesQ = useQuery({
+  const allDishesForCurQ = useQuery({
     enabled: curateMuniId != null,
     queryKey: ["admin:curation:dishes:all", curateMuniId],
-    queryFn: () => list.dishesByMunicipality(curateMuniId!, "food,delicacy", false),
-  });
-
-  const curatedRestoQ = useQuery({
-    enabled: curateMuniId != null,
-    queryKey: ["admin:curation:resto:featured", curateMuniId],
-    queryFn: () => list.restaurantsByMunicipality(curateMuniId!, true),
+    queryFn: () => list.dishesByMunicipality(curateMuniId!),
   });
   const allRestoForCurQ = useQuery({
     enabled: curateMuniId != null,
@@ -350,66 +365,70 @@ export default function AdminDashboard() {
     queryFn: () => list.restaurantsByMunicipality(curateMuniId!, false),
   });
 
-  const [dishRanks, setDishRanks] = useState<Record<number, number>>({});
+  const dishFood = useMemo(() => (allDishesForCurQ.data ?? []).filter(d => d.category === "food"), [allDishesForCurQ.data]);
+  const dishDelicacy = useMemo(() => (allDishesForCurQ.data ?? []).filter(d => d.category === "delicacy"), [allDishesForCurQ.data]);
+
+  const [foodRanks, setFoodRanks] = useState<Record<number, number>>({});
+  const [delicacyRanks, setDelicacyRanks] = useState<Record<number, number>>({});
   const [restRanks, setRestRanks] = useState<Record<number, number>>({});
 
+  // initialize ranks from any existing panel_rank/is_signature flags if present in payload
   useEffect(() => {
-    // initialize ranks from featured data
-    const d = curatedDishesQ.data ?? [];
-    const ri: Record<number, number> = {};
-    d.forEach(x => { if (x.panel_rank != null) ri[x.id] = x.panel_rank!; });
-    setDishRanks(ri);
+    const f: Record<number, number> = {};
+    dishFood.forEach(d => { if ((d as any).panel_rank != null && (d as any).is_signature) f[d.id] = (d as any).panel_rank; });
+    setFoodRanks(f);
+    const dl: Record<number, number> = {};
+    dishDelicacy.forEach(d => { if ((d as any).panel_rank != null && (d as any).is_signature) dl[d.id] = (d as any).panel_rank; });
+    setDelicacyRanks(dl);
+  }, [dishFood, dishDelicacy]);
 
-    const r = curatedRestoQ.data ?? [];
+  useEffect(() => {
     const rr: Record<number, number> = {};
-    r.forEach(x => { if (x.panel_rank != null) rr[x.id] = x.panel_rank!; });
+    (allRestoForCurQ.data ?? []).forEach(r => { if ((r as any).panel_rank != null && (r as any).is_featured) rr[r.id] = (r as any).panel_rank; });
     setRestRanks(rr);
-  }, [curatedDishesQ.data, curatedRestoQ.data]);
+  }, [allRestoForCurQ.data]);
 
-  function toggleDishPick(id: number) {
-    setDishRanks(prev => {
+  function togglePick(map: Record<number, number>, setMap: (m: Record<number, number>) => void, id: number) {
+    setMap(prev => {
       const next = { ...prev };
-      if (id in next) delete next[id]; else next[id] = Object.values(next).includes(1) ? 2 : 1;
+      if (id in next) delete next[id]; else next[id] = Object.values(next).includes(1) ? (Object.values(next).includes(2) ? 3 : 2) : 1;
       return next;
     });
   }
-  function setDishRank(id: number, rank: number) {
-    setDishRanks(prev => ({ ...prev, [id]: rank }));
-  }
-  function toggleRestPick(id: number) {
-    setRestRanks(prev => {
-      const next = { ...prev };
-      if (id in next) delete next[id]; else next[id] = Object.values(next).includes(1) ? 2 : 1;
-      return next;
-    });
-  }
-  function setRestRank(id: number, rank: number) {
-    setRestRanks(prev => ({ ...prev, [id]: rank }));
+  function setRank(setter: (m: Record<number, number>) => void, id: number, rank: number) {
+    setter(prev => ({ ...prev, [id]: rank }));
   }
 
   async function saveCuration() {
     if (!curateMuniId) return;
-    // Dishes: set selected (signature=1, rank), clear others previously featured
-    const featured = new Set(Object.keys(dishRanks).map(Number));
-    const prev = new Set((curatedDishesQ.data ?? []).map(d => d.id));
-    const toAddOrUpdate = Array.from(featured);
-    const toRemove = Array.from(prev).filter(id => !featured.has(id));
 
-    await Promise.all([
-      ...toAddOrUpdate.map(id => adminData.updateDish(id, { is_signature: 1, panel_rank: dishRanks[id] ?? null })),
-      ...toRemove.map(id => adminData.updateDish(id, { is_signature: 0, panel_rank: null })),
-    ]);
+    const saveDishSet = async (idsToRank: Record<number, number>) => {
+      const selected = new Set(Object.keys(idsToRank).map(Number));
+      const allIds = new Set((allDishesForCurQ.data ?? []).map(d => d.id));
+      const toAddUpd = Array.from(selected);
+      const toRem = Array.from(allIds).filter(id => selected.has(id) === false && ((allDishesForCurQ.data ?? []).find(d => d.id===id) as any)?.is_signature);
 
-    // Restaurants: same idea using is_featured
-    const rFeatured = new Set(Object.keys(restRanks).map(Number));
-    const rPrev = new Set((curatedRestoQ.data ?? []).map(r => r.id));
-    const rAddUpd = Array.from(rFeatured);
-    const rRem = Array.from(rPrev).filter(id => !rFeatured.has(id));
+      await Promise.all([
+        ...toAddUpd.map(id => adminData.updateDish(id, { is_signature: 1, panel_rank: idsToRank[id] ?? null })),
+        ...toRem.map(id => adminData.updateDish(id, { is_signature: 0, panel_rank: null })),
+      ]);
+    };
 
-    await Promise.all([
-      ...rAddUpd.map(id => adminData.updateRestaurant(id, { is_featured: 1, panel_rank: restRanks[id] ?? null })),
-      ...rRem.map(id => adminData.updateRestaurant(id, { is_featured: 0, panel_rank: null })),
-    ]);
+    const saveRestSet = async (idsToRank: Record<number, number>) => {
+      const selected = new Set(Object.keys(idsToRank).map(Number));
+      const allIds = new Set((allRestoForCurQ.data ?? []).map(r => r.id));
+      const toAddUpd = Array.from(selected);
+      const toRem = Array.from(allIds).filter(id => selected.has(id) === false && ((allRestoForCurQ.data ?? []).find(r => r.id===id) as any)?.is_featured);
+
+      await Promise.all([
+        ...toAddUpd.map(id => adminData.updateRestaurant(id, { is_featured: 1, panel_rank: idsToRank[id] ?? null })),
+        ...toRem.map(id => adminData.updateRestaurant(id, { is_featured: 0, panel_rank: null })),
+      ]);
+    };
+
+    await saveDishSet(foodRanks);
+    await saveDishSet(delicacyRanks);
+    await saveRestSet(restRanks);
 
     qc.invalidateQueries({ queryKey: ["admin:curation"] });
     alert("Curation saved.");
@@ -449,7 +468,7 @@ export default function AdminDashboard() {
                 <div className="text-sm text-neutral-600">Municipality:</div>
                 <MunicipalitySelect
                   value={analyticsMuniId}
-                  onChange={(id)=> setAnalyticsMuniId(id)}
+                  onChange={setAnalyticsMuniId}
                   placeholder="All municipalities…"
                   allowAll
                 />
@@ -506,31 +525,42 @@ export default function AdminDashboard() {
       {/* ============ DISHES ============ */}
       {tab==="dishes" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Section title="Find or create">
+          <Section
+            title="Find or Create"
+            right={
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-neutral-600">Municipality:</div>
+                <MunicipalitySelect value={dishMuniFilter} onChange={setDishMuniFilter} placeholder="All…" allowAll />
+              </div>
+            }
+          >
             <div className="mb-3">
-              <SearchBox placeholder="Search dishes by name/slug (min 2 chars)…" value={dishSearch} onChange={setDishSearch} />
+              <SearchBox placeholder="Search dishes by name/slug… (live)" value={dishSearch} onChange={setDishSearch} />
             </div>
-            <div className="text-sm text-neutral-500 mb-2">Results</div>
-            <div className="max-h-72 overflow-auto border rounded">
-              {(dishSearchQ.data ?? []).map((d) => (
+            <div className="text-xs text-neutral-500 mb-2">
+              Showing {dishesListQ.data?.length ?? 0} result(s){dishMuniFilter ? ` in ${(muniQ.data ?? []).find(m=>m.id===dishMuniFilter)?.name}`: ""}.
+            </div>
+            <div className="max-h-80 overflow-auto border rounded">
+              {(dishesListQ.data ?? []).map((d) => (
                 <button
-                  key={d.slug}
+                  key={d.id}
                   className="w-full text-left px-3 py-2 border-b hover:bg-neutral-50"
-                  onClick={() => loadDish(d)}
+                  onClick={() => loadDishById(d.id)}
                 >
                   <div className="font-medium">{d.name}</div>
                   <div className="text-xs text-neutral-500">{d.slug} · {d.category}</div>
                 </button>
               ))}
-              {(dishSearchQ.data ?? []).length === 0 && (
-                <div className="px-3 py-6 text-sm text-neutral-500">Start typing to search…</div>
+              {(dishesListQ.data ?? []).length === 0 && (
+                <div className="px-3 py-6 text-sm text-neutral-500">No dishes found.</div>
               )}
             </div>
+
             <button
               className="mt-3 px-3 py-2 rounded bg-primary-600 text-white"
               onClick={() => dishForm.reset({
                 name: "", slug: "", category_code: "food",
-                municipality_id: undefined as unknown as number,
+                municipality_id: dishMuniFilter ?? (undefined as unknown as number),
                 description: "", image_url: "",
                 flavor_profile_csv: "", ingredients_csv: "",
                 popularity: 0, rating: 0
@@ -540,74 +570,94 @@ export default function AdminDashboard() {
             </button>
           </Section>
 
-          <Section title="Dish details">
-            <form
-              className="grid grid-cols-1 gap-3"
-              onSubmit={dishForm.handleSubmit(saveDish)}
-            >
-              <div className="text-sm text-neutral-500">Municipality</div>
-              <MunicipalitySelect
-                value={dishForm.watch("municipality_id") ?? null}
-                onChange={(id) => dishForm.setValue("municipality_id", (id ?? undefined) as any, { shouldDirty: true })}
-                placeholder="Select municipality…"
-                allowAll={false}
-              />
+          <Section
+            title="Dish details"
+            right={
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={autoSlugDish} onChange={e=>setAutoSlugDish(e.target.checked)} />
+                Auto-slug
+              </label>
+            }
+          >
+            <form className="grid grid-cols-1 gap-3" onSubmit={dishForm.handleSubmit(saveDish)}>
+              <div>
+                <Label required>Municipality</Label>
+                <MunicipalitySelect
+                  value={dishForm.watch("municipality_id") ?? null}
+                  onChange={(id) => dishForm.setValue("municipality_id", (id ?? undefined) as any, { shouldDirty: true })}
+                  placeholder="Select municipality…"
+                  allowAll={false}
+                />
+                <FieldError msg={dishForm.formState.errors.municipality_id?.message} />
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Name</div>
-                  <input className="mt-1 w-full border rounded px-3 py-2"
+                  <Label required>Name</Label>
+                  <input
+                    className="mt-1 w-full border rounded px-3 py-2"
                     {...dishForm.register("name")}
+                    onChange={(e)=> {
+                      dishForm.register("name").onChange(e);
+                      if (autoSlugDish && !dishForm.getValues("id")) {
+                        dishForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
+                      }
+                    }}
                     onBlur={(e)=> {
-                      const n = e.target.value;
-                      if (!dishForm.getValues("slug")) dishForm.setValue("slug", slugify(n));
+                      if (autoSlugDish && !dishForm.getValues("slug")) {
+                        dishForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
+                      }
                     }}
                   />
+                  <FieldError msg={dishForm.formState.errors.name?.message} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Slug</div>
+                  <Label required>Slug</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("slug")} />
+                  <FieldError msg={dishForm.formState.errors.slug?.message} />
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Category</div>
+                  <Label required>Category</Label>
                   <select className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("category_code")}>
                     <option value="food">Food</option>
                     <option value="delicacy">Delicacy</option>
                     <option value="drink">Drink</option>
                   </select>
+                  <FieldError msg={dishForm.formState.errors.category_code?.message} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Image URL</div>
+                  <Label>Image URL</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("image_url")} />
+                  <FieldError msg={dishForm.formState.errors.image_url?.message as string} />
                 </label>
               </div>
 
               <label className="block">
-                <div className="text-sm text-neutral-600">Description</div>
+                <Label>Description</Label>
                 <textarea className="mt-1 w-full border rounded px-3 py-2" rows={3} {...dishForm.register("description")} />
               </label>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Flavor profile (comma sep)</div>
+                  <Label>Flavor profile (comma sep)</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("flavor_profile_csv")} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Ingredients (comma sep)</div>
+                  <Label>Ingredients (comma sep)</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("ingredients_csv")} />
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Popularity (0–100)</div>
+                  <Label>Popularity (0–100)</Label>
                   <input type="number" className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("popularity", { valueAsNumber: true })} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Rating (0–5)</div>
+                  <Label>Rating (0–5)</Label>
                   <input type="number" step="0.1" className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("rating", { valueAsNumber: true })} />
                 </label>
               </div>
@@ -626,30 +676,41 @@ export default function AdminDashboard() {
       {/* ============ RESTAURANTS ============ */}
       {tab==="restaurants" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Section title="Find or create">
+          <Section
+            title="Find or Create"
+            right={
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-neutral-600">Municipality:</div>
+                <MunicipalitySelect value={restMuniFilter} onChange={setRestMuniFilter} placeholder="All…" allowAll />
+              </div>
+            }
+          >
             <div className="mb-3">
-              <SearchBox placeholder="Search restaurants by name/slug (min 2 chars)…" value={restSearch} onChange={setRestSearch} />
+              <SearchBox placeholder="Search restaurants by name/slug… (live)" value={restSearch} onChange={setRestSearch} />
             </div>
-            <div className="text-sm text-neutral-500 mb-2">Results</div>
-            <div className="max-h-72 overflow-auto border rounded">
-              {(restSearchQ.data ?? []).map((r) => (
+            <div className="text-xs text-neutral-500 mb-2">
+              Showing {restaurantsListQ.data?.length ?? 0} result(s){restMuniFilter ? ` in ${(muniQ.data ?? []).find(m=>m.id===restMuniFilter)?.name}`: ""}.
+            </div>
+            <div className="max-h-80 overflow-auto border rounded">
+              {(restaurantsListQ.data ?? []).map((r) => (
                 <button
-                  key={r.slug}
+                  key={r.id}
                   className="w-full text-left px-3 py-2 border-b hover:bg-neutral-50"
-                  onClick={() => loadRestaurant(r)}
+                  onClick={() => loadRestaurantById(r.id)}
                 >
                   <div className="font-medium">{r.name}</div>
                   <div className="text-xs text-neutral-500">{r.slug}</div>
                 </button>
               ))}
-              {(restSearchQ.data ?? []).length === 0 && (
-                <div className="px-3 py-6 text-sm text-neutral-500">Start typing to search…</div>
+              {(restaurantsListQ.data ?? []).length === 0 && (
+                <div className="px-3 py-6 text-sm text-neutral-500">No restaurants found.</div>
               )}
             </div>
+
             <button
               className="mt-3 px-3 py-2 rounded bg-primary-600 text-white"
               onClick={() => restForm.reset({
-                name: "", slug: "", municipality_id: undefined as unknown as number,
+                name: "", slug: "", municipality_id: restMuniFilter ?? (undefined as unknown as number),
                 kind: "restaurant", address: "", lat: 0, lng: 0,
                 description: "", price_range: "moderate", cuisine_csv: "",
                 phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
@@ -660,36 +721,57 @@ export default function AdminDashboard() {
             </button>
           </Section>
 
-          <Section title="Restaurant details">
+          <Section
+            title="Restaurant details"
+            right={
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={autoSlugRest} onChange={e=>setAutoSlugRest(e.target.checked)} />
+                Auto-slug
+              </label>
+            }
+          >
             <form className="grid grid-cols-1 gap-3" onSubmit={restForm.handleSubmit(saveRestaurant)}>
-              <div className="text-sm text-neutral-500">Municipality</div>
-              <MunicipalitySelect
-                value={restForm.watch("municipality_id") ?? null}
-                onChange={(id) => restForm.setValue("municipality_id", (id ?? undefined) as any, { shouldDirty: true })}
-                placeholder="Select municipality…"
-                allowAll={false}
-              />
+              <div>
+                <Label required>Municipality</Label>
+                <MunicipalitySelect
+                  value={restForm.watch("municipality_id") ?? null}
+                  onChange={(id) => restForm.setValue("municipality_id", (id ?? undefined) as any, { shouldDirty: true })}
+                  placeholder="Select municipality…"
+                  allowAll={false}
+                />
+                <FieldError msg={restForm.formState.errors.municipality_id?.message} />
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Name</div>
-                  <input className="mt-1 w-full border rounded px-3 py-2"
+                  <Label required>Name</Label>
+                  <input
+                    className="mt-1 w-full border rounded px-3 py-2"
                     {...restForm.register("name")}
+                    onChange={(e)=> {
+                      restForm.register("name").onChange(e);
+                      if (autoSlugRest && !restForm.getValues("id")) {
+                        restForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
+                      }
+                    }}
                     onBlur={(e)=> {
-                      const n = e.target.value;
-                      if (!restForm.getValues("slug")) restForm.setValue("slug", slugify(n));
+                      if (autoSlugRest && !restForm.getValues("slug")) {
+                        restForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
+                      }
                     }}
                   />
+                  <FieldError msg={restForm.formState.errors.name?.message} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Slug</div>
+                  <Label required>Slug</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("slug")} />
+                  <FieldError msg={restForm.formState.errors.slug?.message} />
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Kind</div>
+                  <Label required>Kind</Label>
                   <select className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("kind")}>
                     <option value="restaurant">Restaurant</option>
                     <option value="stall">Stall</option>
@@ -700,7 +782,7 @@ export default function AdminDashboard() {
                   </select>
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Price range</div>
+                  <Label required>Price range</Label>
                   <select className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("price_range")}>
                     <option value="budget">Budget</option>
                     <option value="moderate">Moderate</option>
@@ -710,59 +792,62 @@ export default function AdminDashboard() {
               </div>
 
               <label className="block">
-                <div className="text-sm text-neutral-600">Address</div>
+                <Label required>Address</Label>
                 <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("address")} />
+                <FieldError msg={restForm.formState.errors.address?.message} />
               </label>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Latitude</div>
+                  <Label required>Latitude</Label>
                   <input type="number" step="0.000001" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("lat", { valueAsNumber: true })} />
+                  <FieldError msg={restForm.formState.errors.lat?.message} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Longitude</div>
+                  <Label required>Longitude</Label>
                   <input type="number" step="0.000001" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("lng", { valueAsNumber: true })} />
+                  <FieldError msg={restForm.formState.errors.lng?.message} />
                 </label>
               </div>
 
               <label className="block">
-                <div className="text-sm text-neutral-600">Description</div>
+                <Label>Description</Label>
                 <textarea className="mt-1 w-full border rounded px-3 py-2" rows={3} {...restForm.register("description")} />
               </label>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Cuisine types (comma sep)</div>
+                  <Label>Cuisine types (comma sep)</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("cuisine_csv")} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Rating (0–5)</div>
+                  <Label>Rating (0–5)</Label>
                   <input type="number" step="0.1" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("rating", { valueAsNumber: true })} />
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Phone</div>
+                  <Label>Phone</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("phone")} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Website</div>
+                  <Label>Website</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("website")} />
                 </label>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Facebook</div>
+                  <Label>Facebook</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("facebook")} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Instagram</div>
+                  <Label>Instagram</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("instagram")} />
                 </label>
                 <label className="block">
-                  <div className="text-sm text-neutral-600">Opening hours</div>
+                  <Label>Opening hours</Label>
                   <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("opening_hours")} />
                 </label>
               </div>
@@ -781,25 +866,30 @@ export default function AdminDashboard() {
       {/* ============ LINKING ============ */}
       {tab==="linking" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Section title="Pick a dish">
+          <Section
+            title="Pick a dish to link"
+            right={
+              <div className="flex items-center gap-2 text-sm text-neutral-600">
+                {linkDish ? <>Linking for: <span className="font-medium">{linkDish.name}</span></> : "—"}
+              </div>
+            }
+          >
+            {/* Reuse dishes list with quick finder */}
             <div className="mb-3">
-              <SearchBox placeholder="Search dish by name/slug (min 2 chars)…" value={dishSearch} onChange={setDishSearch} />
+              <SearchBox placeholder="Quick search dish…" value={dishSearch} onChange={setDishSearch} />
             </div>
-            <div className="max-h-72 overflow-auto border rounded">
-              {(dishSearchQ.data ?? []).map((d) => (
+            <div className="max-h-80 overflow-auto border rounded">
+              {(dishesListQ.data ?? []).map((d) => (
                 <button
-                  key={d.slug}
-                  className={`w-full text-left px-3 py-2 border-b hover:bg-neutral-50 ${linkDish?.slug===d.slug ? "bg-primary-50" : ""}`}
-                  onClick={() => setLinkDish({ id: (d as any).id, name: d.name, slug: d.slug })}
+                  key={d.id}
+                  className={`w-full text-left px-3 py-2 border-b hover:bg-neutral-50 ${linkDish?.id===d.id ? "bg-primary-50" : ""}`}
+                  onClick={() => setLinkDish(d)}
                 >
                   <div className="font-medium">{d.name}</div>
                   <div className="text-xs text-neutral-500">{d.slug} · {d.category}</div>
                 </button>
               ))}
             </div>
-            {linkDish && (
-              <div className="mt-3 text-sm">Selected dish: <span className="font-medium">{linkDish.name}</span></div>
-            )}
           </Section>
 
           <Section
@@ -817,23 +907,19 @@ export default function AdminDashboard() {
               <div className="text-neutral-500">Pick a municipality to list restaurants.</div>
             ) : (
               <div className="max-h-[420px] overflow-auto border rounded">
-                {(allRestoQ.data ?? []).map((r) => {
-                  const checked = linkedIds.has(r.id);
+                {(linkRestaurantsQ.data ?? []).map((r) => {
+                  const checked = (linkedIds.has(r.id));
                   return (
                     <label key={r.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
                       <div>
                         <div className="font-medium">{r.name}</div>
                         <div className="text-xs text-neutral-500">{r.slug}</div>
                       </div>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleLink(r.id)}
-                      />
+                      <input type="checkbox" checked={checked} onChange={() => toggleLink(r.id)} />
                     </label>
                   );
                 })}
-                {(allRestoQ.data ?? []).length === 0 && (
+                {(linkRestaurantsQ.data ?? []).length === 0 && (
                   <div className="px-3 py-6 text-sm text-neutral-500">No restaurants in this municipality.</div>
                 )}
               </div>
@@ -845,7 +931,7 @@ export default function AdminDashboard() {
       {/* ============ CURATION ============ */}
       {tab==="curation" && (
         <Section
-          title="Panel picks (top 3 dishes & restaurants per municipality)"
+          title="Panel picks per municipality"
           right={
             <div className="flex items-center gap-2">
               <div className="text-sm text-neutral-600">Municipality:</div>
@@ -857,25 +943,57 @@ export default function AdminDashboard() {
           {!curateMuniId ? (
             <div className="text-neutral-500">Select a municipality to curate.</div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Dishes */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Food */}
               <div>
-                <div className="font-medium mb-2">Top dishes (Food + Delicacy) — choose up to 3, rank 1–3</div>
+                <div className="font-medium mb-2">Top Dishes (Food) — choose up to 3, rank 1–3</div>
                 <div className="max-h-[420px] overflow-auto border rounded">
-                  {(allDishesQ.data ?? []).map(d => {
-                    const picked = dishRanks[d.id] != null;
+                  {dishFood.map(d => {
+                    const picked = foodRanks[d.id] != null;
                     return (
                       <div key={d.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
                         <div>
                           <div className="font-medium">{d.name}</div>
-                          <div className="text-xs text-neutral-500">{d.slug} · {d.category}</div>
+                          <div className="text-xs text-neutral-500">{d.slug}</div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <input type="checkbox" checked={picked} onChange={()=>toggleDishPick(d.id)} />
+                          <input type="checkbox" checked={picked} onChange={()=>togglePick(foodRanks, setFoodRanks, d.id)} />
                           <select
                             className="border rounded px-2 py-1"
-                            value={dishRanks[d.id] ?? ""}
-                            onChange={(e)=> setDishRank(d.id, Number(e.target.value))}
+                            value={foodRanks[d.id] ?? ""}
+                            onChange={(e)=> setRank(setFoodRanks, d.id, Number(e.target.value))}
+                            disabled={!picked}
+                          >
+                            <option value="">—</option>
+                            <option value={1}>1</option>
+                            <option value={2}>2</option>
+                            <option value={3}>3</option>
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Delicacies */}
+              <div>
+                <div className="font-medium mb-2">Top Delicacies — choose up to 3, rank 1–3</div>
+                <div className="max-h-[420px] overflow-auto border rounded">
+                  {dishDelicacy.map(d => {
+                    const picked = delicacyRanks[d.id] != null;
+                    return (
+                      <div key={d.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
+                        <div>
+                          <div className="font-medium">{d.name}</div>
+                          <div className="text-xs text-neutral-500">{d.slug}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input type="checkbox" checked={picked} onChange={()=>togglePick(delicacyRanks, setDelicacyRanks, d.id)} />
+                          <select
+                            className="border rounded px-2 py-1"
+                            value={delicacyRanks[d.id] ?? ""}
+                            onChange={(e)=> setRank(setDelicacyRanks, d.id, Number(e.target.value))}
                             disabled={!picked}
                           >
                             <option value="">—</option>
@@ -892,7 +1010,7 @@ export default function AdminDashboard() {
 
               {/* Restaurants */}
               <div>
-                <div className="font-medium mb-2">Top restaurants — choose up to 3, rank 1–3</div>
+                <div className="font-medium mb-2">Top Restaurants — choose up to 3, rank 1–3</div>
                 <div className="max-h-[420px] overflow-auto border rounded">
                   {(allRestoForCurQ.data ?? []).map(r => {
                     const picked = restRanks[r.id] != null;
@@ -903,11 +1021,11 @@ export default function AdminDashboard() {
                           <div className="text-xs text-neutral-500">{r.slug}</div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <input type="checkbox" checked={picked} onChange={()=>toggleRestPick(r.id)} />
+                          <input type="checkbox" checked={picked} onChange={()=>togglePick(restRanks, setRestRanks, r.id)} />
                           <select
                             className="border rounded px-2 py-1"
                             value={restRanks[r.id] ?? ""}
-                            onChange={(e)=> setRestRank(r.id, Number(e.target.value))}
+                            onChange={(e)=> setRank(setRestRanks, r.id, Number(e.target.value))}
                             disabled={!picked}
                           >
                             <option value="">—</option>
