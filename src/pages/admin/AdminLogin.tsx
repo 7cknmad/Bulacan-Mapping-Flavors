@@ -1,56 +1,77 @@
-// src/pages/admin/AdminLogin.tsx
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AdminAPI } from "../../utils/adminApi";
+import { adminAuth } from "../../utils/adminApi";
 
 export default function AdminLogin() {
-  const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@example.com");
+  const nav = useNavigate();
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    setLoading(true);
+    setBusy(true);
     try {
-      await AdminAPI.login(email, password);
-      navigate("/admin"); // HashRouter -> #/admin (no GH Pages 404)
+      await adminAuth.login(email.trim(), password);
+      nav("/admin", { replace: true });
     } catch (e: any) {
       setErr(e?.message || "Login failed");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  };
+  }
 
   return (
-    <div className="max-w-sm mx-auto p-6">
-      <h1 className="text-xl font-semibold mb-4">Admin Login</h1>
-      {err && <div className="mb-3 text-red-600 text-sm">{err}</div>}
-      <form onSubmit={submit} className="space-y-3">
-        <input
-          className="w-full border rounded px-3 py-2"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
-          autoComplete="username"
-        />
-        <input
-          className="w-full border rounded px-3 py-2"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          autoComplete="current-password"
-        />
+    <main className="min-h-[70vh] flex items-center justify-center px-4">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-sm bg-white border rounded-xl shadow p-6 space-y-4"
+      >
+        <div>
+          <h1 className="text-xl font-semibold">Admin Login</h1>
+          <p className="text-sm text-neutral-500">Sign in to manage content.</p>
+        </div>
+
+        {err && (
+          <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+            {err}
+          </div>
+        )}
+
+        <label className="block">
+          <span className="text-sm text-neutral-700">Email</span>
+          <input
+            type="email"
+            required
+            className="mt-1 w-full border rounded px-3 py-2"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-sm text-neutral-700">Password</span>
+          <input
+            type="password"
+            required
+            className="mt-1 w-full border rounded px-3 py-2"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+        </label>
+
         <button
-          className="btn btn-primary w-full disabled:opacity-60"
-          disabled={loading}
+          type="submit"
+          disabled={busy}
+          className="w-full bg-primary-600 hover:bg-primary-700 text-white rounded px-3 py-2 transition disabled:opacity-60"
         >
-          {loading ? "Signing in…" : "Sign in"}
+          {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
-    </div>
+    </main>
   );
 }
