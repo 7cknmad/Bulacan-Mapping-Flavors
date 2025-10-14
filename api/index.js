@@ -577,3 +577,41 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
 // ---- Start server ----
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
+// Delete a dish
+app.delete('/api/admin/dishes/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    await pool.query('DELETE FROM dishes WHERE id=?', [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete dish', detail: String(e?.message || e) });
+  }
+});
+
+// Delete a restaurant
+app.delete('/api/admin/restaurants/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    await pool.query('DELETE FROM restaurants WHERE id=?', [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete restaurant', detail: String(e?.message || e) });
+  }
+});
+
+// Unlink dish <-> restaurant
+app.delete('/api/admin/dish-restaurants', async (req, res) => {
+  try {
+    const dishId = Number(req.query.dishId);
+    const restaurantId = Number(req.query.restaurantId);
+    if (!Number.isFinite(dishId) || !Number.isFinite(restaurantId)) {
+      return res.status(400).json({ error: 'dishId and restaurantId required' });
+    }
+    await pool.query('DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?', [dishId, restaurantId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to unlink', detail: String(e?.message || e) });
+  }
+});
