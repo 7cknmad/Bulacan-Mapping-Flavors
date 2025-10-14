@@ -1,742 +1,574 @@
 // src/pages/admin/AdminDashboard.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import { useForm, Controller } from "react-hook-form";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useEffect, useMemo, useState } from 'react';
+import { AdminAPI } from '@/utils/adminApi';
+import MunicipalitySelect from '@/components/admin/MunicipalitySelect';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+} from 'recharts';
 
-/* ============ API helpers ============ */
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
-async function jget<T>(path: string): Promise<T> {
-  const url = path.startsWith("http") ? path : `${API}${path}`;
-  const r = await fetch(url);
-  const text = await r.text();
-  if (!r.ok) throw new Error(`HTTP ${r.status} ${text}`);
-  try { return JSON.parse(text) as T; } catch { throw new Error(`Bad JSON: ${text.slice(0, 160)}`); }
-}
-async function jsend(path: string, body: any, method: "POST"|"PATCH"|"DELETE"="POST") {
-  const url = path.startsWith("http") ? path : `${API}${path}`;
-  const r = await fetch(url, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: method === "DELETE" ? undefined : JSON.stringify(body)
-  });
-  const text = await r.text();
-  if (!r.ok) throw new Error(`HTTP ${r.status} ${text}`);
-  return text ? JSON.parse(text) : {};
-}
-const safeJsonArray = (v: any) => (Array.isArray(v) ? v : v ? (() => { try { return JSON.parse(v); } catch { return []; } })() : []);
-
-/* ============ Types ============ */
-type Municipality = { id:number; name:string; slug:string; };
-type Dish = {
-  id:number; name:string; slug:string; description:string|null;
-  image_url:string|null; rating:number|null; popularity:number|null;
-  flavor_profile:string[]|null; ingredients:string[]|null;
-  municipality_id:number; municipality_name?:string; category:"food"|"delicacy"|"drink";
-  panel_rank?: number|null;
-};
-type Restaurant = {
-  id:number; name:string; slug:string; kind:"restaurant"|"stall"|"store"|"dealer"|"market"|"home-based";
-  description:string|null; address:string; phone:string|null; website:string|null;
-  facebook:string|null; instagram:string|null; opening_hours:string|null;
-  price_range:"budget"|"moderate"|"expensive"; cuisine_types:string[]|null;
-  rating:number; lat:number; lng:number; municipality_id?: number; panel_rank?: number|null;
+// ---------- small helpers ----------
+const useAsync = <T,>(fn: () => Promise<T>, deps: any[] = []) => {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setError(null);
+    fn().then(d => alive && setData(d)).catch(e => alive && setError(String(e.message||e)))
+      .finally(()=> alive && setLoading(false));
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return { data, error, loading, refresh: () => fn().then(setData) };
 };
 
-/* ============ Utils ============ */
-const slugify = (s:string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
-const toList = (v:string) => (v||"").split(",").map(s=>s.trim()).filter(Boolean);
+const slugify = (s: string) =>
+  s.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
 
-/* ============ Shared muni select ============ */
-function useMunicipalities() {
-  const [list, setList] = useState<Municipality[]>([]);
-  useEffect(() => { (async () => {
-    const rows = await jget<Municipality[]>("/api/municipalities");
-    setList(rows.map(r => ({ id:r.id, name:r.name, slug:r.slug })));
-  })(); }, []);
-  return list;
-}
-function MunicipalitySelect({
-  value, onChange, allowAll=true, className="input w-full"
-}: { value:number|null|undefined; onChange:(v:number|null)=>void; allowAll?:boolean; className?:string }) {
-  const munis = useMunicipalities();
+// ---------- validation schemas ----------
+const dishSchema = z.object({
+  municipality_id: z.number({ required_error: 'Municipality is required' }),
+  category_code: z.enum(['food','delicacy','drink']),
+  name: z.string().min(2),
+  slug: z.string().min(2),
+  description: z.string().optional().nullable(),
+  flavor_profile: z.string().optional().nullable(),
+  ingredients: z.string().optional().nullable(),
+  image_url: z.string().url().optional().or(z.literal('')).nullable(),
+  popularity: z.coerce.number().min(0).max(100).default(0),
+  rating: z.coerce.number().min(0).max(5).default(0),
+});
+type DishInput = z.infer<typeof dishSchema>;
+
+const restSchema = z.object({
+  municipality_id: z.number({ required_error: 'Municipality is required' }),
+  name: z.string().min(2),
+  slug: z.string().min(2),
+  kind: z.enum(['restaurant','stall','store','dealer','market','home-based']).default('restaurant'),
+  address: z.string().min(2),
+  description: z.string().optional().nullable(),
+  price_range: z.enum(['budget','moderate','expensive']).default('moderate'),
+  cuisine_types: z.string().optional().nullable(),
+  phone: z.string().optional().nullable(),
+  website: z.string().optional().nullable(),
+  facebook: z.string().optional().nullable(),
+  instagram: z.string().optional().nullable(),
+  opening_hours: z.string().optional().nullable(),
+  rating: z.coerce.number().min(0).max(5).default(0),
+  lat: z.coerce.number(),
+  lng: z.coerce.number(),
+});
+type RestInput = z.infer<typeof restSchema>;
+
+// ---------- main component ----------
+export default function AdminDashboard() {
+  // header / tabs
+  const [tab, setTab] = useState<'analytics'|'dishes'|'restaurants'|'curation'>('analytics');
+
   return (
-    <select className={className} value={value ?? ""} onChange={(e)=>onChange(e.target.value ? Number(e.target.value) : null)}>
-      {allowAll && <option value="">All municipalities</option>}
-      {munis.map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
-    </select>
-  );
-}
-
-/* ============ Analytics ============ */
-function AnalyticsTab() {
-  const [municipalityId, setMunicipalityId] = useState<number|null>(null);
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => { (async () => {
-    setLoading(true);
-    try {
-      const qs = new URLSearchParams();
-      if (municipalityId) qs.set("municipalityId", String(municipalityId));
-      const res = await jget<any>(`/api/admin/analytics/summary?${qs.toString()}`);
-      setData(res);
-    } catch (e) {
-      console.error(e);
-      setData(null);
-    } finally { setLoading(false); }
-  })(); }, [municipalityId]);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col md:flex-row gap-3">
-        <div className="w-full md:w-64">
-          <div className="text-xs text-neutral-500 mb-1">Municipality</div>
-          <MunicipalitySelect value={municipalityId} onChange={setMunicipalityId} />
+    <div className="min-h-[70vh]">
+      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-4">
+          <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
+          <nav className="ml-auto flex gap-2">
+            {(['analytics','dishes','restaurants','curation'] as const).map(k => (
+              <button
+                key={k}
+                onClick={() => setTab(k)}
+                className={`px-3 py-1.5 rounded-md text-sm border ${tab===k ? 'bg-amber-600 text-white border-amber-600' : 'bg-white hover:bg-neutral-50'}`}
+              >
+                {k[0].toUpperCase()+k.slice(1)}
+              </button>
+            ))}
+          </nav>
         </div>
-      </div>
+      </header>
 
-      {loading && <div className="p-3 text-sm text-neutral-500">Loading analytics…</div>}
-      {!loading && data && (
-        <>
-          <div className="grid md:grid-cols-3 gap-4">
-            <div className="p-4 rounded border bg-white">
-              <div className="text-xs text-neutral-500">Dishes</div>
-              <div className="text-2xl font-semibold">{data.dish_count}</div>
-            </div>
-            <div className="p-4 rounded border bg-white">
-              <div className="text-xs text-neutral-500">Restaurants</div>
-              <div className="text-2xl font-semibold">{data.restaurant_count}</div>
-            </div>
-            <div className="p-4 rounded border bg-white">
-              <div className="text-xs text-neutral-500">Dish ↔ Restaurant Links</div>
-              <div className="text-2xl font-semibold">{data.links_count}</div>
-            </div>
-          </div>
-
-          {/* Simple bars (no extra deps) */}
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="p-4 rounded border bg-white">
-              <div className="font-medium mb-2">Dishes by Category</div>
-              <div className="space-y-2">
-                {data.byCategory?.map((row:any) => (
-                  <div key={row.code}>
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="capitalize">{row.code}</div>
-                      <div className="text-neutral-500">{row.cnt}</div>
-                    </div>
-                    <div className="h-2 bg-neutral-100 rounded">
-                      <div className="h-2 rounded bg-primary-500" style={{ width: `${Math.min(100, (row.cnt / Math.max(1, data.dish_count)) * 100)}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-4 rounded border bg-white">
-              <div className="font-medium mb-2">Restaurants by Kind</div>
-              <div className="space-y-2">
-                {data.byKind?.map((row:any) => (
-                  <div key={row.kind}>
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="capitalize">{row.kind}</div>
-                      <div className="text-neutral-500">{row.cnt}</div>
-                    </div>
-                    <div className="h-2 bg-neutral-100 rounded">
-                      <div className="h-2 rounded bg-emerald-500" style={{ width: `${Math.min(100, (row.cnt / Math.max(1, data.restaurant_count)) * 100)}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-      {!loading && !data && <div className="p-3 text-sm text-red-600">Failed to load analytics.</div>}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {tab === 'analytics' && <AnalyticsTab/>}
+        {tab === 'dishes' && <DishesTab/>}
+        {tab === 'restaurants' && <RestaurantsTab/>}
+        {tab === 'curation' && <CurationTab/>}
+      </main>
     </div>
   );
 }
 
-/* ============ Dishes ============ */
-const dishSchema = z.object({
-  municipality_id: z.number().int().positive({ message: "Municipality is required" }),
-  category_code: z.enum(["food", "delicacy", "drink"]),
-  name: z.string().min(2, "Name is too short"),
-  slug: z.string().min(2).regex(/^[a-z0-9-]+$/, "Use lowercase, numbers and dashes only"),
-  description: z.string().optional(),
-  flavor_profile_csv: z.string().optional(),
-  ingredients_csv: z.string().optional(),
-  image_url: z.string().url("Enter a valid URL").optional().or(z.literal("")),
-  popularity: z.coerce.number().min(0).max(100).default(0),
-  rating: z.coerce.number().min(0).max(5).default(0),
-});
-type DishForm = z.infer<typeof dishSchema>;
+// ---------- Analytics ----------
+function AnalyticsTab() {
+  const [muniId, setMuniId] = useState<number|null>(null);
+  const { data: summary, error, loading } = useAsync(() => AdminAPI.summary(), [/* once */]);
+  const { data: topD } = useAsync(
+    () => AdminAPI.topDishes(muniId ?? undefined), [muniId]
+  );
+  const { data: topR } = useAsync(
+    () => AdminAPI.topRestaurants(muniId ?? undefined), [muniId]
+  );
 
-function ManageDishes() {
-  const [muni, setMuni] = useState<number|null>(null);
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState<""|"food"|"delicacy"|"drink">("");
-  const [list, setList] = useState<Dish[]>([]);
-  const [editing, setEditing] = useState<Dish|null>(null);
-  const [autoSlug, setAutoSlug] = useState(true);
+  return (
+    <div className="space-y-6">
+      <div className="flex items-end gap-4">
+        <MunicipalitySelect value={muniId} onChange={setMuniId} />
+      </div>
 
-  const { register, handleSubmit, control, setValue, watch, reset, formState:{ errors, isSubmitting } } =
-    useForm<DishForm>({
-      resolver: zodResolver(dishSchema),
-      defaultValues: {
-        municipality_id: undefined, category_code: "food",
-        name:"", slug:"", description:"", flavor_profile_csv:"", ingredients_csv:"",
-        image_url:"", popularity:0, rating:0
-      }
-    });
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {loading ? (
+          <div className="col-span-4 text-sm text-neutral-500">Loading…</div>
+        ) : error ? (
+          <div className="col-span-4 text-sm text-red-600">{error}</div>
+        ) : summary ? (
+          <>
+            <StatCard label="Municipalities" value={summary.municipalities} />
+            <StatCard label="Dishes" value={summary.dishes} />
+            <StatCard label="Delicacies" value={summary.delicacies} />
+            <StatCard label="Restaurants" value={summary.restaurants} />
+          </>
+        ) : null}
+      </div>
 
-  const nameWatch = watch("name");
-  useEffect(() => { if (autoSlug) setValue("slug", slugify(nameWatch || "")); }, [nameWatch, autoSlug, setValue]);
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ChartCard title="Top Dishes (by links & rank)">
+          <BarWrap data={(topD as any[]) ?? []} x="name" bars={[{key:'places', label:'Places'}]} />
+        </ChartCard>
+        <ChartCard title="Top Restaurants (by dishes & rank)">
+          <BarWrap data={(topR as any[]) ?? []} x="name" bars={[{key:'dishes', label:'Dishes'}]} />
+        </ChartCard>
+      </div>
+    </div>
+  );
+}
 
-  const reload = async () => {
-    const qs = new URLSearchParams();
-    if (muni) qs.set("municipalityId", String(muni));
-    if (q) qs.set("q", q);
-    if (cat) qs.set("category", cat);
-    const rows = await jget<Dish[]>(`/api/dishes?${qs.toString()}`);
-    setList(rows.map(r => ({
-      ...r,
-      flavor_profile: safeJsonArray(r.flavor_profile),
-      ingredients: safeJsonArray(r.ingredients),
-    })));
-  };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [muni, q, cat]);
+function StatCard({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="bg-white border rounded-lg p-4">
+      <div className="text-xs text-neutral-500">{label}</div>
+      <div className="text-2xl font-semibold mt-1">{value}</div>
+    </div>
+  );
+}
+function ChartCard({ title, children }: React.PropsWithChildren<{title: string}>) {
+  return (
+    <div className="bg-white border rounded-lg p-4">
+      <div className="font-medium mb-3">{title}</div>
+      {children}
+    </div>
+  );
+}
+function BarWrap({ data, x, bars }:{ data:any[]; x:string; bars:{key:string;label:string}[] }) {
+  return (
+    <div className="h-64">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey={x} hide />
+          <YAxis allowDecimals={false} />
+          <Tooltip />
+          <Legend />
+          {bars.map(b => <Bar key={b.key} dataKey={b.key} name={b.label} />)}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
-  const onCreate = async (data: DishForm) => {
-    await jsend("/api/admin/dishes", {
-      municipality_id: data.municipality_id,
-      category_code: data.category_code,
-      name: data.name.trim(),
-      slug: data.slug.trim(),
-      description: data.description || null,
-      flavor_profile: toList(data.flavor_profile_csv || ""),
-      ingredients: toList(data.ingredients_csv || ""),
-      image_url: data.image_url || null,
-      popularity: data.popularity ?? 0,
-      rating: data.rating ?? 0,
-    }, "POST");
-    reset(); setAutoSlug(true); reload();
-  };
+// ---------- Dishes ----------
+function DishesTab() {
+  const [muniId, setMuniId] = useState<number|null>(null);
+  const [category, setCategory] = useState<string>('');
+  const [q, setQ] = useState('');
+  const qs = useMemo(() => {
+    const u = new URLSearchParams();
+    if (muniId) u.set('municipalityId', String(muniId));
+    if (category) u.set('category', category);
+    if (q) u.set('q', q);
+    return `?${u.toString()}`;
+  }, [muniId, category, q]);
 
-  const startEdit = (d: Dish) => {
-    setEditing(d);
-    reset({
-      municipality_id: d.municipality_id,
-      category_code: d.category,
-      name: d.name, slug: d.slug, description: d.description ?? "",
-      flavor_profile_csv: (d.flavor_profile ?? []).join(", "),
-      ingredients_csv: (d.ingredients ?? []).join(", "),
-      image_url: d.image_url ?? "", popularity: d.popularity ?? 0, rating: d.rating ?? 0,
-    });
-    setAutoSlug(false);
-  };
+  const { data, error, loading, refresh } = useAsync<any[]>(() => AdminAPI.dishesList(qs), [qs]);
 
-  const saveEdit = async (data: DishForm) => {
-    if (!editing) return;
-    await jsend(`/api/admin/dishes/${editing.id}`, {
-      municipality_id: data.municipality_id,
-      category_code: data.category_code,
-      name: data.name.trim(),
-      slug: data.slug.trim(),
-      description: data.description || null,
-      flavor_profile: toList(data.flavor_profile_csv || ""),
-      ingredients: toList(data.ingredients_csv || ""),
-      image_url: data.image_url || null,
-      popularity: data.popularity ?? 0,
-      rating: data.rating ?? 0,
-    }, "PATCH");
-    setEditing(null); reset(); setAutoSlug(true); reload();
-  };
+  // form
+  const { register, watch, handleSubmit, reset, formState: { errors, isSubmitting } } =
+    useForm<DishInput>({ resolver: zodResolver(dishSchema), defaultValues: { popularity: 0, rating: 0 } });
 
-  const del = async (id:number) => {
-    if (!confirm("Delete this dish? This also removes its links.")) return;
-    await jsend(`/api/admin/dishes/${id}`, null, "DELETE");
-    if (editing?.id === id) { setEditing(null); reset(); }
-    reload();
+  const autoSlug = watch('name') ? slugify(watch('name')!) : '';
+  useEffect(() => { if (!watch('slug')) { /* noop, manual */ }}, [watch]);
+
+  const onCreate = async (payload: DishInput) => {
+    const body = {
+      ...payload,
+      flavor_profile: payload.flavor_profile ? payload.flavor_profile.split(',').map(s=>s.trim()).filter(Boolean) : [],
+      ingredients: payload.ingredients ? payload.ingredients.split(',').map(s=>s.trim()).filter(Boolean) : [],
+    };
+    await AdminAPI.createDish(body);
+    reset(); refresh();
   };
 
   return (
-    <div className="grid md:grid-cols-3 gap-6">
-      {/* Filters + Table */}
-      <div className="md:col-span-2 space-y-3">
-        <div className="flex items-end gap-2">
-          <div className="w-64">
-            <div className="text-xs text-neutral-500 mb-1">Municipality</div>
-            <MunicipalitySelect value={muni} onChange={setMuni} />
-          </div>
-          <div className="flex-1">
-            <div className="text-xs text-neutral-500 mb-1">Search dishes</div>
-            <input className="input w-full" placeholder="Type to filter…" value={q} onChange={(e)=>setQ(e.target.value)} />
-          </div>
-          <div className="w-40">
-            <div className="text-xs text-neutral-500 mb-1">Category</div>
-            <select className="input w-full" value={cat} onChange={(e)=>setCat(e.target.value as any)}>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-2">
+        <div className="flex gap-3 items-end mb-3">
+          <MunicipalitySelect value={muniId} onChange={setMuniId} className="w-56" />
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Category</div>
+            <select value={category} onChange={e=>setCategory(e.target.value)} className="border rounded-md px-3 py-2 text-sm">
               <option value="">All</option>
               <option value="food">Food</option>
               <option value="delicacy">Delicacy</option>
               <option value="drink">Drink</option>
             </select>
-          </div>
+          </label>
+          <label className="block flex-1">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Search dishes</div>
+            <input value={q} onChange={e=>setQ(e.target.value)} className="w-full border rounded-md px-3 py-2 text-sm" placeholder="Type to filter..." />
+          </label>
         </div>
 
-        <div className="border rounded overflow-hidden">
+        <div className="bg-white border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-neutral-50">
               <tr>
-                <th className="p-2 text-left">Name</th>
-                <th className="p-2">Cat</th>
-                <th className="p-2">Muni</th>
-                <th className="p-2 w-32">Actions</th>
+                <th className="text-left px-3 py-2">Name</th>
+                <th className="text-left px-3 py-2">Cat</th>
+                <th className="text-left px-3 py-2">Muni</th>
+                <th className="text-left px-3 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {list.map(d => (
+              {loading && <tr><td className="px-3 py-3 text-neutral-500" colSpan={4}>Loading…</td></tr>}
+              {error && <tr><td className="px-3 py-3 text-red-600" colSpan={4}>{error}</td></tr>}
+              {!loading && !error && (data?.length ?? 0) === 0 && (
+                <tr><td className="px-3 py-3 text-neutral-500" colSpan={4}>No dishes</td></tr>
+              )}
+              {(data ?? []).map((d:any)=>(
                 <tr key={d.id} className="border-t">
-                  <td className="p-2">{d.name}</td>
-                  <td className="p-2 text-center">{d.category}</td>
-                  <td className="p-2 text-center">{d.municipality_id}</td>
-                  <td className="p-2 flex items-center justify-center gap-3">
-                    <button className="text-primary-600 underline" onClick={()=>startEdit(d)}>Edit</button>
-                    <button className="text-red-600 underline" onClick={()=>del(d.id)}>Delete</button>
+                  <td className="px-3 py-2">{d.name}</td>
+                  <td className="px-3 py-2">{d.category}</td>
+                  <td className="px-3 py-2">{d.municipality_id}</td>
+                  <td className="px-3 py-2">
+                    <button className="text-amber-700 hover:underline mr-3" onClick={async()=>{
+                      const name = prompt('Edit name', d.name); if (!name) return;
+                      await AdminAPI.updateDish(d.id, { name });
+                      refresh();
+                    }}>Edit</button>
+                    <button className="text-red-600 hover:underline" onClick={async()=>{
+                      if (!confirm(`Delete "${d.name}"?`)) return;
+                      await AdminAPI.deleteDish(d.id); refresh();
+                    }}>Delete</button>
                   </td>
                 </tr>
               ))}
-              {list.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-neutral-500">No results.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Create/Edit form */}
-      <div className="space-y-2">
-        <h3 className="font-semibold">{editing ? "Edit Dish" : "Create Dish"}</h3>
-        <form className="space-y-2" onSubmit={editing ? handleSubmit(saveEdit) : handleSubmit(onCreate)}>
-          <div>
-            <div className="text-xs text-neutral-500 mb-1">Municipality</div>
-            <Controller
-              name="municipality_id"
-              control={control}
-              render={({ field }) => (
-                <MunicipalitySelect allowAll={false} value={field.value ?? null} onChange={(id)=>field.onChange(id ?? undefined)} />
-              )}
-            />
-            {errors.municipality_id && <div className="text-xs text-red-600 mt-1">{errors.municipality_id.message}</div>}
-          </div>
+      {/* Create form */}
+      <div className="bg-white border rounded-lg p-4">
+        <div className="text-xl font-semibold mb-3">Create Dish</div>
+        <form onSubmit={handleSubmit(onCreate)} className="space-y-3">
+          <MunicipalitySelect
+            label="Municipality"
+            value={undefined}
+            onChange={(id)=> id && (document.getElementById('dish_muni') as HTMLInputElement).value = String(id)}
+          />
+          <input id="dish_muni" type="hidden" {...register('municipality_id', { valueAsNumber: true })} />
 
-          <div>
-            <div className="text-xs text-neutral-500 mb-1">Name</div>
-            <input className="input w-full" {...register("name")} placeholder="e.g. Valenciana (SJDM)" />
-            {errors.name && <div className="text-xs text-red-600 mt-1">{errors.name.message}</div>}
-          </div>
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Name</div>
+            <input {...register('name')} className="w-full border rounded-md px-3 py-2 text-sm" placeholder="e.g. Valenciana (SJDM)" />
+            {errors.name && <p className="text-xs text-red-600 mt-1">{errors.name.message}</p>}
+          </label>
 
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
-              <div className="text-xs text-neutral-500 mb-1">Slug</div>
-              <input className="input w-full" {...register("slug")} placeholder="auto-from-name" />
-              {errors.slug && <div className="text-xs text-red-600 mt-1">{errors.slug.message}</div>}
-            </div>
-            <label className="text-xs flex items-center gap-1">
-              <input type="checkbox" checked={autoSlug} onChange={(e)=>setAutoSlug(e.target.checked)} />
-              Auto-slug
-            </label>
-          </div>
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Slug</div>
+            <input {...register('slug')} className="w-full border rounded-md px-3 py-2 text-sm" placeholder="auto-from-name"
+              defaultValue="" onFocus={(e)=>{ if(!e.currentTarget.value){ e.currentTarget.value = slugify((document.querySelector('input[name="name"]') as HTMLInputElement)?.value ?? '') } }} />
+          </label>
 
-          <div>
-            <div className="text-xs text-neutral-500 mb-1">Category</div>
-            <select className="input w-full" {...register("category_code")}>
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Category</div>
+            <select {...register('category_code')} className="w-full border rounded-md px-3 py-2 text-sm">
               <option value="food">Food</option>
               <option value="delicacy">Delicacy</option>
               <option value="drink">Drink</option>
             </select>
-          </div>
+          </label>
 
-          <textarea className="input" placeholder="Description" {...register("description")} />
-          <input className="input" placeholder="Flavor profile (comma-sep)" {...register("flavor_profile_csv")} />
-          <input className="input" placeholder="Ingredients (comma-sep)" {...register("ingredients_csv")} />
-          <input className="input" placeholder="Image URL" {...register("image_url")} />
-          {errors.image_url && <div className="text-xs text-red-600 mt-1">{errors.image_url.message}</div>}
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Description</div>
+            <textarea {...register('description')} className="w-full border rounded-md px-3 py-2 text-sm" />
+          </label>
 
-          <div className="flex gap-2">
-            <input className="input" type="number" step="1" placeholder="Popularity" {...register("popularity", { valueAsNumber: true })} />
-            <input className="input" type="number" step="0.1" placeholder="Rating" {...register("rating", { valueAsNumber: true })} />
-          </div>
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Flavor profile (comma-sep)</div>
+            <input {...register('flavor_profile')} className="w-full border rounded-md px-3 py-2 text-sm" />
+          </label>
 
-          <div className="flex gap-2">
-            <button className="btn btn-primary" disabled={isSubmitting}>{editing ? "Save" : "Create"}</button>
-            {editing && <button type="button" className="btn" onClick={()=>{ setEditing(null); reset(); setAutoSlug(true); }}>Cancel</button>}
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Ingredients (comma-sep)</div>
+            <input {...register('ingredients')} className="w-full border rounded-md px-3 py-2 text-sm" />
+          </label>
 
-/* ============ Restaurants ============ */
-const restoSchema = z.object({
-  municipality_id: z.number().int().positive({ message: "Municipality is required" }),
-  name: z.string().min(2),
-  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
-  kind: z.enum(["restaurant", "stall", "store", "dealer", "market", "home-based"]).default("restaurant"),
-  address: z.string().min(3),
-  lat: z.coerce.number().min(-90).max(90),
-  lng: z.coerce.number().min(-180).max(180),
-  description: z.string().optional(),
-  price_range: z.enum(["budget", "moderate", "expensive"]).default("moderate"),
-  cuisine_csv: z.string().optional(),
-  phone: z.string().optional(),
-  website: z.string().url().optional().or(z.literal("")),
-  facebook: z.string().url().optional().or(z.literal("")),
-  instagram: z.string().url().optional().or(z.literal("")),
-  opening_hours: z.string().optional(),
-  rating: z.coerce.number().min(0).max(5).default(0),
-});
-type RestoForm = z.infer<typeof restoSchema>;
+          <label className="block">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Image URL</div>
+            <input {...register('image_url')} className="w-full border rounded-md px-3 py-2 text-sm" />
+          </label>
 
-function ManageRestaurants() {
-  const [muni, setMuni] = useState<number|null>(null);
-  const [q, setQ] = useState("");
-  const [list, setList] = useState<Restaurant[]>([]);
-  const [editing, setEditing] = useState<Restaurant|null>(null);
-  const [autoSlug, setAutoSlug] = useState(true);
-
-  const { register, handleSubmit, control, setValue, reset, watch, formState:{ errors, isSubmitting } } =
-    useForm<RestoForm>({
-      resolver: zodResolver(restoSchema),
-      defaultValues: {
-        municipality_id: undefined, name:"", slug:"", kind:"restaurant",
-        address:"", lat:0, lng:0, description:"",
-        price_range:"moderate", cuisine_csv:"",
-        phone:"", website:"", facebook:"", instagram:"",
-        opening_hours:"", rating:0,
-      }
-    });
-
-  const nameWatch = watch("name");
-  useEffect(()=>{ if (autoSlug) setValue("slug", slugify(nameWatch||"")); }, [nameWatch, autoSlug, setValue]);
-
-  const reload = async () => {
-    const qs = new URLSearchParams();
-    if (muni) qs.set("municipalityId", String(muni));
-    if (q) qs.set("q", q);
-    const rows = await jget<Restaurant[]>(`/api/restaurants?${qs.toString()}`);
-    setList(rows.map(r => ({ ...r, cuisine_types: safeJsonArray(r.cuisine_types) })));
-  };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [muni, q]);
-
-  const onCreate = async (data:RestoForm) => {
-    await jsend("/api/admin/restaurants", {
-      municipality_id: data.municipality_id,
-      name: data.name.trim(), slug: data.slug.trim(), kind: data.kind,
-      address: data.address.trim(), lat:data.lat, lng:data.lng,
-      description: data.description || null,
-      price_range: data.price_range,
-      cuisine_types: toList(data.cuisine_csv||""),
-      phone: data.phone || null, website: data.website || null,
-      facebook: data.facebook || null, instagram: data.instagram || null,
-      opening_hours: data.opening_hours || null,
-      rating: data.rating ?? 0,
-    }, "POST");
-    reset(); setAutoSlug(true); reload();
-  };
-
-  const startEdit = (r:Restaurant) => {
-    setEditing(r);
-    reset({
-      municipality_id: r.municipality_id ?? undefined,
-      name: r.name, slug: r.slug, kind: r.kind as any,
-      address: r.address, lat:r.lat, lng:r.lng, description:r.description ?? "",
-      price_range: r.price_range, cuisine_csv:(r.cuisine_types??[]).join(", "),
-      phone:r.phone ?? "", website:r.website ?? "", facebook:r.facebook ?? "", instagram:r.instagram ?? "",
-      opening_hours:r.opening_hours ?? "", rating:r.rating ?? 0,
-    });
-    setAutoSlug(false);
-  };
-
-  const saveEdit = async (data:RestoForm) => {
-    if (!editing) return;
-    await jsend(`/api/admin/restaurants/${editing.id}`, {
-      municipality_id: data.municipality_id,
-      name: data.name.trim(), slug: data.slug.trim(), kind: data.kind,
-      address: data.address.trim(), lat:data.lat, lng:data.lng,
-      description: data.description || null,
-      price_range: data.price_range,
-      cuisine_types: toList(data.cuisine_csv||""),
-      phone: data.phone || null, website: data.website || null,
-      facebook: data.facebook || null, instagram: data.instagram || null,
-      opening_hours: data.opening_hours || null,
-      rating: data.rating ?? 0,
-    }, "PATCH");
-    setEditing(null); reset(); setAutoSlug(true); reload();
-  };
-
-  const del = async (id:number) => {
-    if (!confirm("Delete this restaurant? This also removes its links.")) return;
-    await jsend(`/api/admin/restaurants/${id}`, null, "DELETE");
-    if (editing?.id === id) { setEditing(null); reset(); }
-    reload();
-  };
-
-  return (
-    <div className="grid md:grid-cols-3 gap-6">
-      {/* Filters + Table */}
-      <div className="md:col-span-2 space-y-3">
-        <div className="flex items-end gap-2">
-          <div className="w-64">
-            <div className="text-xs text-neutral-500 mb-1">Municipality</div>
-            <MunicipalitySelect value={muni} onChange={setMuni} />
-          </div>
-          <div className="flex-1">
-            <div className="text-xs text-neutral-500 mb-1">Search restaurants</div>
-            <input className="input w-full" placeholder="Type to filter…" value={q} onChange={(e)=>setQ(e.target.value)} />
-          </div>
-        </div>
-
-        <div className="border rounded overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th className="p-2 text-left">Name</th>
-                <th className="p-2">Muni</th>
-                <th className="p-2">Price</th>
-                <th className="p-2 w-36">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map(r => (
-                <tr key={r.id} className="border-t">
-                  <td className="p-2">{r.name}</td>
-                  <td className="p-2 text-center">{r.municipality_id ?? "—"}</td>
-                  <td className="p-2 text-center">{r.price_range}</td>
-                  <td className="p-2 flex items-center justify-center gap-3">
-                    <button className="text-primary-600 underline" onClick={()=>startEdit(r)}>Edit</button>
-                    <button className="text-red-600 underline" onClick={()=>del(r.id)}>Delete</button>
-                  </td>
-                </tr>
-              ))}
-              {list.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-neutral-500">No results.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Create/Edit form */}
-      <div className="space-y-2">
-        <h3 className="font-semibold">{editing ? "Edit Restaurant" : "Create Restaurant"}</h3>
-        <form className="space-y-2" onSubmit={editing ? handleSubmit(saveEdit) : handleSubmit(onCreate)}>
-          <div>
-            <div className="text-xs text-neutral-500 mb-1">Municipality</div>
-            <Controller
-              name="municipality_id"
-              control={control}
-              render={({ field }) => (
-                <MunicipalitySelect allowAll={false} value={field.value ?? null} onChange={(id)=>field.onChange(id ?? undefined)} />
-              )}
-            />
-            {errors.municipality_id && <div className="text-xs text-red-600 mt-1">{errors.municipality_id.message}</div>}
-          </div>
-
-          <div>
-            <div className="text-xs text-neutral-500 mb-1">Name</div>
-            <input className="input w-full" {...register("name")} />
-            {errors.name && <div className="text-xs text-red-600 mt-1">{errors.name.message}</div>}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
-              <div className="text-xs text-neutral-500 mb-1">Slug</div>
-              <input className="input w-full" {...register("slug")} />
-              {errors.slug && <div className="text-xs text-red-600 mt-1">{errors.slug.message}</div>}
-            </div>
-            <label className="text-xs flex items-center gap-1">
-              <input type="checkbox" checked={autoSlug} onChange={(e)=>setAutoSlug(e.target.checked)} />
-              Auto-slug
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <div className="text-xs font-medium text-neutral-600 mb-1">Popularity (0-100)</div>
+              <input type="number" {...register('popularity', { valueAsNumber: true })} className="w-full border rounded-md px-3 py-2 text-sm" defaultValue={0}/>
+            </label>
+            <label className="block">
+              <div className="text-xs font-medium text-neutral-600 mb-1">Rating (0-5)</div>
+              <input type="number" step="0.1" {...register('rating', { valueAsNumber: true })} className="w-full border rounded-md px-3 py-2 text-sm" defaultValue={0}/>
             </label>
           </div>
 
-          <select className="input" {...register("kind")}>
-            <option>restaurant</option><option>stall</option><option>store</option>
-            <option>dealer</option><option>market</option><option>home-based</option>
-          </select>
-
-          <input className="input" {...register("address")} placeholder="Address" />
-          <div className="flex gap-2">
-            <input className="input" type="number" step="0.000001" placeholder="Lat" {...register("lat", { valueAsNumber: true })} />
-            <input className="input" type="number" step="0.000001" placeholder="Lng" {...register("lng", { valueAsNumber: true })} />
-          </div>
-
-          <select className="input" {...register("price_range")}>
-            <option>budget</option><option>moderate</option><option>expensive</option>
-          </select>
-
-          <textarea className="input" {...register("description")} placeholder="Description" />
-          <input className="input" {...register("cuisine_csv")} placeholder="Cuisines (comma-sep)" />
-          <input className="input" {...register("phone")} placeholder="Phone" />
-          <input className="input" {...register("website")} placeholder="Website URL" />
-          <input className="input" {...register("facebook")} placeholder="Facebook URL" />
-          <input className="input" {...register("instagram")} placeholder="Instagram URL" />
-          <input className="input" {...register("opening_hours")} placeholder="Opening hours" />
-          <input className="input" type="number" step="0.1" {...register("rating", { valueAsNumber: true })} placeholder="Rating" />
-
-          <div className="flex gap-2">
-            <button className="btn btn-primary" disabled={isSubmitting}>{editing ? "Save" : "Create"}</button>
-            {editing && <button type="button" className="btn" onClick={()=>{ setEditing(null); reset(); setAutoSlug(true); }}>Cancel</button>}
-          </div>
+          <button disabled={isSubmitting} className="px-4 py-2 rounded-md bg-amber-600 text-white">
+            {isSubmitting ? 'Creating…' : 'Create'}
+          </button>
         </form>
       </div>
     </div>
   );
 }
 
-/* ============ Curation (linking) ============ */
-function CurationTab() {
-  // Each side has its own muni + search
-  const [dishMuni, setDishMuni] = useState<number|null>(null);
-  const [dishQ, setDishQ] = useState("");
-  const [restoMuni, setRestoMuni] = useState<number|null>(null);
-  const [restoQ, setRestoQ] = useState("");
+// ---------- Restaurants ----------
+function RestaurantsTab() {
+  const [muniId, setMuniId] = useState<number|null>(null);
+  const [q, setQ] = useState('');
+  const qs = useMemo(() => {
+    const u = new URLSearchParams();
+    if (muniId) u.set('municipalityId', String(muniId));
+    if (q) u.set('q', q);
+    return `?${u.toString()}`;
+  }, [muniId, q]);
+  const { data, error, loading, refresh } = useAsync<any[]>(() => AdminAPI.restaurantsList(qs), [qs]);
 
-  const [dishes, setDishes] = useState<Dish[]>([]);
-  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [selDishIds, setSelDishIds] = useState<Set<number>>(new Set());
-  const [selRestoIds, setSelRestoIds] = useState<Set<number>>(new Set());
+  const { register, handleSubmit, reset, formState: { isSubmitting } } =
+    useForm<RestInput>({ resolver: zodResolver(restSchema) });
 
-  useEffect(() => { (async () => {
-    const qs = new URLSearchParams();
-    if (dishMuni) qs.set("municipalityId", String(dishMuni));
-    if (dishQ) qs.set("q", dishQ);
-    const rows = await jget<Dish[]>(`/api/dishes?${qs.toString()}`);
-    setDishes(rows);
-    setSelDishIds(prev => new Set([...prev].filter(id => rows.some(r => r.id === id))));
-  })(); }, [dishMuni, dishQ]);
-
-  useEffect(() => { (async () => {
-    const qs = new URLSearchParams();
-    if (restoMuni) qs.set("municipalityId", String(restoMuni));
-    if (restoQ) qs.set("q", restoQ);
-    const rows = await jget<Restaurant[]>(`/api/restaurants?${qs.toString()}`);
-    setRestaurants(rows);
-    setSelRestoIds(prev => new Set([...prev].filter(id => rows.some(r => r.id === id))));
-  })(); }, [restoMuni, restoQ]);
-
-  const toggle = (set:React.Dispatch<React.SetStateAction<Set<number>>>, id:number) =>
-    set(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
-  const linkSelected = async () => {
-    if (selDishIds.size === 0 || selRestoIds.size === 0) { alert("Select at least one dish and one restaurant."); return; }
-    const dishIds = [...selDishIds], restoIds = [...selRestoIds];
-    for (const d of dishIds) for (const r of restoIds)
-      await jsend(`/api/admin/dish-restaurants`, { dish_id: d, restaurant_id: r, availability: "regular" }, "POST");
-    alert(`Linked ${dishIds.length} dish(es) to ${restoIds.length} restaurant(s).`);
-  };
-  const unlinkSelected = async () => {
-    if (selDishIds.size === 0 || selRestoIds.size === 0) { alert("Select at least one dish and one restaurant."); return; }
-    const dishIds = [...selDishIds], restoIds = [...selRestoIds];
-    for (const d of dishIds) for (const r of restoIds) {
-      const qs = new URLSearchParams({ dishId: String(d), restaurantId: String(r) });
-      await jsend(`/api/admin/dish-restaurants?${qs.toString()}`, null, "DELETE");
-    }
-    alert(`Unlinked ${dishIds.length} dish(es) from ${restoIds.length} restaurant(s).`);
+  const onCreate = async (payload: RestInput) => {
+    const body = {
+      ...payload,
+      cuisine_types: payload.cuisine_types ? payload.cuisine_types.split(',').map(s=>s.trim()).filter(Boolean) : [],
+    };
+    await AdminAPI.createRestaurant(body);
+    reset(); refresh();
   };
 
   return (
-    <div className="grid md:grid-cols-2 gap-6">
-      <div className="border rounded p-3">
-        <div className="flex items-end gap-2 mb-3">
-          <div className="flex-1">
-            <div className="text-xs text-neutral-500 mb-1">Municipality (dishes)</div>
-            <MunicipalitySelect value={dishMuni} onChange={setDishMuni} />
-          </div>
-          <div className="flex-1">
-            <div className="text-xs text-neutral-500 mb-1">Search dishes</div>
-            <input className="input w-full" value={dishQ} onChange={(e)=>setDishQ(e.target.value)} placeholder="Type to filter…" />
-          </div>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-2">
+        <div className="flex gap-3 items-end mb-3">
+          <MunicipalitySelect value={muniId} onChange={setMuniId} className="w-56" />
+          <label className="block flex-1">
+            <div className="text-xs font-medium text-neutral-600 mb-1">Search restaurants</div>
+            <input value={q} onChange={e=>setQ(e.target.value)} className="w-full border rounded-md px-3 py-2 text-sm" placeholder="Type to filter..." />
+          </label>
         </div>
-        <div className="max-h-[380px] overflow-auto rounded border">
+
+        <div className="bg-white border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
+            <thead className="bg-neutral-50">
+              <tr>
+                <th className="text-left px-3 py-2">Name</th>
+                <th className="text-left px-3 py-2">Kind</th>
+                <th className="text-left px-3 py-2">Muni</th>
+                <th className="text-left px-3 py-2">Actions</th>
+              </tr>
+            </thead>
             <tbody>
-              {dishes.map(d => (
-                <tr key={d.id} className={`border-b ${selDishIds.has(d.id) ? "bg-primary-50" : ""}`}>
-                  <td className="p-2 w-8">
-                    <input type="checkbox" checked={selDishIds.has(d.id)} onChange={()=>toggle(setSelDishIds, d.id)} />
-                  </td>
-                  <td className="p-2">
-                    <div className="font-medium">{d.name}</div>
-                    <div className="text-xs text-neutral-500">{d.category} • muni:{d.municipality_id}</div>
+              {loading && <tr><td className="px-3 py-3 text-neutral-500" colSpan={4}>Loading…</td></tr>}
+              {error && <tr><td className="px-3 py-3 text-red-600" colSpan={4}>{error}</td></tr>}
+              {!loading && !error && (data?.length ?? 0) === 0 && (
+                <tr><td className="px-3 py-3 text-neutral-500" colSpan={4}>No restaurants</td></tr>
+              )}
+              {(data ?? []).map((r:any)=>(
+                <tr key={r.id} className="border-t">
+                  <td className="px-3 py-2">{r.name}</td>
+                  <td className="px-3 py-2">{r.kind}</td>
+                  <td className="px-3 py-2">{r.municipality_id ?? '—'}</td>
+                  <td className="px-3 py-2">
+                    <button className="text-amber-700 hover:underline mr-3" onClick={async()=>{
+                      const name = prompt('Edit name', r.name); if (!name) return;
+                      await AdminAPI.updateRestaurant(r.id, { name });
+                      refresh();
+                    }}>Edit</button>
+                    <button className="text-red-600 hover:underline" onClick={async()=>{
+                      if (!confirm(`Delete "${r.name}"?`)) return;
+                      await AdminAPI.deleteRestaurant(r.id); refresh();
+                    }}>Delete</button>
                   </td>
                 </tr>
               ))}
-              {dishes.length === 0 && <tr><td className="p-3 text-center text-neutral-500">No dishes.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
-      <div className="border rounded p-3">
-        <div className="flex items-end gap-2 mb-3">
-          <div className="flex-1">
-            <div className="text-xs text-neutral-500 mb-1">Municipality (restaurants)</div>
-            <MunicipalitySelect value={restoMuni} onChange={setRestoMuni} />
-          </div>
-          <div className="flex-1">
-            <div className="text-xs text-neutral-500 mb-1">Search restaurants</div>
-            <input className="input w-full" value={restoQ} onChange={(e)=>setRestoQ(e.target.value)} placeholder="Type to filter…" />
-          </div>
-        </div>
-        <div className="max-h-[380px] overflow-auto rounded border">
-          <table className="w-full text-sm">
-            <tbody>
-              {restaurants.map(r => (
-                <tr key={r.id} className={`border-b ${selRestoIds.has(r.id) ? "bg-primary-50" : ""}`}>
-                  <td className="p-2 w-8">
-                    <input type="checkbox" checked={selRestoIds.has(r.id)} onChange={()=>toggle(setSelRestoIds, r.id)} />
-                  </td>
-                  <td className="p-2">
-                    <div className="font-medium">{r.name}</div>
-                    <div className="text-xs text-neutral-500">{r.kind} • muni:{r.municipality_id ?? "—"}</div>
-                  </td>
-                </tr>
-              ))}
-              {restaurants.length === 0 && <tr><td className="p-3 text-center text-neutral-500">No restaurants.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* Create form */}
+      <div className="bg-white border rounded-lg p-4">
+        <div className="text-xl font-semibold mb-3">Create Restaurant</div>
+        <form onSubmit={handleSubmit(onCreate)} className="space-y-3">
+          <MunicipalitySelect
+            label="Municipality"
+            value={undefined}
+            onChange={(id)=> id && (document.getElementById('rest_muni') as HTMLInputElement).value = String(id)}
+          />
+          <input id="rest_muni" type="hidden" {...(register('municipality_id', { valueAsNumber: true }))} />
 
-      <div className="md:col-span-2 flex items-center justify-between">
-        <div className="text-sm text-neutral-600">
-          Linking: <b>{selDishIds.size}</b> dish(es) × <b>{selRestoIds.size}</b> restaurant(s)
-        </div>
-        <div className="flex gap-2">
-          <button className="btn" onClick={unlinkSelected}>Unlink selected</button>
-          <button className="btn btn-primary" onClick={linkSelected}>Link selected</button>
-        </div>
+          <label className="block">
+            <div className="text-xs font-medium mb-1">Name</div>
+            <input {...register('name')} className="w-full border rounded-md px-3 py-2 text-sm" />
+          </label>
+          <label className="block">
+            <div className="text-xs font-medium mb-1">Slug</div>
+            <input {...register('slug')} className="w-full border rounded-md px-3 py-2 text-sm"
+              onFocus={(e)=>{ if(!e.currentTarget.value){ e.currentTarget.value = slugify((document.querySelector('input[name="name"]') as HTMLInputElement)?.value ?? '') } }} />
+          </label>
+          <label className="block">
+            <div className="text-xs font-medium mb-1">Kind</div>
+            <select {...register('kind')} className="w-full border rounded-md px-3 py-2 text-sm">
+              <option value="restaurant">Restaurant</option>
+              <option value="stall">Stall</option>
+              <option value="store">Store</option>
+              <option value="dealer">Dealer</option>
+              <option value="market">Market</option>
+              <option value="home-based">Home-based</option>
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-xs font-medium mb-1">Address</div>
+            <input {...register('address')} className="w-full border rounded-md px-3 py-2 text-sm" />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <div className="text-xs font-medium mb-1">Latitude</div>
+              <input type="number" step="any" {...register('lat', { valueAsNumber: true })} className="w-full border rounded-md px-3 py-2 text-sm" />
+            </label>
+            <label className="block">
+              <div className="text-xs font-medium mb-1">Longitude</div>
+              <input type="number" step="any" {...register('lng', { valueAsNumber: true })} className="w-full border rounded-md px-3 py-2 text-sm" />
+            </label>
+          </div>
+
+          <label className="block">
+            <div className="text-xs font-medium mb-1">Cuisine types (comma-sep)</div>
+            <input {...register('cuisine_types')} className="w-full border rounded-md px-3 py-2 text-sm" />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <div className="text-xs font-medium mb-1">Price range</div>
+              <select {...register('price_range')} className="w-full border rounded-md px-3 py-2 text-sm">
+                <option value="budget">Budget</option>
+                <option value="moderate">Moderate</option>
+                <option value="expensive">Expensive</option>
+              </select>
+            </label>
+            <label className="block">
+              <div className="text-xs font-medium mb-1">Rating (0–5)</div>
+              <input type="number" step="0.1" {...register('rating', { valueAsNumber: true })} className="w-full border rounded-md px-3 py-2 text-sm" defaultValue={0}/>
+            </label>
+          </div>
+
+          <button disabled={isSubmitting} className="px-4 py-2 rounded-md bg-amber-600 text-white">
+            {isSubmitting ? 'Creating…' : 'Create'}
+          </button>
+        </form>
       </div>
     </div>
   );
 }
 
-/* ============ Main dashboard tabs ============ */
-export default function AdminDashboard() {
-  const [tab, setTab] = useState<"analytics"|"dishes"|"restaurants"|"curation">("analytics");
+// ---------- Curation (link dishes ↔ restaurants) ----------
+function CurationTab() {
+  const [dishQuery, setDishQuery] = useState('');
+  const [restQuery, setRestQuery] = useState('');
+  const [filterMuni, setFilterMuni] = useState<number|null>(null);
+  const [selectedDish, setSelectedDish] = useState<{id:number; name:string; slug:string; category?:string} | null>(null);
+  const { data: dishMatches } = useAsync<any[]>(() => AdminAPI.searchDishes(dishQuery), [dishQuery]);
+  const { data: restMatches } = useAsync<any[]>(() => AdminAPI.searchRestaurants(restQuery), [restQuery]);
+
+  const [linkedIds, setLinkedIds] = useState<Set<number>>(new Set());
+  useEffect(() => { setLinkedIds(new Set()); }, [selectedDish?.id]);
+
+  const toggleLink = async (restId: number, checked: boolean) => {
+    if (!selectedDish) return;
+    if (checked) {
+      await AdminAPI.linkDishRestaurant(selectedDish.id, restId);
+      setLinkedIds(prev => new Set(prev).add(restId));
+    } else {
+      await AdminAPI.unlinkDishRestaurant(selectedDish.id, restId);
+      setLinkedIds(prev => { const n = new Set(prev); n.delete(restId); return n; });
+    }
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <button className={`btn ${tab==='analytics'?'btn-primary':''}`} onClick={()=>setTab("analytics")}>Analytics</button>
-        <button className={`btn ${tab==='dishes'?'btn-primary':''}`} onClick={()=>setTab("dishes")}>Dishes</button>
-        <button className={`btn ${tab==='restaurants'?'btn-primary':''}`} onClick={()=>setTab("restaurants")}>Restaurants</button>
-        <button className={`btn ${tab==='curation'?'btn-primary':''}`} onClick={()=>setTab("curation")}>Curation</button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="bg-white border rounded-lg p-4">
+        <div className="font-medium mb-2">Pick a dish</div>
+        <input
+          value={dishQuery}
+          onChange={e=>setDishQuery(e.target.value)}
+          placeholder="Search dish by name…"
+          className="w-full border rounded-md px-3 py-2 text-sm mb-3"
+        />
+        <div className="max-h-72 overflow-auto border rounded-md">
+          {(dishMatches ?? []).map(d => (
+            <button
+              key={d.id}
+              onClick={()=> setSelectedDish(d)}
+              className={`w-full text-left px-3 py-2 border-b hover:bg-neutral-50 ${selectedDish?.id===d.id ? 'bg-amber-50' : ''}`}
+            >
+              <div className="font-medium">{d.name}</div>
+              <div className="text-xs text-neutral-500">{d.category}</div>
+            </button>
+          ))}
+        </div>
       </div>
 
-      {tab === "analytics" && <AnalyticsTab />}
-      {tab === "dishes" && <ManageDishes />}
-      {tab === "restaurants" && <ManageRestaurants />}
-      {tab === "curation" && <CurationTab />}
+      <div className="bg-white border rounded-lg p-4">
+        <div className="flex items-end gap-3 mb-3">
+          <div className="font-medium flex-1">
+            {selectedDish ? <>Link restaurants to: <span className="font-semibold">{selectedDish.name}</span></> : 'Pick a dish first'}
+          </div>
+          <MunicipalitySelect value={filterMuni} onChange={setFilterMuni} />
+        </div>
+        <input
+          value={restQuery}
+          onChange={e=>setRestQuery(e.target.value)}
+          placeholder="Search restaurant by name…"
+          className="w-full border rounded-md px-3 py-2 text-sm mb-3"
+        />
+        <div className="max-h-80 overflow-auto border rounded-md">
+          {(restMatches ?? [])
+            .filter(r => !filterMuni || r.municipality_id === filterMuni)
+            .map(r => {
+              const checked = linkedIds.has(r.id);
+              return (
+                <label key={r.id} className="flex items-center gap-2 px-3 py-2 border-b">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e)=> toggleLink(r.id, e.target.checked)}
+                    disabled={!selectedDish}
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium">{r.name}</div>
+                    <div className="text-xs text-neutral-500">{r.slug}</div>
+                  </div>
+                </label>
+              );
+            })}
+        </div>
+      </div>
     </div>
   );
 }

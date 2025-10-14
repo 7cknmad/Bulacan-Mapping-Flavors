@@ -639,6 +639,33 @@ app.get('/api/admin/stats/top-restaurants', requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
+// --- Analytics aliases (match the UI paths that were 404) ---
+app.get('/api/admin/analytics/summary', requireAdmin, async (req, res) => {
+  // reuse stats/overview
+  const [[row]] = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM municipalities) AS municipalities,
+      (SELECT COUNT(*) FROM dishes) AS dishes,
+      (SELECT COUNT(*) FROM dishes d JOIN dish_categories c ON c.id=d.category_id WHERE c.code='delicacy') AS delicacies,
+      (SELECT COUNT(*) FROM restaurants) AS restaurants,
+      (SELECT COUNT(*) FROM dish_restaurants) AS links
+  `);
+  res.json(row);
+});
+
+app.get('/api/admin/analytics/top-dishes', requireAdmin, async (req, res) => {
+  req.url = '/api/admin/stats/top-dishes'; // delegate
+  req.originalUrl = req.url;
+  return app._router.handle(req, res);
+});
+
+app.get('/api/admin/analytics/top-restaurants', requireAdmin, async (req, res) => {
+  req.url = '/api/admin/stats/top-restaurants'; // delegate
+  req.originalUrl = req.url;
+  return app._router.handle(req, res);
+});
+
 // ====== Start server ======
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
+
