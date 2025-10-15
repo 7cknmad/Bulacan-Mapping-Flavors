@@ -1,3 +1,4 @@
+// api/index.js
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -10,33 +11,28 @@ app.set('trust proxy', 1);
 app.use(express.json());
 app.use(cookieParser());
 
-// ====== CORS (GitHub Pages + local + Cloudflare tunnel) ======
-const ALLOWED = new Set([
-  'http://localhost:5173',
-  'https://7cknmad.github.io',
+const allowedOrigins = new Set([
+  'http://localhost:5173',                 // Vite dev
+  'https://7cknmad.github.io',            // GitHub Pages origin
+  'https://shoulder-presenting-downloading-apache.trycloudflare.com', // your current tunnel
+  // add new tunnels here when they change
 ]);
-
 const corsOptions = {
-  origin(origin, cb) {
-    if (!origin) return cb(null, true); // Postman/curl
-    if (ALLOWED.has(origin)) return cb(null, true);
-    // allow any *.trycloudflare.com tunnel
-    try {
-      const { hostname, protocol } = new URL(origin);
-      if (protocol === 'https:' && hostname.endsWith('.trycloudflare.com')) {
-        return cb(null, true);
-      }
-    } catch {}
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);             // allow curl/postman
+    if (allowedOrigins.has(origin)) return cb(null, true);
     return cb(new Error(`Not allowed by CORS: ${origin}`));
   },
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true, // <-- IMPORTANT for cookies
+  credentials: true,                                 // ✅ required for cookies
 };
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // preflight
+app.options('/api/*', cors(corsOptions));
+app.options('/api/admin/*', cors(corsOptions));
+app.options('/*', cors(corsOptions));
 
-// ====== DB pool ======
+// ----- DB pool -----
 const cfg = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
@@ -57,7 +53,7 @@ let pool;
   }
 })();
 
-// ====== Health ======
+// ----- Health -----
 app.get('/api/health', async (req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
@@ -67,7 +63,7 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// ====== Municipalities ======
+// ----- Municipalities -----
 app.get('/api/municipalities', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -82,11 +78,10 @@ app.get('/api/municipalities', async (req, res) => {
   }
 });
 
-// ====== Dishes (public) ======
+// ----- Dishes (public) -----
 app.get('/api/dishes', async (req, res) => {
   try {
     const { municipalityId, category, q, signature, limit } = req.query;
-
     const where = [];
     const params = [];
 
@@ -125,22 +120,19 @@ app.get('/api/dishes', async (req, res) => {
   }
 });
 
-// ====== Restaurants (public) ======
+// ----- Restaurants (public) -----
 app.get('/api/restaurants', async (req, res) => {
   try {
     const { municipalityId, dishId, kind, q, featured, limit } = req.query;
-
     const where = [];
     const params = [];
 
-    // join on dish if given
     const joinDish = dishId ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id = r.id AND dr.dish_id = ?' : '';
     if (dishId) params.push(Number(dishId));
 
     if (municipalityId) { where.push('r.municipality_id = ?'); params.push(Number(municipalityId)); }
     if (kind)           { where.push('r.kind = ?');            params.push(String(kind)); }
     if (featured != null) { where.push('r.featured = ?');      params.push(Number(featured) ? 1 : 0); }
-
     if (q) {
       where.push('(MATCH(r.name, r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)');
       params.push(String(q), `%${String(q)}%`);
@@ -171,7 +163,7 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
-// ====== Municipality scoped helpers ======
+// ----- Municipality-scoped helpers -----
 app.get('/api/municipalities/:id/dishes', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -222,7 +214,7 @@ app.get('/api/municipalities/:id/restaurants', async (req, res) => {
   }
 });
 
-// ====== Linking (public fallback) ======
+// ----- Linking (public fallback) -----
 app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
   try {
     const dishId = Number(req.params.dishId);
@@ -246,14 +238,13 @@ app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
   }
 });
 
-// ====== Admin endpoints (minimal) ======
-// Auth “me” (you can replace with real JWT/cookie check)
+// ================= ADMIN =================
+// (Stub) Auth "me" endpoint so credentials flow works.
 app.get('/api/admin/auth/me', (req, res) => {
-  // If you implement real auth, verify cookie/JWT here
   res.json({ ok: true, user: { email: 'admin@example.com' } });
 });
 
-// Admin linking lists (used by dashboard)
+// Linking lists used by dashboard
 app.get('/api/admin/dishes/:id/restaurants', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -288,7 +279,7 @@ app.get('/api/admin/restaurants/:id/dishes', async (req, res) => {
   }
 });
 
-// Create / Update / Delete (admin) — keep your existing handlers if you have them
+// Create / Update / Delete (admin)
 app.post('/api/admin/dishes', async (req, res) => {
   try {
     const {
@@ -335,9 +326,7 @@ app.patch('/api/admin/dishes/:id', async (req, res) => {
     const up = (col, val) => { fields.push(`${col}=?`); params.push(val); };
 
     for (const [k, v] of Object.entries(req.body || {})) {
-      if (['name','slug','description','image_url','popularity','rating','is_signature','panel_rank','category_id','municipality_id'].includes(k)) {
-        up(k, v);
-      }
+      if (['name','slug','description','image_url','popularity','rating','is_signature','panel_rank','category_id','municipality_id'].includes(k)) up(k, v);
       if (k === 'flavor_profile') up('flavor_profile', JSON.stringify(v ?? []));
       if (k === 'ingredients')    up('ingredients', JSON.stringify(v ?? []));
     }
@@ -467,7 +456,7 @@ app.delete('/api/admin/dish-restaurants', async (req, res) => {
   }
 });
 
-// simple analytics stub
+// Simple analytics
 app.get('/api/admin/analytics/summary', async (req, res) => {
   try {
     const [[d]] = await pool.query(`SELECT COUNT(*) AS dishes FROM dishes`);
