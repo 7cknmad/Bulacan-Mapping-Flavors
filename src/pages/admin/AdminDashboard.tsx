@@ -12,7 +12,7 @@ import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, CartesianGrid, Legend
 } from "recharts";
-import { useBeforeUnload, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 /* helpers */
 const slugify = (s: string) =>
@@ -88,15 +88,37 @@ function SearchBox({ placeholder, value, onChange }: { placeholder: string; valu
 
 /* Confirm navigation (HashRouter friendly) */
 function useConfirmLeave(when: boolean) {
-  useBeforeUnload(when, { message: "You have unsaved changes. Leave this page?" });
+  // Block page close/refresh
+  useEffect(() => {
+    if (!when) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Chrome requires returnValue to be set
+      e.returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [when]);
+
+  // Block hash-based route changes (since we use HashRouter on GH Pages)
   const lastHash = useRef(window.location.hash);
   useEffect(() => {
-    function onHashChange() {
-      if (!when) { lastHash.current = window.location.hash; return; }
+    const onHashChange = () => {
+      if (!when) {
+        lastHash.current = window.location.hash;
+        return;
+      }
       const ok = confirm("You have unsaved changes. Leave this page?");
-      if (!ok) setTimeout(() => { window.location.hash = lastHash.current || "#/"; }, 0);
-      else lastHash.current = window.location.hash;
-    }
+      if (!ok) {
+        // revert the hash change
+        setTimeout(() => {
+          window.location.hash = lastHash.current || "#/";
+        }, 0);
+      } else {
+        lastHash.current = window.location.hash;
+      }
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [when]);
