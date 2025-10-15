@@ -1,12 +1,11 @@
-export const assetUrl = (p: string) => {
+// src/utils/assets.ts
+/** Build a correct asset URL under GitHub Pages (or any BASE_URL). */
+export function assetUrl(p: string): string {
   if (!p) return "";
-  // If it's already absolute (http(s), data URIs), just return it.
-  if (/^(https?:)?\/\//i.test(p) || /^data:/i.test(p)) return p;
-
-  // Build a relative path using BASE_URL (a path, not an absolute URL).
-  const base = import.meta.env.BASE_URL || "/";
-  const cleanBase = base.endsWith("/") ? base : base + "/";
-  const cleanPath = p.replace(/^\/+/, ""); // strip leading slash in p
-
-  return cleanBase + cleanPath;
-};
+  if (/^https?:\/\//i.test(p)) return p;           // already absolute (CDN/external)
+  const base = (import.meta as any).env?.BASE_URL ?? "/";
+  const origin = (typeof window !== "undefined" && window.location?.origin) ? window.location.origin : "";
+  const clean = String(p).replace(/^\/+/, "");     // strip leading slash to avoid base//
+  const prefix = base.endsWith("/") ? base : base + "/";
+  return `${origin}${prefix}${clean}`;
+}

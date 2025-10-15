@@ -1,8 +1,10 @@
+// src/components/cards/RestaurantCard.tsx
 import React from "react";
 import { Link } from "react-router-dom";
 import { Star as StarIcon, MapPin as MapPinIcon } from "lucide-react";
 import type { Restaurant } from "../../utils/api";
 import { assetUrl } from "../../utils/assets";
+
 // Normalize cuisine_types: null | string | JSON string | string[] -> string[]
 function toArray(v: unknown): string[] {
   if (Array.isArray(v)) return v as string[];
@@ -19,7 +21,7 @@ function toArray(v: unknown): string[] {
 }
 
 interface RestaurantCardProps {
-  restaurant: Restaurant;  // from utils/api
+  restaurant: Restaurant;
   compact?: boolean;
 }
 
@@ -30,20 +32,25 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, compact = f
     : "—";
 
   const cuisines = toArray((restaurant as any).cuisine_types);
-  const primaryCuisine = cuisines[0] ?? "Cuisine";
   const allCuisines = cuisines.slice(0, 4);
 
   const addressFirst = (restaurant.address || "").split(",")[0] || "Bulacan";
   const href = `/restaurant/${encodeURIComponent(restaurant.slug || String(restaurant.id))}`;
+
   const thumb = restaurant.image_url?.startsWith("http")
-  ? restaurant.image_url
-  : assetUrl(restaurant.image_url || "images/placeholders/restaurant.jpg");
+    ? restaurant.image_url!
+    : assetUrl(restaurant.image_url || "images/placeholders/restaurant.jpg");
 
   if (compact) {
     return (
       <Link to={href} className="block">
         <div className="flex items-center p-3 hover:bg-neutral-50 transition-colors rounded-lg">
-          <img src={thumb} alt={restaurant.name} />
+          <img
+            src={thumb}
+            alt={restaurant.name}
+            className="w-16 h-16 object-cover rounded-md mr-3"
+            onError={(e) => { e.currentTarget.src = assetUrl("images/placeholders/restaurant.jpg"); }}
+          />
           <div>
             <h3 className="font-medium text-neutral-900">{restaurant.name}</h3>
             <div className="flex items-center text-xs text-neutral-500 mt-0.5">
@@ -58,9 +65,7 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, compact = f
                   className={`${i < Math.floor(rating) ? "text-yellow-500 fill-yellow-500" : "text-neutral-300"} mr-0.5`}
                 />
               ))}
-              <span className="text-xs text-neutral-500 ml-1">
-                {rating.toFixed(1)}
-              </span>
+              <span className="text-xs text-neutral-500 ml-1">{rating.toFixed(1)}</span>
               <span className="text-xs text-neutral-500 ml-2">{price}</span>
             </div>
           </div>
@@ -73,7 +78,12 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, compact = f
     <Link to={href} className="block">
       <div className="card group hover:scale-[1.02] transition overflow-hidden">
         <div className="relative">
-          <img src={thumb} alt={restaurant.name} />
+          <img
+            src={thumb}
+            alt={restaurant.name}
+            className="w-full h-40 object-cover"
+            onError={(e) => { e.currentTarget.src = assetUrl("images/placeholders/restaurant.jpg"); }}
+          />
           <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded-md text-xs font-medium">
             {price}
           </div>
@@ -91,17 +101,12 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, compact = f
             <span>{addressFirst}</span>
           </div>
           {restaurant.description && (
-            <p className="text-sm text-neutral-600 mb-3 line-clamp-2">
-              {restaurant.description}
-            </p>
+            <p className="text-sm text-neutral-600 mb-3 line-clamp-2">{restaurant.description}</p>
           )}
           {allCuisines.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
               {allCuisines.map((type, idx) => (
-                <span
-                  key={`${type}-${idx}`}
-                  className="text-xs bg-neutral-100 text-neutral-700 px-2 py-1 rounded-full"
-                >
+                <span key={`${type}-${idx}`} className="text-xs bg-neutral-100 text-neutral-700 px-2 py-1 rounded-full">
                   {type}
                 </span>
               ))}

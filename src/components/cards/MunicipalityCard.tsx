@@ -12,9 +12,9 @@ type Dish = {
   description?: string | null;
   image_url?: string | null;
   category?: "food" | "delicacy" | "drink";
-  signature?: number | null;        // optional from API
-  panel_rank?: number | null;       // optional from API
-  popularity?: number | null;       // fallback
+  signature?: number | null;
+  panel_rank?: number | null;
+  popularity?: number | null;
 };
 
 type Restaurant = {
@@ -24,8 +24,8 @@ type Restaurant = {
   address?: string | null;
   price_range?: string | null;
   rating?: number | null;
-  featured?: number | null;         // optional from API
-  panel_rank?: number | null;       // optional from API
+  featured?: number | null;
+  panel_rank?: number | null;
 };
 
 type UIMunicipality = {
@@ -42,33 +42,33 @@ interface MunicipalityCardProps {
   onClose: () => void;
 }
 
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+const API = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:3001";
 const safeOrigin = typeof window !== "undefined" ? window.location.origin : "";
 
-// tiny classnames helper
 function cn(...xs: Array<string | false | undefined>) { return xs.filter(Boolean).join(" "); }
-
-// safe JSON fetch with helpful errors
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
   const txt = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
-  try { return JSON.parse(txt) as T; } catch { throw new Error(`Bad JSON: ${txt.slice(0, 200)}`); }
+  return JSON.parse(txt) as T;
 }
 
 const panelTransition = { type: "spring", stiffness: 260, damping: 26 };
 const listVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.05 } } };
 const itemVariants = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0, transition: { duration: 0.22 } } };
 
-const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClose }) => {
-  // top foods / delicacies / featured restos
+export default function MunicipalityCard({ municipality, onClose }: MunicipalityCardProps) {
   const [foods, setFoods] = useState<Dish[] | null>(null);
   const [foodsErr, setFoodsErr] = useState<string | null>(null);
   const [delics, setDelics] = useState<Dish[] | null>(null);
   const [delicsErr, setDelicsErr] = useState<string | null>(null);
   const [restos, setRestos] = useState<Restaurant[] | null>(null);
   const [restosErr, setRestosErr] = useState<string | null>(null);
-  const heroSrc = municipality.image_url || assetUrl(`images/municipalities/${municipality.slug}.jpg`);
+
+  const heroSrc = municipality.image_url
+    ? (municipality.image_url.startsWith("http") ? municipality.image_url : assetUrl(municipality.image_url))
+    : assetUrl(`images/municipalities/${municipality.slug}.jpg`);
+
   const [latRaw, lngRaw] = municipality.coordinates as any;
   const latNum = Number(latRaw), lngNum = Number(lngRaw);
   const hasCoords = Number.isFinite(latNum) && Number.isFinite(lngNum);
@@ -78,16 +78,11 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
   const goToAll: React.MouseEventHandler<HTMLButtonElement | HTMLAnchorElement> = (e) => {
     e.preventDefault(); e.stopPropagation();
     const url = `/dishes?municipalityId=${municipality.id}`;
-    onClose?.(); setTimeout(() => navigate(url), 220);
+    onClose?.(); setTimeout(() => navigate(url), 200);
   };
 
-  function sortAndSlice<T extends Dish | Restaurant>(
-    list: T[],
-    { forDish }: { forDish: boolean },
-    limit = 3
-  ): T[] {
-    const isFeatured = (x: any) =>
-      Number(x.signature ?? x.featured ?? 0) > 0 || Number(x.panel_rank ?? 0) > 0;
+  function sortAndSlice<T extends Dish | Restaurant>(list: T[], { forDish }: { forDish: boolean }, limit = 3): T[] {
+    const isFeatured = (x: any) => Number(x.signature ?? x.featured ?? 0) > 0 || Number(x.panel_rank ?? 0) > 0;
     return [...list]
       .sort((a: any, b: any) => {
         const af = isFeatured(a) ? 1 : 0;
@@ -95,70 +90,56 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
         if (bf !== af) return bf - af; // featured first
         const ar = Number(a.panel_rank ?? 999);
         const br = Number(b.panel_rank ?? 999);
-        if (ar !== br) return ar - br; // lower rank first
-        if (forDish) {
-          return Number(b.popularity ?? 0) - Number(a.popularity ?? 0);
-        }
-        return Number((b.rating ?? 0)) - Number((a.rating ?? 0));
+        if (ar !== br) return ar - br; // rank next
+        return forDish
+          ? Number(b.popularity ?? 0) - Number(a.popularity ?? 0)
+          : Number(b.rating ?? 0) - Number(a.rating ?? 0);
       })
       .slice(0, limit);
   }
 
-  // Fetch top “food”
   useEffect(() => {
     let cancel = false;
     (async () => {
       setFoodsErr(null); setFoods(null);
       try {
-        const url = `${API}/api/dishes?municipalityId=${municipality.id}&category=food&signature=1&limit=3`;
-        const data = await getJSON<Dish[]>(url)
-          .catch(async () => {
-            // fallback: no signature support on API
-            const all = await getJSON<Dish[]>(
-              `${API}/api/dishes?municipalityId=${municipality.id}&category=food`
-            );
-            return sortAndSlice(all, { forDish: true }, 3);
-          });
+        const primary = `${API}/api/dishes?municipalityId=${municipality.id}&category=food&signature=1&limit=3`;
+        const data = await getJSON<Dish[]>(primary).catch(async () => {
+          const fallback = await getJSON<Dish[]>(`${API}/api/dishes?municipalityId=${municipality.id}&category=food`);
+          return sortAndSlice(fallback, { forDish: true }, 3);
+        });
         if (!cancel) setFoods(sortAndSlice(data, { forDish: true }, 3));
       } catch (e: any) { if (!cancel) setFoodsErr(String(e?.message || e)); }
     })();
     return () => { cancel = true; };
   }, [municipality.id]);
 
-  // Fetch top “delicacy”
   useEffect(() => {
     let cancel = false;
     (async () => {
       setDelicsErr(null); setDelics(null);
       try {
-        const url = `${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy&signature=1&limit=3`;
-        const data = await getJSON<Dish[]>(url)
-          .catch(async () => {
-            const all = await getJSON<Dish[]>(
-              `${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy`
-            );
-            return sortAndSlice(all, { forDish: true }, 3);
-          });
+        const primary = `${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy&signature=1&limit=3`;
+        const data = await getJSON<Dish[]>(primary).catch(async () => {
+          const fallback = await getJSON<Dish[]>(`${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy`);
+          return sortAndSlice(fallback, { forDish: true }, 3);
+        });
         if (!cancel) setDelics(sortAndSlice(data, { forDish: true }, 3));
       } catch (e: any) { if (!cancel) setDelicsErr(String(e?.message || e)); }
     })();
     return () => { cancel = true; };
   }, [municipality.id]);
 
-  // Featured restos (compact)
   useEffect(() => {
     let cancel = false;
     (async () => {
       setRestosErr(null); setRestos(null);
       try {
-        const url = `${API}/api/restaurants?municipalityId=${municipality.id}&featured=1&limit=2`;
-        const data = await getJSON<Restaurant[]>(url)
-          .catch(async () => {
-            const all = await getJSON<Restaurant[]>(
-              `${API}/api/restaurants?municipalityId=${municipality.id}`
-            );
-            return sortAndSlice(all, { forDish: false }, 2);
-          });
+        const primary = `${API}/api/restaurants?municipalityId=${municipality.id}&featured=1&limit=2`;
+        const data = await getJSON<Restaurant[]>(primary).catch(async () => {
+          const fallback = await getJSON<Restaurant[]>(`${API}/api/restaurants?municipalityId=${municipality.id}`);
+          return sortAndSlice(fallback, { forDish: false }, 2);
+        });
         if (!cancel) setRestos(sortAndSlice(data, { forDish: false }, 2));
       } catch (e: any) { if (!cancel) setRestosErr(String(e?.message || e)); }
     })();
@@ -167,17 +148,15 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
 
   const desc = municipality.description ?? "";
   const shortDesc = useMemo(() => (desc.length > 220 ? `${desc.slice(0, 220)}…` : desc), [desc]);
+
   return (
     <motion.aside
       role="dialog" aria-modal="false" aria-labelledby="municipality-title"
       initial={{ x: 32, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 32, opacity: 0 }}
       transition={panelTransition}
       className={cn(
-        // size & placement
         "fixed right-4 top-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] sm:w-[520px] md:w-[640px] lg:w-[760px] xl:w-[820px]",
-        // visual
         "bg-white z-[999] shadow-2xl border border-neutral-200 rounded-2xl",
-        // layout
         "flex flex-col overflow-hidden"
       )}
     >
@@ -186,10 +165,9 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
         <img
           src={heroSrc}
           alt={municipality.name}
-          onError={(e) => {
-            e.currentTarget.src = assetUrl("images/placeholders/municipality.jpg");
-  }}
-/>
+          onError={(e) => { e.currentTarget.src = assetUrl("images/placeholders/municipality.jpg"); }}
+          className="w-full h-40 md:h-48 lg:h-56 object-cover"
+        />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
         <button
           onClick={onClose}
@@ -233,16 +211,10 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
         </div>
       </div>
 
-      {/* BODY — scrollable, independent from page scroll */}
-      <div
-        className="px-5 pt-4 pb-5 flex-1 overflow-y-auto overscroll-contain"
-        style={{ WebkitOverflowScrolling: "touch" }}
-      >
-        <p className="text-[15px] leading-relaxed text-neutral-800/95 mb-5 max-w-prose">
-          {shortDesc || "—"}
-        </p>
+      {/* BODY (independent scroll) */}
+      <div className="px-5 pt-4 pb-5 flex-1 overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: "touch" }}>
+        <p className="text-[15px] leading-relaxed text-neutral-800/95 mb-5 max-w-prose">{shortDesc || "—"}</p>
 
-        {/* Explore all */}
         <div className="mb-4">
           <button
             onClick={goToAll}
@@ -253,117 +225,66 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
           </button>
         </div>
 
-        {/* Top Dishes */}
         <h3 className="text-sm font-semibold mb-2 text-neutral-800">Top Dishes</h3>
-        <motion.div
-          variants={listVariants}
-          initial="hidden"
-          animate="show"
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6"
-        >
-          {foods === null && !foodsErr && (
-            <>
-              <div className="skeleton rounded h-36" />
-              <div className="skeleton rounded h-36" />
-              <div className="skeleton rounded h-36" />
-            </>
-          )}
+        <motion.div variants={listVariants} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+          {foods === null && !foodsErr && (<><div className="skeleton rounded h-36" /><div className="skeleton rounded h-36" /><div className="skeleton rounded h-36" /></>)}
           {foodsErr && <div className="text-sm text-red-600">Failed to load dishes. {foodsErr}</div>}
           {foods && foods.length === 0 && <div className="text-sm text-neutral-600">None yet.</div>}
           {foods?.map((dish) => (
             <motion.div key={dish.id} variants={itemVariants}>
-              <Link
-                to={`/dish/${encodeURIComponent(String(dish.slug ?? dish.id))}`}
-                className="relative h-36 rounded-xl overflow-hidden group block"
-                title={dish.name}
-              >
+              <Link to={`/dish/${encodeURIComponent(String(dish.slug ?? dish.id))}`} className="relative h-36 rounded-xl overflow-hidden group block" title={dish.name}>
                 <img
-                  src={dish.image_url || "https://via.placeholder.com/800x500"}
+                  src={dish.image_url?.startsWith("http") ? dish.image_url : assetUrl(dish.image_url || "images/placeholders/dish.jpg")}
                   alt={dish.name}
                   className="absolute inset-0 w-full h-full object-cover"
-                  onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/800x500"))}
+                  onError={(e) => { e.currentTarget.src = assetUrl("images/placeholders/dish.jpg"); }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent group-hover:opacity-95" />
                 <div className="absolute bottom-0 left-0 right-0 p-3">
-                  <div className="text-white font-semibold text-sm md:text-base truncate drop-shadow-sm">
-                    {dish.name}
-                  </div>
-                  {dish.description && (
-                    <div className="text-white/85 text-xs line-clamp-1">{dish.description}</div>
-                  )}
+                  <div className="text-white font-semibold text-sm md:text-base truncate drop-shadow-sm">{dish.name}</div>
+                  {dish.description && <div className="text-white/85 text-xs line-clamp-1">{dish.description}</div>}
                 </div>
               </Link>
             </motion.div>
           ))}
         </motion.div>
 
-        {/* Top Delicacies */}
         <h3 className="text-sm font-semibold mb-2 text-neutral-800">Top Delicacies</h3>
-        <motion.div
-          variants={listVariants}
-          initial="hidden"
-          animate="show"
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6"
-        >
-          {delics === null && !delicsErr && (
-            <>
-              <div className="skeleton rounded h-36" />
-              <div className="skeleton rounded h-36" />
-              <div className="skeleton rounded h-36" />
-            </>
-          )}
+        <motion.div variants={listVariants} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+          {delics === null && !delicsErr && (<><div className="skeleton rounded h-36" /><div className="skeleton rounded h-36" /><div className="skeleton rounded h-36" /></>)}
           {delicsErr && <div className="text-sm text-red-600">Failed to load delicacies. {delicsErr}</div>}
           {delics && delics.length === 0 && <div className="text-sm text-neutral-600">None yet.</div>}
           {delics?.map((dish) => (
             <motion.div key={dish.id} variants={itemVariants}>
-              <Link
-                to={`/dish/${encodeURIComponent(String(dish.slug ?? dish.id))}`}
-                className="relative h-36 rounded-xl overflow-hidden group block"
-                title={dish.name}
-              >
+              <Link to={`/dish/${encodeURIComponent(String(dish.slug ?? dish.id))}`} className="relative h-36 rounded-xl overflow-hidden group block" title={dish.name}>
                 <img
-                  src={dish.image_url || "https://via.placeholder.com/800x500"}
+                  src={dish.image_url?.startsWith("http") ? dish.image_url : assetUrl(dish.image_url || "images/placeholders/delicacy.jpg")}
                   alt={dish.name}
                   className="absolute inset-0 w-full h-full object-cover"
-                  onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/800x500"))}
+                  onError={(e) => { e.currentTarget.src = assetUrl("images/placeholders/delicacy.jpg"); }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent group-hover:opacity-95" />
                 <div className="absolute bottom-0 left-0 right-0 p-3">
-                  <div className="text-white font-semibold text-sm md:text-base truncate drop-shadow-sm">
-                    {dish.name}
-                  </div>
-                  {dish.description && (
-                    <div className="text-white/85 text-xs line-clamp-1">{dish.description}</div>
-                  )}
+                  <div className="text-white font-semibold text-sm md:text-base truncate drop-shadow-sm">{dish.name}</div>
+                  {dish.description && <div className="text-white/85 text-xs line-clamp-1">{dish.description}</div>}
                 </div>
               </Link>
             </motion.div>
           ))}
         </motion.div>
 
-        {/* Featured Restaurants (compact; hidden on very small screens) */}
         <h3 className="text-sm font-semibold mb-2 text-neutral-800 hidden sm:block">Featured Restaurants</h3>
         <div className="hidden sm:grid grid-cols-1 md:grid-cols-2 gap-3">
-          {restos === null && !restosErr && (
-            <>
-              <div className="skeleton rounded h-20" />
-              <div className="skeleton rounded h-20" />
-            </>
-          )}
+          {restos === null && !restosErr && (<><div className="skeleton rounded h-20" /><div className="skeleton rounded h-20" /></>)}
           {restosErr && <div className="text-sm text-red-600">Failed to load restaurants. {restosErr}</div>}
           {restos && restos.length === 0 && <div className="text-sm text-neutral-600">No restaurants yet.</div>}
           {restos?.map((r) => (
-            <Link
-              key={r.id}
-              to={`/restaurant/${encodeURIComponent(String(r.slug ?? r.id))}`}
-              className="flex items-center gap-3 p-3 border rounded-lg hover:border-primary-300 hover:bg-primary-50 transition"
-            >
+            <Link key={r.id} to={`/restaurant/${encodeURIComponent(String(r.slug ?? r.id))}`} className="flex items-center gap-3 p-3 border rounded-lg hover:border-primary-300 hover:bg-primary-50 transition">
               <div className="w-12 h-12 rounded-md overflow-hidden bg-neutral-100 flex-shrink-0">
                 <img
-                  src="https://via.placeholder.com/120"
+                  src={assetUrl("images/placeholders/restaurant-thumb.jpg")}
                   alt={r.name}
                   className="w-full h-full object-cover"
-                  onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/120"))}
                 />
               </div>
               <div className="min-w-0">
@@ -379,6 +300,4 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
       </div>
     </motion.aside>
   );
-};
-
-export default MunicipalityCard;
+}
