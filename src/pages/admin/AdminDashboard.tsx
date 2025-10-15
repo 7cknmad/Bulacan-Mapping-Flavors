@@ -1,11 +1,11 @@
 // src/pages/admin/AdminDashboard.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminAPI, AdminAuth, type Dish, type Restaurant } from "../../utils/adminApi";
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
-import { Check, LogOut, PlusCircle, Save, Search, Trash2 } from "lucide-react";
+import { Check, LogOut, PlusCircle, Save, Search, Trash2, Link as LinkIcon, Unlink } from "lucide-react";
 
-type TabKey = "analytics" | "dishes" | "restaurants" | "curation";
+type TabKey = "analytics" | "dishes" | "restaurants" | "curation" | "linking";
 
 export default function AdminDashboard() {
   const [active, setActive] = useState<TabKey>("analytics");
@@ -33,7 +33,7 @@ export default function AdminDashboard() {
       {/* Tabs */}
       <div className="border-b mb-4">
         <nav className="-mb-px flex gap-6">
-          {(["analytics","dishes","restaurants","curation"] as TabKey[]).map(k => (
+          {(["analytics","dishes","restaurants","curation","linking"] as TabKey[]).map(k => (
             <button
               key={k}
               className={`pb-2 border-b-2 ${active===k ? "border-primary-600 text-primary-700" : "border-transparent text-neutral-600 hover:text-neutral-800"}`}
@@ -49,28 +49,58 @@ export default function AdminDashboard() {
       {active === "dishes" && <DishesPanel />}
       {active === "restaurants" && <RestaurantsPanel />}
       {active === "curation" && <CurationPanel />}
+      {active === "linking" && <LinkingPanel />}
     </div>
   );
 }
 
 /* ----------------- Analytics ----------------- */
 function AnalyticsPanel() {
-  const muniQ = useQuery({ queryKey: ["admin:munis"], queryFn: AdminAPI.municipalities, staleTime: 5*60_000 });
-  const dishesQ = useQuery({ queryKey: ["admin:dishes:analytics"], queryFn: () => AdminAPI.getDishes(), staleTime: 30_000 });
-  const restQ = useQuery({ queryKey: ["admin:restaurants:analytics"], queryFn: () => AdminAPI.getRestaurants(), staleTime: 30_000 });
-
-  const totalDishes = dishesQ.data?.length ?? 0;
-  const totalRestaurants = restQ.data?.length ?? 0;
-  const totalMunicipalities = muniQ.data?.length ?? 0;
+  const [muniId, setMuniId] = useState<number | null>(null);
+  const sumQ = useQuery({
+    queryKey: ["admin:analytics", muniId],
+    queryFn: () => AdminAPI.analyticsSummary(muniId ?? undefined),
+    staleTime: 30_000,
+  });
 
   return (
     <main className="space-y-6">
-      <div className="grid sm:grid-cols-3 gap-4">
-        <StatCard label="Total Dishes" value={totalDishes} />
-        <StatCard label="Total Restaurants" value={totalRestaurants} />
-        <StatCard label="Municipalities" value={totalMunicipalities} />
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium">Municipality</label>
+        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="All municipalities" />
       </div>
-      <p className="text-sm text-neutral-500">More charts coming soon (top restaurants, dish popularity per municipality, etc.).</p>
+
+      <div className="grid sm:grid-cols-3 gap-4">
+        <StatCard label="Total Dishes" value={sumQ.data?.totals?.dishes ?? "—"} />
+        <StatCard label="Total Restaurants" value={sumQ.data?.totals?.restaurants ?? "—"} />
+        <StatCard label="Scope" value={muniId ? `Municipality #${muniId}` : "All"} />
+      </div>
+
+      <section>
+        <div className="font-medium mb-2">Top Restaurants</div>
+        <div className="border rounded overflow-hidden">
+          {!sumQ.data?.topRestaurants?.length ? (
+            <div className="p-3 text-sm text-neutral-500">No data yet.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-50">
+                <tr>
+                  <th className="text-left p-2">Name</th>
+                  <th className="text-right p-2">Rating</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sumQ.data.topRestaurants.map((r: any) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="p-2">{r.name}</td>
+                    <td className="p-2 text-right">{r.rating ?? "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
     </main>
   );
 }
@@ -328,7 +358,7 @@ function DishesPanel() {
             <div className="flex items-center justify-end gap-2 pt-2">
               {editing?.id ? (
                 <button className="inline-flex items-center gap-2 px-3 py-2 rounded border text-red-600 hover:bg-red-50"
-                  onClick={() => remove(editing?.id)}>
+                  onClick={() => editing?.id && deleteM.mutate(editing.id)}>
                   <Trash2 size={16} /> Delete
                 </button>
               ) : null}
@@ -410,11 +440,6 @@ function RestaurantsPanel() {
       await createM.mutateAsync(payload as any);
     }
   };
-  const remove = async (id?: number) => {
-    if (!id) return;
-    if (!confirm("Delete this restaurant? This cannot be undone.")) return;
-    await deleteM.mutateAsync(id);
-  };
 
   return (
     <main className="grid lg:grid-cols-5 gap-6">
@@ -468,7 +493,7 @@ function RestaurantsPanel() {
                     <td className="p-2">{(r.cuisine_types ?? []).join(", ")}</td>
                     <td className="p-2 text-right">{r.rating ?? "-"}</td>
                     <td className="p-2 text-right">
-                      <button className="text-red-600 hover:text-red-700" onClick={() => remove(r.id)}>
+                      <button className="text-red-600 hover:text-red-700" onClick={() => r.id && deleteM.mutate(r.id)}>
                         <Trash2 size={16} />
                       </button>
                     </td>
@@ -610,7 +635,7 @@ function RestaurantsPanel() {
             <div className="flex items-center justify-end gap-2 pt-2">
               {editing?.id ? (
                 <button className="inline-flex items-center gap-2 px-3 py-2 rounded border text-red-600 hover:bg-red-50"
-                  onClick={() => remove(editing?.id)}>
+                  onClick={() => editing?.id && deleteM.mutate(editing.id)}>
                   <Trash2 size={16} /> Delete
                 </button>
               ) : null}
@@ -734,5 +759,116 @@ function CurateList<T extends { id: number; name: string }>(
         {items.length === 0 && <li className="p-2 text-sm text-neutral-500">No items.</li>}
       </ul>
     </div>
+  );
+}
+
+/* ----------------- Linking (NEW) ----------------- */
+function LinkingPanel() {
+  const [muniId, setMuniId] = useState<number | null>(null);
+  const [qDish, setQDish] = useState("");
+  const [qResto, setQResto] = useState("");
+  const [selectedDish, setSelectedDish] = useState<Dish | null>(null);
+
+  const dishesQ = useQuery({
+    queryKey: ["link:dishes", muniId, qDish],
+    queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined, q: qDish || undefined }),
+    enabled: muniId !== null,
+  });
+  const restosQ = useQuery({
+    queryKey: ["link:restaurants", muniId, qResto],
+    queryFn: () => AdminAPI.getRestaurants({ municipalityId: muniId ?? undefined, q: qResto || undefined }),
+    enabled: muniId !== null,
+  });
+
+  const linkedIdsQ = useQuery({
+    queryKey: ["link:linkedIds", selectedDish?.id],
+    queryFn: () => selectedDish ? AdminAPI.getLinkedRestaurantIds(selectedDish.id) : Promise.resolve([]),
+    enabled: !!selectedDish?.id,
+  });
+
+  const linkM = useMutation({
+    mutationFn: ({ dish_id, restaurant_id, add }: { dish_id: number; restaurant_id: number; add: boolean }) =>
+      add ? AdminAPI.linkDishRestaurant(dish_id, restaurant_id) : AdminAPI.unlinkDishRestaurant(dish_id, restaurant_id),
+    onSuccess: () => linkedIdsQ.refetch(),
+  });
+
+  const linkedSet = useMemo(() => new Set(linkedIdsQ.data ?? []), [linkedIdsQ.data]);
+
+  return (
+    <main className="space-y-6">
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium">Municipality</label>
+        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Choose municipality…" allowAll={false} />
+      </div>
+
+      {muniId === null ? (
+        <div className="text-sm text-neutral-500">Pick a municipality to start linking.</div>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* Dishes */}
+          <section className="border rounded">
+            <div className="px-3 py-2 border-b flex items-center gap-2">
+              <Search size={16} className="text-neutral-400" />
+              <input
+                className="flex-1 text-sm outline-none"
+                placeholder="Search dishes…"
+                value={qDish}
+                onChange={(e) => setQDish(e.target.value)}
+              />
+            </div>
+            <ul className="max-h-[420px] overflow-auto divide-y">
+              {(dishesQ.data ?? []).map(d => (
+                <li key={d.id} className={`p-2 cursor-pointer ${selectedDish?.id === d.id ? "bg-primary-50" : "hover:bg-neutral-50"}`}
+                  onClick={() => setSelectedDish(d)}>
+                  <div className="font-medium">{d.name}</div>
+                  <div className="text-xs text-neutral-500">{d.category}</div>
+                </li>
+              ))}
+              {!dishesQ.data?.length && <li className="p-2 text-sm text-neutral-500">No dishes.</li>}
+            </ul>
+          </section>
+
+          {/* Restaurants with checkboxes */}
+          <section className="border rounded">
+            <div className="px-3 py-2 border-b flex items-center gap-2">
+              <Search size={16} className="text-neutral-400" />
+              <input
+                className="flex-1 text-sm outline-none"
+                placeholder="Search restaurants…"
+                value={qResto}
+                onChange={(e) => setQResto(e.target.value)}
+              />
+            </div>
+
+            {!selectedDish ? (
+              <div className="p-3 text-sm text-neutral-500">Select a dish to manage links.</div>
+            ) : (
+              <ul className="max-h-[420px] overflow-auto divide-y">
+                {(restosQ.data ?? []).map(r => {
+                  const checked = linkedSet.has(r.id);
+                  return (
+                    <li key={r.id} className="p-2 flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">{r.name}</div>
+                        <div className="text-xs text-neutral-500">{r.kind} • {(r.cuisine_types ?? []).join(", ")}</div>
+                      </div>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => linkM.mutate({ dish_id: selectedDish.id!, restaurant_id: r.id, add: e.target.checked })}
+                        />
+                        {checked ? <Check size={16} className="text-primary-600" /> : <LinkIcon size={16} className="text-neutral-400" />}
+                      </label>
+                    </li>
+                  );
+                })}
+                {!restosQ.data?.length && <li className="p-2 text-sm text-neutral-500">No restaurants.</li>}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
+    </main>
   );
 }

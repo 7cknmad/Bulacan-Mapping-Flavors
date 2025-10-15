@@ -40,18 +40,16 @@ export type Restaurant = {
   signature_rank?: number|null;
 };
 
-const API = PUBLIC_API; // same base
+const API = PUBLIC_API;
 
 /* ---------------- Token handling ---------------- */
 const TOKKEY = "adminToken";
 export const AdminAuth = {
   get token() { return localStorage.getItem(TOKKEY) || ""; },
   set token(t: string) { if (t) localStorage.setItem(TOKKEY, t); else localStorage.removeItem(TOKKEY); },
-
   async login(email: string, password: string) {
     const r = await fetch(`${API}/api/admin/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type":"application/json" },
+      method: "POST", headers: { "Content-Type":"application/json" },
       body: JSON.stringify({ email, password }),
     });
     const text = await r.text();
@@ -70,20 +68,15 @@ export const AdminAuth = {
   async logout() {
     try {
       await fetch(`${API}/api/admin/auth/logout`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${AdminAuth.token}` }
+        method: "POST", headers: { Authorization: `Bearer ${AdminAuth.token}` }
       });
-    } finally {
-      AdminAuth.token = "";
-    }
+    } finally { AdminAuth.token = ""; }
   }
 };
 
 /* ---------------- Helpers ---------------- */
 async function getJSON<T>(path: string) {
-  const r = await fetch(`${API}${path}`, {
-    headers: { Authorization: `Bearer ${AdminAuth.token}` }
-  });
+  const r = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${AdminAuth.token}` }});
   const text = await r.text();
   if (!r.ok) throw new Error(`HTTP ${r.status} ${text.slice(0,200)}`);
   return JSON.parse(text) as T;
@@ -91,28 +84,21 @@ async function getJSON<T>(path: string) {
 async function sendJSON<T>(path: string, method: string, body?: any) {
   const r = await fetch(`${API}${path}`, {
     method,
-    headers: {
-      "Content-Type":"application/json",
-      Authorization: `Bearer ${AdminAuth.token}`,
-    },
+    headers: { "Content-Type":"application/json", Authorization: `Bearer ${AdminAuth.token}` },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await r.text();
   if (!r.ok) throw new Error(`HTTP ${r.status} ${text.slice(0,200)}`);
   return text ? (JSON.parse(text) as T) : (undefined as unknown as T);
 }
-
 function toArray(v: any): string[] {
   if (v == null) return [];
   if (Array.isArray(v)) return v;
-  if (typeof v === "string") {
-    // some MySQL drivers return JSON text
-    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; }
-  }
-  try { return Array.isArray(v) ? v : []; } catch { return []; }
+  if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
+  return [];
 }
 
-/* ---------------- Public: municipalities (used by select) ---------------- */
+/* ---------------- Public: municipalities ---------------- */
 async function municipalities() {
   return getJSON<Array<{id:number; name:string; slug:string}>>(`/api/municipalities`);
 }
@@ -123,7 +109,6 @@ async function getDishes(opts: { municipalityId?: number; q?: string } = {}) {
   if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
   if (opts.q) qs.set("q", opts.q);
   const data = await getJSON<any[]>(`/api/admin/dishes?${qs.toString()}`);
-  // normalize arrays
   return data.map(row => ({
     ...row,
     flavor_profile: toArray(row.flavor_profile),
@@ -149,10 +134,7 @@ async function getRestaurants(opts: { municipalityId?: number; q?: string } = {}
   if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
   if (opts.q) qs.set("q", opts.q);
   const data = await getJSON<any[]>(`/api/admin/restaurants?${qs.toString()}`);
-  return data.map(r => ({
-    ...r,
-    cuisine_types: toArray(r.cuisine_types),
-  })) as Restaurant[];
+  return data.map(r => ({ ...r, cuisine_types: toArray(r.cuisine_types) })) as Restaurant[];
 }
 async function createRestaurant(payload: Partial<Restaurant>) {
   return sendJSON<{id:number}>(`/api/admin/restaurants`, "POST", payload);
@@ -171,6 +153,22 @@ async function setRestaurantSignature(id: number, signature: 0|1, rank: number|n
 async function linkDishRestaurant(dish_id: number, restaurant_id: number, price_note?: string|null, availability?: 'regular'|'seasonal'|'preorder') {
   return sendJSON(`/api/admin/dish-restaurants`, "POST", { dish_id, restaurant_id, price_note, availability });
 }
+async function unlinkDishRestaurant(dish_id: number, restaurant_id: number) {
+  // DELETE with JSON body
+  return sendJSON(`/api/admin/dish-restaurants`, "DELETE", { dish_id, restaurant_id });
+}
+async function getLinkedRestaurantIds(dish_id: number) {
+  return getJSON<number[]>(`/api/admin/dishes/${dish_id}/restaurants`);
+}
+
+/* ---------------- Analytics ---------------- */
+async function analyticsSummary(municipalityId?: number) {
+  const qs = new URLSearchParams();
+  if (municipalityId) qs.set("municipalityId", String(municipalityId));
+  return getJSON<{ totals: { dishes:number; restaurants:number }, topRestaurants: any[] }>(
+    `/api/admin/analytics/summary?${qs.toString()}`
+  );
+}
 
 export const AdminAPI = {
   municipalities,
@@ -179,5 +177,7 @@ export const AdminAPI = {
   // restaurants
   getRestaurants, createRestaurant, updateRestaurant, deleteRestaurant, setRestaurantSignature,
   // linking
-  linkDishRestaurant,
+  linkDishRestaurant, unlinkDishRestaurant, getLinkedRestaurantIds,
+  // analytics
+  analyticsSummary,
 };
