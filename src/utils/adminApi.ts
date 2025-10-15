@@ -42,25 +42,44 @@ export type Overview = {
 export type TopDish = { id: number; name: string; slug: string; category: string; rank_hint: number; places: number; };
 export type TopRestaurant = { id: number; name: string; slug: string; rank_hint: number; dishes: number; };
 
-async function tryBoth<T>(primary: string, fallback: string) {
-  try { return await get<T>(primary); } catch { return await get<T>(fallback); }
+/** robust fetch with fallback + safe default */
+async function getOr<T>(primary: string, fallback: string, def: T): Promise<T> {
+  try { return await get<T>(primary); }
+  catch {
+    try { return await get<T>(fallback); }
+    catch { return def; }
+  }
 }
+
 export const adminStats = {
-  overview: () => tryBoth<Overview>("/api/admin/stats/overview", "/api/admin/analytics/summary"),
+  overview: () =>
+    getOr<Overview>(
+      "/api/admin/stats/overview",
+      "/api/admin/analytics/summary",
+      { municipalities: 0, dishes: 0, delicacies: 0, restaurants: 0, links: 0 }
+    ),
   topDishes: (municipalityId?: number, category?: string, limit = 10) => {
     const qs = new URLSearchParams();
     if (municipalityId) qs.set("municipalityId", String(municipalityId));
     if (category) qs.set("category", category);
     qs.set("limit", String(limit));
     const suffix = `?${qs.toString()}`;
-    return tryBoth<TopDish[]>(`/api/admin/stats/top-dishes${suffix}`, `/api/admin/analytics/top-dishes${suffix}`);
+    return getOr<TopDish[]>(
+      `/api/admin/stats/top-dishes${suffix}`,
+      `/api/admin/analytics/top-dishes${suffix}`,
+      []
+    );
   },
   topRestaurants: (municipalityId?: number, limit = 10) => {
     const qs = new URLSearchParams();
     if (municipalityId) qs.set("municipalityId", String(municipalityId));
     qs.set("limit", String(limit));
     const suffix = `?${qs.toString()}`;
-    return tryBoth<TopRestaurant[]>(`/api/admin/stats/top-restaurants${suffix}`, `/api/admin/analytics/top-restaurants${suffix}`);
+    return getOr<TopRestaurant[]>(
+      `/api/admin/stats/top-restaurants${suffix}`,
+      `/api/admin/analytics/top-restaurants${suffix}`,
+      []
+    );
   },
 };
 
@@ -120,27 +139,22 @@ export const list = {
 
 /** ====== Admin CRUD + Linking ====== */
 export const adminData = {
-  // (Optional) live search endpoints if present
   searchDishes: (q: string) => get<Array<{ id: number; name: string; slug: string; category: string }>>(`/api/admin/search/dishes?q=${encodeURIComponent(q)}`),
   searchRestaurants: (q: string) => get<Array<{ id: number; name: string; slug: string }>>(`/api/admin/search/restaurants?q=${encodeURIComponent(q)}`),
 
-  // Dishes — UPDATE via POST (upsert)
   createDish: (payload: any) => post<{ id: number }>("/api/admin/dishes", payload),
   updateDish: (id: number, payload: any) => post<{ id: number }>("/api/admin/dishes", { ...payload }),
   deleteDish: (id: number) => del<{ ok: true }>(`/api/admin/dishes/${id}`),
 
-  // Restaurants — UPDATE via POST (upsert)
   createRestaurant: (payload: any) => post<{ id: number }>("/api/admin/restaurants", payload),
   updateRestaurant: (id: number, payload: any) => post<{ id: number }>("/api/admin/restaurants", { ...payload }),
   deleteRestaurant: (id: number) => del<{ ok: true }>(`/api/admin/restaurants/${id}`),
 
-  // Linking
   linkDishRestaurant: (dish_id: number, restaurant_id: number, price_note?: string, availability?: string) =>
     post<{ ok: true }>("/api/admin/dish-restaurants", { dish_id, restaurant_id, price_note, availability }),
   unlinkDishRestaurant: (dishId: number, restaurantId: number) =>
     del<{ ok: true }>(`/api/admin/dish-restaurants?dishId=${dishId}&restaurantId=${restaurantId}`),
 
-  // Image upload (expects backend route to return {url})
   async uploadImage(file: File): Promise<{ url: string }> {
     const fd = new FormData();
     fd.append("file", file);

@@ -8,8 +8,10 @@ export default defineConfig(({ command }) => {
   return {
     plugins: [react()],
     base: isBuild ? '/Bulacan-Mapping-Flavors/' : '/',
+    
     server: {
       port: 5173,
     },
+    build: { sourcemap: true },
   };
 });

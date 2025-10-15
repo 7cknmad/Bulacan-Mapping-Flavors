@@ -14,26 +14,18 @@ import {
 } from "recharts";
 import { useBeforeUnload, useNavigate } from "react-router-dom";
 
-/* ========== helpers ========== */
+/* helpers */
 const slugify = (s: string) =>
-  s.toLowerCase()
-   .trim()
-   .replace(/['"]/g, "")
-   .replace(/[^a-z0-9]+/g, "-")
-   .replace(/^-+|-+$/g, "");
+  s.toLowerCase().trim().replace(/['"]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
 function useDebounced<T>(value: T, ms = 250) {
   const [deb, setDeb] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDeb(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
+  useEffect(() => { const t = setTimeout(() => setDeb(value), ms); return () => clearTimeout(t); }, [value, ms]);
   return deb;
 }
-
 const COLORS = ["#2563eb", "#22c55e", "#f59e0b", "#ef4444", "#14b8a6", "#a855f7"];
 
-/* ========== Schemas ========== */
+/* Schemas */
 const DishSchema = z.object({
   id: z.number().optional(),
   municipality_id: z.number({ required_error: "Municipality is required" }),
@@ -71,13 +63,9 @@ const RestaurantSchema = z.object({
 });
 type RestaurantForm = z.infer<typeof RestaurantSchema>;
 
-/* ========== Small UI bits ========== */
+/* Small UI */
 function Label({ children, required }: { children: React.ReactNode; required?: boolean }) {
-  return (
-    <div className="text-sm text-neutral-700">
-      {children}{required && <span className="text-red-600 ml-0.5">*</span>}
-    </div>
-  );
+  return <div className="text-sm text-neutral-700">{children}{required && <span className="text-red-600 ml-0.5">*</span>}</div>;
 }
 function FieldError({ msg }: { msg?: string }) {
   if (!msg) return null;
@@ -95,78 +83,45 @@ function Section({ title, children, right }: { title: string; children: React.Re
   );
 }
 function SearchBox({ placeholder, value, onChange }: { placeholder: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <input
-      className="border rounded px-3 py-2 w-full"
-      placeholder={placeholder}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  );
+  return <input className="border rounded px-3 py-2 w-full" placeholder={placeholder} value={value} onChange={(e)=>onChange(e.target.value)} />;
 }
 
-/* ========== Confirm navigation (HashRouter friendly) ========== */
+/* Confirm navigation (HashRouter friendly) */
 function useConfirmLeave(when: boolean) {
-  // browser reload/close
   useBeforeUnload(when, { message: "You have unsaved changes. Leave this page?" });
-
-  // in-app route change with HashRouter
   const lastHash = useRef(window.location.hash);
   useEffect(() => {
-    function onHashChange(e: HashChangeEvent) {
+    function onHashChange() {
       if (!when) { lastHash.current = window.location.hash; return; }
-      const proceed = confirm("You have unsaved changes. Leave this page?");
-      if (!proceed) {
-        // revert navigation
-        setTimeout(() => {
-          window.location.hash = lastHash.current || "#/";
-        }, 0);
-      } else {
-        lastHash.current = window.location.hash;
-      }
+      const ok = confirm("You have unsaved changes. Leave this page?");
+      if (!ok) setTimeout(() => { window.location.hash = lastHash.current || "#/"; }, 0);
+      else lastHash.current = window.location.hash;
     }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [when]);
 }
 
-/* ========== Main ========== */
+/* Main */
 export default function AdminDashboard() {
   const [tab, setTab] = useState<"analytics"|"dishes"|"restaurants"|"linking"|"curation">("analytics");
   const qc = useQueryClient();
   const navigate = useNavigate();
 
-  /* ---- Banner + Logout ---- */
-  const [adminName, setAdminName] = useState<string>("Admin");
-  useEffect(() => {
-    adminAuth.me().then(r => {
-      if (r?.admin?.name) setAdminName(r.admin.name);
-    }).catch(() => {});
-  }, []);
-  function doLogout() {
-    adminAuth.logout().finally(() => {
-      qc.clear();
-      navigate("/admin/login");
-    });
-  }
+  const [adminName, setAdminName] = useState("Admin");
+  useEffect(() => { adminAuth.me().then(r => r?.admin?.name && setAdminName(r.admin.name)).catch(()=>{}); }, []);
+  function doLogout() { adminAuth.logout().finally(() => { qc.clear(); navigate("/admin/login"); }); }
 
-  /* ---- Shared muni list ---- */
   const muniQ = useQuery<Municipality[]>({
     queryKey: ["admin:municipalities:list"],
     queryFn: list.municipalities,
     staleTime: 5 * 60_000,
   });
 
-  /* =========================
-     ANALYTICS
-  ========================== */
+  /* ANALYTICS */
   const [analyticsMuniId, setAnalyticsMuniId] = useState<number | null>(null);
 
-  const overviewQ = useQuery({
-    queryKey: ["admin:stats:overview"],
-    queryFn: adminStats.overview,
-    staleTime: 60_000,
-  });
+  const overviewQ = useQuery({ queryKey: ["admin:stats:overview"], queryFn: adminStats.overview, staleTime: 60_000 });
   const topDishesQ = useQuery({
     queryKey: ["admin:stats:top-dishes", analyticsMuniId ?? undefined],
     queryFn: () => adminStats.topDishes(analyticsMuniId ?? undefined, undefined, 8),
@@ -182,38 +137,29 @@ export default function AdminDashboard() {
     const o = overviewQ.data;
     if (!o) return [];
     return [
-      { name: "Municipalities", value: o.municipalities ?? 0 },
-      { name: "Dishes", value: o.dishes ?? 0 },
-      { name: "Delicacies", value: o.delicacies ?? 0 },
-      { name: "Restaurants", value: o.restaurants ?? 0 },
-      { name: "Links", value: o.links ?? 0 },
+      { name: "Municipalities", value: Number(o.municipalities || 0) },
+      { name: "Dishes", value: Number(o.dishes || 0) },
+      { name: "Delicacies", value: Number(o.delicacies || 0) },
+      { name: "Restaurants", value: Number(o.restaurants || 0) },
+      { name: "Links", value: Number(o.links || 0) },
     ];
   }, [overviewQ.data]);
+  const hasInv = invData.some(d => d.value > 0);
 
-  const pieData = useMemo(() => {
-    const ds = topDishesQ.data ?? [];
-    return ds.map((d) => ({ name: d.name, value: Math.max(1, d.places), id: d.id }));
-  }, [topDishesQ.data]);
+  const pieData = useMemo(() => (topDishesQ.data ?? []).map(d => ({ name: d.name, value: Math.max(1, Number(d.places || 0)), id: d.id })), [topDishesQ.data]);
+  const hasPie = (pieData?.length ?? 0) > 0;
 
-  const topRestBar = useMemo(() => {
-    const rs = topRestaurantsQ.data ?? [];
-    return rs.map((r) => ({ name: r.name, dishes: Math.max(1, r.dishes) }));
-  }, [topRestaurantsQ.data]);
+  const topRestBar = useMemo(() => (topRestaurantsQ.data ?? []).map(r => ({ name: r.name, dishes: Math.max(1, Number(r.dishes || 0)) })), [topRestaurantsQ.data]);
+  const hasRestBar = (topRestBar?.length ?? 0) > 0;
 
-  /* =========================
-     DISHES — CRUD + muni filter + always list
-  ========================== */
+  /* DISHES — list + form (same as before) */
   const [dishMuniFilter, setDishMuniFilter] = useState<number | null>(null);
   const [dishSearch, setDishSearch] = useState("");
   const dishQDeb = useDebounced(dishSearch, 300);
 
   const dishesListQ = useQuery({
     queryKey: ["admin:list:dishes", { muni: dishMuniFilter, q: dishQDeb }],
-    queryFn: () => list.dishes({
-      municipalityId: dishMuniFilter ?? undefined,
-      q: dishQDeb.trim() || undefined,
-      limit: 200,
-    }),
+    queryFn: () => list.dishes({ municipalityId: dishMuniFilter ?? undefined, q: dishQDeb.trim() || undefined, limit: 200 }),
     staleTime: 15_000,
   });
 
@@ -228,7 +174,7 @@ export default function AdminDashboard() {
     },
   });
   const [autoSlugDish, setAutoSlugDish] = useState(true);
-  const [dishImagePreview, setDishImagePreview] = useState<string>("");
+  const [dishImagePreview, setDishImagePreview] = useState("");
 
   function loadDishById(id: number) {
     const full = (dishesListQ.data ?? []).find(d => d.id === id);
@@ -248,7 +194,6 @@ export default function AdminDashboard() {
     });
     setDishImagePreview(full.image_url ?? "");
   }
-
   function saveDish(values: DishForm) {
     const payload = {
       municipality_id: values.municipality_id,
@@ -266,10 +211,9 @@ export default function AdminDashboard() {
     action.then(() => {
       qc.invalidateQueries({ queryKey: ["admin:list:dishes"] });
       alert("Dish saved.");
-      dishForm.reset({ ...values, id: values.id ?? -1 }); // keep showing as edited
+      dishForm.reset({ ...values, id: values.id ?? -1 });
     }).catch(e => alert(e.message));
   }
-
   function deleteDish() {
     const v = dishForm.getValues();
     if (!v.id) return;
@@ -281,7 +225,6 @@ export default function AdminDashboard() {
       alert("Dish deleted.");
     }).catch(e => alert("Delete endpoint not available on API. Please add DELETE /api/admin/dishes/:id"));
   }
-
   async function uploadDishImage(file?: File | null) {
     if (!file) return;
     try {
@@ -293,20 +236,14 @@ export default function AdminDashboard() {
     }
   }
 
-  /* =========================
-     RESTAURANTS — CRUD + muni filter + always list
-  ========================== */
+  /* RESTAURANTS — list + form */
   const [restMuniFilter, setRestMuniFilter] = useState<number | null>(null);
   const [restSearch, setRestSearch] = useState("");
   const restQDeb = useDebounced(restSearch, 300);
 
   const restaurantsListQ = useQuery({
     queryKey: ["admin:list:restaurants", { muni: restMuniFilter, q: restQDeb }],
-    queryFn: () => list.restaurants({
-      municipalityId: restMuniFilter ?? undefined,
-      q: restQDeb.trim() || undefined,
-      limit: 200,
-    }),
+    queryFn: () => list.restaurants({ municipalityId: restMuniFilter ?? undefined, q: restQDeb.trim() || undefined, limit: 200 }),
     staleTime: 15_000,
   });
 
@@ -321,7 +258,7 @@ export default function AdminDashboard() {
     },
   });
   const [autoSlugRest, setAutoSlugRest] = useState(true);
-  const [restImagePreview, setRestImagePreview] = useState<string>("");
+  const [restImagePreview, setRestImagePreview] = useState("");
 
   function loadRestaurantById(id: number) {
     const full = (restaurantsListQ.data ?? []).find(r => r.id === id);
@@ -342,10 +279,8 @@ export default function AdminDashboard() {
       opening_hours: full.opening_hours ?? "",
       rating: full.rating ?? 0,
     } as any);
-    // preview: we don't store main image for restaurants yet; keep placeholder
     setRestImagePreview("");
   }
-
   function saveRestaurant(values: RestaurantForm) {
     const payload = {
       municipality_id: values.municipality_id,
@@ -373,7 +308,6 @@ export default function AdminDashboard() {
       restForm.reset({ ...values, id: values.id ?? -1 } as any);
     }).catch(e => alert(e.message));
   }
-
   function deleteRestaurant() {
     const v = restForm.getValues();
     if (!v.id) return;
@@ -385,12 +319,10 @@ export default function AdminDashboard() {
       alert("Restaurant deleted.");
     }).catch(e => alert("Delete endpoint not available on API. Please add DELETE /api/admin/restaurants/:id"));
   }
-
   async function uploadRestaurantImage(file?: File | null) {
     if (!file) return;
     try {
       const { url } = await adminData.uploadImage(file);
-      // If later you add a column (e.g., hero_image_url), set it here.
       alert(`Uploaded. URL: ${url}\n(Add a hero_image_url column to restaurants to store this.)`);
       setRestImagePreview(url);
     } catch (e: any) {
@@ -398,9 +330,7 @@ export default function AdminDashboard() {
     }
   }
 
-  /* =========================
-     LINKING — dish ↔ restaurants
-  ========================== */
+  /* LINKING */
   const [linkDish, setLinkDish] = useState<Dish | null>(null);
   const [linkMuniId, setLinkMuniId] = useState<number | null>(null);
 
@@ -409,41 +339,26 @@ export default function AdminDashboard() {
     queryKey: ["admin:link:byDish", linkDish?.id],
     queryFn: () => list.restaurantsByDish(linkDish!.id),
   });
-
   const linkRestaurantsQ = useQuery({
     enabled: linkMuniId != null,
     queryKey: ["admin:link:restaurants", linkMuniId],
     queryFn: () => list.restaurants({ municipalityId: linkMuniId ?? undefined, limit: 200 }),
     staleTime: 30_000,
   });
-
   const linkedIds = useMemo(() => new Set((linkedSetQ.data ?? []).map(r => r.id)), [linkedSetQ.data]);
-
   function toggleLink(restaurantId: number) {
     if (!linkDish) return;
     const isLinked = linkedIds.has(restaurantId);
-    const p = isLinked
-      ? adminData.unlinkDishRestaurant(linkDish.id, restaurantId)
-      : adminData.linkDishRestaurant(linkDish.id, restaurantId);
+    const p = isLinked ? adminData.unlinkDishRestaurant(linkDish.id, restaurantId)
+                       : adminData.linkDishRestaurant(linkDish.id, restaurantId);
     p.then(() => qc.invalidateQueries({ queryKey: ["admin:link:byDish", linkDish.id] }))
      .catch(e => alert(e.message));
   }
 
-  /* =========================
-     CURATION — top 3 Food, top 3 Delicacies, top 3 Restaurants
-  ========================== */
+  /* CURATION */
   const [curateMuniId, setCurateMuniId] = useState<number | null>(null);
-
-  const allDishesForCurQ = useQuery({
-    enabled: curateMuniId != null,
-    queryKey: ["admin:curation:dishes:all", curateMuniId],
-    queryFn: () => list.dishesByMunicipality(curateMuniId!),
-  });
-  const allRestoForCurQ = useQuery({
-    enabled: curateMuniId != null,
-    queryKey: ["admin:curation:resto:all", curateMuniId],
-    queryFn: () => list.restaurantsByMunicipality(curateMuniId!, false),
-  });
+  const allDishesForCurQ = useQuery({ enabled: curateMuniId != null, queryKey: ["admin:curation:dishes:all", curateMuniId], queryFn: () => list.dishesByMunicipality(curateMuniId!) });
+  const allRestoForCurQ = useQuery({ enabled: curateMuniId != null, queryKey: ["admin:curation:resto:all", curateMuniId], queryFn: () => list.restaurantsByMunicipality(curateMuniId!, false) });
 
   const dishFood = useMemo(() => (allDishesForCurQ.data ?? []).filter(d => d.category === "food"), [allDishesForCurQ.data]);
   const dishDelicacy = useMemo(() => (allDishesForCurQ.data ?? []).filter(d => d.category === "delicacy"), [allDishesForCurQ.data]);
@@ -470,50 +385,43 @@ export default function AdminDashboard() {
   function togglePick(map: Record<number, number>, setMap: (m: Record<number, number>) => void, id: number) {
     setMap(prev => {
       const next = { ...prev };
-      if (id in next) delete next[id]; else next[id] = Object.values(next).includes(1) ? (Object.values(next).includes(2) ? 3 : 2) : 1;
+      if (id in next) delete next[id];
+      else next[id] = Object.values(next).includes(1) ? (Object.values(next).includes(2) ? 3 : 2) : 1;
       return next;
     });
   }
   function setRank(setter: (m: Record<number, number>) => void, id: number, rank: number) {
     setter(prev => ({ ...prev, [id]: rank }));
   }
-
   async function saveCuration() {
     if (!curateMuniId) return;
-
     const saveDishSet = async (idsToRank: Record<number, number>) => {
       const selected = new Set(Object.keys(idsToRank).map(Number));
       const allIds = new Set((allDishesForCurQ.data ?? []).map(d => d.id));
       const toAddUpd = Array.from(selected);
       const toRem = Array.from(allIds).filter(id => selected.has(id) === false && ((allDishesForCurQ.data ?? []).find(d => d.id===id) as any)?.is_signature);
-
       await Promise.all([
         ...toAddUpd.map(id => adminData.updateDish(id, { is_signature: 1, panel_rank: idsToRank[id] ?? null })),
         ...toRem.map(id => adminData.updateDish(id, { is_signature: 0, panel_rank: null })),
       ]);
     };
-
     const saveRestSet = async (idsToRank: Record<number, number>) => {
       const selected = new Set(Object.keys(idsToRank).map(Number));
       const allIds = new Set((allRestoForCurQ.data ?? []).map(r => r.id));
       const toAddUpd = Array.from(selected);
       const toRem = Array.from(allIds).filter(id => selected.has(id) === false && ((allRestoForCurQ.data ?? []).find(r => r.id===id) as any)?.is_featured);
-
       await Promise.all([
         ...toAddUpd.map(id => adminData.updateRestaurant(id, { is_featured: 1, panel_rank: idsToRank[id] ?? null })),
         ...toRem.map(id => adminData.updateRestaurant(id, { is_featured: 0, panel_rank: null })),
       ]);
     };
-
     await saveDishSet(foodRanks);
     await saveDishSet(delicacyRanks);
     await saveRestSet(restRanks);
-
     qc.invalidateQueries({ queryKey: ["admin:curation"] });
     alert("Curation saved.");
   }
 
-  /* ===== Unsaved-changes guard (forms + curation) ===== */
   const isDirty =
     dishForm.formState.isDirty ||
     restForm.formState.isDirty ||
@@ -522,12 +430,8 @@ export default function AdminDashboard() {
     Object.keys(restRanks).length > 0;
   useConfirmLeave(isDirty);
 
-  /* =========================
-     RENDER
-  ========================== */
   return (
     <main className="mx-auto max-w-7xl p-6">
-      {/* Banner/Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Admin Dashboard</h1>
@@ -536,7 +440,6 @@ export default function AdminDashboard() {
         <button onClick={doLogout} className="px-3 py-2 rounded border hover:bg-neutral-50">Logout</button>
       </div>
 
-      {/* Tabs */}
       <div className="mb-6 flex flex-wrap gap-2">
         {[
           ["analytics","Analytics"],
@@ -545,55 +448,50 @@ export default function AdminDashboard() {
           ["linking","Linking"],
           ["curation","Curation"],
         ].map(([k,label]) => (
-          <button
-            key={k}
-            onClick={() => {
-              if (isDirty && !confirm("You have unsaved changes. Switch tabs anyway?")) return;
-              setTab(k as any);
-            }}
-            className={`px-3 py-2 rounded border ${tab===k ? "bg-primary-600 text-white border-primary-600" : "bg-white hover:bg-neutral-50"}`}
-          >
+          <button key={k}
+            onClick={() => { if (isDirty && !confirm("You have unsaved changes. Switch tabs anyway?")) return; setTab(k as any); }}
+            className={`px-3 py-2 rounded border ${tab===k ? "bg-primary-600 text-white border-primary-600" : "bg-white hover:bg-neutral-50"}`}>
             {label}
           </button>
         ))}
       </div>
 
-      {/* ============ ANALYTICS ============ */}
+      {/* ANALYTICS */}
       {tab==="analytics" && (
-        <>
-          <Section
-            title="Overview"
-            right={
-              <div className="flex items-center gap-2">
-                <div className="text-sm text-neutral-600">Municipality:</div>
-                <MunicipalitySelect
-                  value={analyticsMuniId}
-                  onChange={setAnalyticsMuniId}
-                  placeholder="All municipalities…"
-                  allowAll
-                />
-              </div>
-            }
-          >
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-              {[
-                { label: "Municipalities", val: overviewQ.data?.municipalities ?? 0 },
-                { label: "Dishes", val: overviewQ.data?.dishes ?? 0 },
-                { label: "Delicacies", val: overviewQ.data?.delicacies ?? 0 },
-                { label: "Restaurants", val: overviewQ.data?.restaurants ?? 0 },
-                { label: "Links", val: overviewQ.data?.links ?? 0 },
-              ].map((c) => (
-                <div key={c.label} className="rounded-lg border bg-white p-4 shadow-sm">
-                  <div className="text-sm text-neutral-500">{c.label}</div>
-                  <div className="text-2xl font-semibold">{c.val}</div>
-                </div>
-              ))}
+        <Section
+          title="Overview"
+          right={
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-neutral-600">Municipality:</div>
+              <MunicipalitySelect value={analyticsMuniId} onChange={setAnalyticsMuniId} placeholder="All municipalities…" allowAll />
             </div>
+          }
+        >
+          {overviewQ.isError && (
+            <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-amber-800 text-sm">
+              Analytics endpoint is not available yet. Showing empty charts.
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            {[
+              { label: "Municipalities", val: overviewQ.data?.municipalities ?? 0 },
+              { label: "Dishes", val: overviewQ.data?.dishes ?? 0 },
+              { label: "Delicacies", val: overviewQ.data?.delicacies ?? 0 },
+              { label: "Restaurants", val: overviewQ.data?.restaurants ?? 0 },
+              { label: "Links", val: overviewQ.data?.links ?? 0 },
+            ].map((c) => (
+              <div key={c.label} className="rounded-lg border bg-white p-4 shadow-sm">
+                <div className="text-sm text-neutral-500">{c.label}</div>
+                <div className="text-2xl font-semibold">{c.val}</div>
+              </div>
+            ))}
+          </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="rounded-lg border p-4">
-                <div className="font-medium mb-2">Inventory</div>
-                <div className="h-64">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="rounded-lg border p-4">
+              <div className="font-medium mb-2">Inventory</div>
+              <div className="h-64">
+                {hasInv ? (
                   <ResponsiveContainer>
                     <BarChart data={invData}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -603,11 +501,16 @@ export default function AdminDashboard() {
                       <Bar dataKey="value" radius={[6,6,0,0]} />
                     </BarChart>
                   </ResponsiveContainer>
-                </div>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-neutral-400 text-sm">No data yet</div>
+                )}
               </div>
-              <div className="rounded-lg border p-4">
-                <div className="font-medium mb-2">Top Dishes (by places)</div>
-                <div className="h-64">
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="font-medium mb-2">Top Dishes (by places)</div>
+              <div className="h-64">
+                {hasPie ? (
                   <ResponsiveContainer>
                     <PieChart>
                       <Pie data={pieData} nameKey="name" dataKey="value" innerRadius={50} outerRadius={90} paddingAngle={3}>
@@ -617,11 +520,16 @@ export default function AdminDashboard() {
                       <Legend />
                     </PieChart>
                   </ResponsiveContainer>
-                </div>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-neutral-400 text-sm">No data yet</div>
+                )}
               </div>
-              <div className="rounded-lg border p-4 lg:col-span-2">
-                <div className="font-medium mb-2">Top Restaurants (by dishes offered)</div>
-                <div className="h-72">
+            </div>
+
+            <div className="rounded-lg border p-4 lg:col-span-2">
+              <div className="font-medium mb-2">Top Restaurants (by dishes offered)</div>
+              <div className="h-72">
+                {hasRestBar ? (
                   <ResponsiveContainer>
                     <BarChart data={topRestBar}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -631,81 +539,53 @@ export default function AdminDashboard() {
                       <Bar dataKey="dishes" radius={[6,6,0,0]} />
                     </BarChart>
                   </ResponsiveContainer>
-                </div>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-neutral-400 text-sm">No data yet</div>
+                )}
               </div>
             </div>
-          </Section>
-        </>
+          </div>
+        </Section>
       )}
 
-      {/* ============ DISHES ============ */}
+      {/* DISHES */}
       {tab==="dishes" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Section
             title="Find or Create"
-            right={
-              <div className="flex items-center gap-2">
-                <div className="text-sm text-neutral-600">Municipality:</div>
-                <MunicipalitySelect value={dishMuniFilter} onChange={setDishMuniFilter} placeholder="All…" allowAll />
-              </div>
-            }
+            right={<div className="flex items-center gap-2"><div className="text-sm text-neutral-600">Municipality:</div><MunicipalitySelect value={dishMuniFilter} onChange={setDishMuniFilter} placeholder="All…" allowAll /></div>}
           >
-            <div className="mb-3">
-              <SearchBox placeholder="Search dishes by name/slug… (live)" value={dishSearch} onChange={setDishSearch} />
-            </div>
-            <div className="text-xs text-neutral-500 mb-2">
-              Showing {dishesListQ.data?.length ?? 0} result(s){dishMuniFilter ? ` in ${(muniQ.data ?? []).find(m=>m.id===dishMuniFilter)?.name}`: ""}.
-            </div>
+            <div className="mb-3"><SearchBox placeholder="Search dishes by name/slug… (live)" value={dishSearch} onChange={setDishSearch} /></div>
+            <div className="text-xs text-neutral-500 mb-2">Showing {dishesListQ.data?.length ?? 0} result(s){dishMuniFilter ? ` in ${(muniQ.data ?? []).find(m=>m.id===dishMuniFilter)?.name}`: ""}.</div>
             <div className="max-h-80 overflow-auto border rounded">
               {(dishesListQ.data ?? []).map((d) => (
-                <button
-                  key={d.id}
-                  className="w-full text-left px-3 py-2 border-b hover:bg-neutral-50"
-                  onClick={() => loadDishById(d.id)}
-                >
+                <button key={d.id} className="w-full text-left px-3 py-2 border-b hover:bg-neutral-50" onClick={() => loadDishById(d.id)}>
                   <div className="font-medium">{d.name}</div>
                   <div className="text-xs text-neutral-500">{d.slug} · {d.category}</div>
                 </button>
               ))}
-              {(dishesListQ.data ?? []).length === 0 && (
-                <div className="px-3 py-6 text-sm text-neutral-500">No dishes found.</div>
-              )}
+              {(dishesListQ.data ?? []).length === 0 && <div className="px-3 py-6 text-sm text-neutral-500">No dishes found.</div>}
             </div>
-
-            <button
-              className="mt-3 px-3 py-2 rounded bg-primary-600 text-white"
-              onClick={() => {
-                dishForm.reset({
-                  name: "", slug: "", category_code: "food",
-                  municipality_id: dishMuniFilter ?? (undefined as unknown as number),
-                  description: "", image_url: "",
-                  flavor_profile_csv: "", ingredients_csv: "",
-                  popularity: 0, rating: 0
-                });
-                setDishImagePreview("");
-              }}
-            >
-              + New dish
-            </button>
+            <button className="mt-3 px-3 py-2 rounded bg-primary-600 text-white" onClick={() => {
+              dishForm.reset({
+                name: "", slug: "", category_code: "food",
+                municipality_id: dishMuniFilter ?? (undefined as unknown as number),
+                description: "", image_url: "",
+                flavor_profile_csv: "", ingredients_csv: "",
+                popularity: 0, rating: 0
+              });
+              setDishImagePreview("");
+            }}>+ New dish</button>
           </Section>
 
           <Section
             title="Dish details"
             right={
               <div className="flex items-center gap-4">
-                {dishForm.watch("id") ? (
-                  <div className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 border border-amber-200">
-                    Editing: <strong>{dishForm.watch("name") || "Untitled"}</strong> ({dishForm.watch("slug")})
-                  </div>
-                ) : (
-                  <div className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Creating new dish
-                  </div>
-                )}
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={autoSlugDish} onChange={e=>setAutoSlugDish(e.target.checked)} />
-                  Auto-slug
-                </label>
+                {dishForm.watch("id")
+                  ? <div className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 border border-amber-200">Editing: <strong>{dishForm.watch("name") || "Untitled"}</strong> ({dishForm.watch("slug")})</div>
+                  : <div className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">Creating new dish</div>}
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoSlugDish} onChange={e=>setAutoSlugDish(e.target.checked)} />Auto-slug</label>
               </div>
             }
           >
@@ -715,29 +595,18 @@ export default function AdminDashboard() {
                 <MunicipalitySelect
                   value={dishForm.watch("municipality_id") ?? null}
                   onChange={(id) => dishForm.setValue("municipality_id", (id ?? undefined) as any, { shouldDirty: true })}
-                  placeholder="Select municipality…"
-                  allowAll={false}
+                  placeholder="Select municipality…" allowAll={false}
                 />
                 <FieldError msg={dishForm.formState.errors.municipality_id?.message} />
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <Label required>Name</Label>
                   <input
                     className="mt-1 w-full border rounded px-3 py-2"
                     {...dishForm.register("name")}
-                    onChange={(e)=> {
-                      dishForm.register("name").onChange(e);
-                      if (autoSlugDish && !dishForm.getValues("id")) {
-                        dishForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
-                      }
-                    }}
-                    onBlur={(e)=> {
-                      if (autoSlugDish && !dishForm.getValues("slug")) {
-                        dishForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
-                      }
-                    }}
+                    onChange={(e)=>{ dishForm.register("name").onChange(e); if (autoSlugDish && !dishForm.getValues("id")) dishForm.setValue("slug", slugify(e.target.value), { shouldDirty: true }); }}
+                    onBlur={(e)=>{ if (autoSlugDish && !dishForm.getValues("slug")) dishForm.setValue("slug", slugify(e.target.value), { shouldDirty: true }); }}
                   />
                   <FieldError msg={dishForm.formState.errors.name?.message} />
                 </label>
@@ -747,7 +616,6 @@ export default function AdminDashboard() {
                   <FieldError msg={dishForm.formState.errors.slug?.message} />
                 </label>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <Label required>Category</Label>
@@ -760,136 +628,75 @@ export default function AdminDashboard() {
                 </label>
                 <label className="block">
                   <Label>Image URL</Label>
-                  <input
-                    className="mt-1 w-full border rounded px-3 py-2"
-                    {...dishForm.register("image_url")}
-                    onChange={(e)=> setDishImagePreview(e.target.value)}
-                  />
+                  <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("image_url")} onChange={(e)=> setDishImagePreview(e.target.value)} />
                   <FieldError msg={dishForm.formState.errors.image_url?.message as string} />
                 </label>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Upload image</Label>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input type="file" accept="image/*" onChange={(e)=> uploadDishImage(e.target.files?.[0])} />
-                  </div>
-                  <div className="mt-2">
-                    {dishImagePreview ? (
-                      <img src={dishImagePreview} alt="preview" className="h-24 w-24 object-cover rounded border" />
-                    ) : (
-                      <div className="h-24 w-24 rounded border bg-neutral-50 flex items-center justify-center text-xs text-neutral-400">No image</div>
-                    )}
-                  </div>
+                  <div className="mt-1 flex items-center gap-2"><input type="file" accept="image/*" onChange={(e)=> uploadDishImage(e.target.files?.[0])} /></div>
+                  <div className="mt-2">{dishImagePreview ? <img src={dishImagePreview} className="h-24 w-24 object-cover rounded border" /> : <div className="h-24 w-24 rounded border bg-neutral-50 flex items-center justify-center text-xs text-neutral-400">No image</div>}</div>
                 </div>
                 <label className="block">
                   <Label>Description</Label>
                   <textarea className="mt-1 w-full border rounded px-3 py-2" rows={3} {...dishForm.register("description")} />
                 </label>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
-                <label className="block">
-                  <Label>Flavor profile (comma sep)</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("flavor_profile_csv")} />
-                </label>
-                <label className="block">
-                  <Label>Ingredients (comma sep)</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("ingredients_csv")} />
-                </label>
+                <label className="block"><Label>Flavor profile (comma sep)</Label><input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("flavor_profile_csv")} /></label>
+                <label className="block"><Label>Ingredients (comma sep)</Label><input className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("ingredients_csv")} /></label>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
-                <label className="block">
-                  <Label>Popularity (0–100)</Label>
-                  <input type="number" className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("popularity", { valueAsNumber: true })} />
-                </label>
-                <label className="block">
-                  <Label>Rating (0–5)</Label>
-                  <input type="number" step="0.1" className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("rating", { valueAsNumber: true })} />
-                </label>
+                <label className="block"><Label>Popularity (0–100)</Label><input type="number" className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("popularity", { valueAsNumber: true })} /></label>
+                <label className="block"><Label>Rating (0–5)</Label><input type="number" step="0.1" className="mt-1 w-full border rounded px-3 py-2" {...dishForm.register("rating", { valueAsNumber: true })} /></label>
               </div>
-
               <div className="flex gap-2">
                 <button className="px-3 py-2 rounded bg-primary-600 text-white" type="submit">Save dish</button>
-                {dishForm.watch("id") && (
-                  <button type="button" className="px-3 py-2 rounded border" onClick={deleteDish}>Delete</button>
-                )}
+                {dishForm.watch("id") && <button type="button" className="px-3 py-2 rounded border" onClick={deleteDish}>Delete</button>}
               </div>
             </form>
           </Section>
         </div>
       )}
 
-      {/* ============ RESTAURANTS ============ */}
+      {/* RESTAURANTS */}
       {tab==="restaurants" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Section
             title="Find or Create"
-            right={
-              <div className="flex items-center gap-2">
-                <div className="text-sm text-neutral-600">Municipality:</div>
-                <MunicipalitySelect value={restMuniFilter} onChange={setRestMuniFilter} placeholder="All…" allowAll />
-              </div>
-            }
+            right={<div className="flex items-center gap-2"><div className="text-sm text-neutral-600">Municipality:</div><MunicipalitySelect value={restMuniFilter} onChange={setRestMuniFilter} placeholder="All…" allowAll /></div>}
           >
-            <div className="mb-3">
-              <SearchBox placeholder="Search restaurants by name/slug… (live)" value={restSearch} onChange={setRestSearch} />
-            </div>
-            <div className="text-xs text-neutral-500 mb-2">
-              Showing {restaurantsListQ.data?.length ?? 0} result(s){restMuniFilter ? ` in ${(muniQ.data ?? []).find(m=>m.id===restMuniFilter)?.name}`: ""}.
-            </div>
+            <div className="mb-3"><SearchBox placeholder="Search restaurants by name/slug… (live)" value={restSearch} onChange={setRestSearch} /></div>
+            <div className="text-xs text-neutral-500 mb-2">Showing {restaurantsListQ.data?.length ?? 0} result(s){restMuniFilter ? ` in ${(muniQ.data ?? []).find(m=>m.id===restMuniFilter)?.name}`: ""}.</div>
             <div className="max-h-80 overflow-auto border rounded">
               {(restaurantsListQ.data ?? []).map((r) => (
-                <button
-                  key={r.id}
-                  className="w-full text-left px-3 py-2 border-b hover:bg-neutral-50"
-                  onClick={() => loadRestaurantById(r.id)}
-                >
+                <button key={r.id} className="w-full text-left px-3 py-2 border-b hover:bg-neutral-50" onClick={() => loadRestaurantById(r.id)}>
                   <div className="font-medium">{r.name}</div>
                   <div className="text-xs text-neutral-500">{r.slug}</div>
                 </button>
               ))}
-              {(restaurantsListQ.data ?? []).length === 0 && (
-                <div className="px-3 py-6 text-sm text-neutral-500">No restaurants found.</div>
-              )}
+              {(restaurantsListQ.data ?? []).length === 0 && <div className="px-3 py-6 text-sm text-neutral-500">No restaurants found.</div>}
             </div>
-
-            <button
-              className="mt-3 px-3 py-2 rounded bg-primary-600 text-white"
-              onClick={() => {
-                restForm.reset({
-                  name: "", slug: "", municipality_id: restMuniFilter ?? (undefined as unknown as number),
-                  kind: "restaurant", address: "", lat: 0, lng: 0,
-                  description: "", price_range: "moderate", cuisine_csv: "",
-                  phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
-                  rating: 0
-                } as any);
-                setRestImagePreview("");
-              }}
-            >
-              + New restaurant
-            </button>
+            <button className="mt-3 px-3 py-2 rounded bg-primary-600 text-white" onClick={() => {
+              restForm.reset({
+                name: "", slug: "", municipality_id: restMuniFilter ?? (undefined as unknown as number),
+                kind: "restaurant", address: "", lat: 0, lng: 0,
+                description: "", price_range: "moderate", cuisine_csv: "",
+                phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "", rating: 0
+              } as any);
+              setRestImagePreview("");
+            }}>+ New restaurant</button>
           </Section>
 
           <Section
             title="Restaurant details"
             right={
               <div className="flex items-center gap-4">
-                {restForm.watch("id") ? (
-                  <div className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 border border-amber-200">
-                    Editing: <strong>{restForm.watch("name") || "Untitled"}</strong> ({restForm.watch("slug")})
-                  </div>
-                ) : (
-                  <div className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Creating new restaurant
-                  </div>
-                )}
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={autoSlugRest} onChange={e=>setAutoSlugRest(e.target.checked)} />
-                  Auto-slug
-                </label>
+                {restForm.watch("id")
+                  ? <div className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 border border-amber-200">Editing: <strong>{restForm.watch("name") || "Untitled"}</strong> ({restForm.watch("slug")})</div>
+                  : <div className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">Creating new restaurant</div>}
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoSlugRest} onChange={e=>setAutoSlugRest(e.target.checked)} />Auto-slug</label>
               </div>
             }
           >
@@ -899,29 +706,18 @@ export default function AdminDashboard() {
                 <MunicipalitySelect
                   value={restForm.watch("municipality_id") ?? null}
                   onChange={(id) => restForm.setValue("municipality_id", (id ?? undefined) as any, { shouldDirty: true })}
-                  placeholder="Select municipality…"
-                  allowAll={false}
+                  placeholder="Select municipality…" allowAll={false}
                 />
                 <FieldError msg={restForm.formState.errors.municipality_id?.message} />
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <Label required>Name</Label>
                   <input
                     className="mt-1 w-full border rounded px-3 py-2"
                     {...restForm.register("name")}
-                    onChange={(e)=> {
-                      restForm.register("name").onChange(e);
-                      if (autoSlugRest && !restForm.getValues("id")) {
-                        restForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
-                      }
-                    }}
-                    onBlur={(e)=> {
-                      if (autoSlugRest && !restForm.getValues("slug")) {
-                        restForm.setValue("slug", slugify(e.target.value), { shouldDirty: true });
-                      }
-                    }}
+                    onChange={(e)=>{ restForm.register("name").onChange(e); if (autoSlugRest && !restForm.getValues("id")) restForm.setValue("slug", slugify(e.target.value), { shouldDirty: true }); }}
+                    onBlur={(e)=>{ if (autoSlugRest && !restForm.getValues("slug")) restForm.setValue("slug", slugify(e.target.value), { shouldDirty: true }); }}
                   />
                   <FieldError msg={restForm.formState.errors.name?.message} />
                 </label>
@@ -931,7 +727,6 @@ export default function AdminDashboard() {
                   <FieldError msg={restForm.formState.errors.slug?.message} />
                 </label>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <Label required>Kind</Label>
@@ -953,26 +748,15 @@ export default function AdminDashboard() {
                   </select>
                 </label>
               </div>
-
               <label className="block">
                 <Label required>Address</Label>
                 <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("address")} />
                 <FieldError msg={restForm.formState.errors.address?.message} />
               </label>
-
               <div className="grid grid-cols-2 gap-3">
-                <label className="block">
-                  <Label required>Latitude</Label>
-                  <input type="number" step="0.000001" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("lat", { valueAsNumber: true })} />
-                  <FieldError msg={restForm.formState.errors.lat?.message} />
-                </label>
-                <label className="block">
-                  <Label required>Longitude</Label>
-                  <input type="number" step="0.000001" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("lng", { valueAsNumber: true })} />
-                  <FieldError msg={restForm.formState.errors.lng?.message} />
-                </label>
+                <label className="block"><Label required>Latitude</Label><input type="number" step="0.000001" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("lat", { valueAsNumber: true })} /><FieldError msg={restForm.formState.errors.lat?.message} /></label>
+                <label className="block"><Label required>Longitude</Label><input type="number" step="0.000001" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("lng", { valueAsNumber: true })} /><FieldError msg={restForm.formState.errors.lng?.message} /></label>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <Label>Description</Label>
@@ -980,133 +764,78 @@ export default function AdminDashboard() {
                 </label>
                 <div>
                   <Label>Upload image</Label>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input type="file" accept="image/*" onChange={(e)=> uploadRestaurantImage(e.target.files?.[0])} />
-                  </div>
-                  <div className="mt-2">
-                    {restImagePreview ? (
-                      <img src={restImagePreview} alt="preview" className="h-24 w-24 object-cover rounded border" />
-                    ) : (
-                      <div className="h-24 w-24 rounded border bg-neutral-50 flex items-center justify-center text-xs text-neutral-400">No image</div>
-                    )}
-                  </div>
-                  <div className="text-xs text-neutral-500 mt-1">Tip: add a <code>hero_image_url</code> column later and store this URL.</div>
+                  <div className="mt-1 flex items-center gap-2"><input type="file" accept="image/*" onChange={(e)=> uploadRestaurantImage(e.target.files?.[0])} /></div>
+                  <div className="mt-2">{restImagePreview ? <img src={restImagePreview} className="h-24 w-24 object-cover rounded border" /> : <div className="h-24 w-24 rounded border bg-neutral-50 flex items-center justify-center text-xs text-neutral-400">No image</div>}</div>
                 </div>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
-                <label className="block">
-                  <Label>Cuisine types (comma sep)</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("cuisine_csv")} />
-                </label>
-                <label className="block">
-                  <Label>Rating (0–5)</Label>
-                  <input type="number" step="0.1" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("rating", { valueAsNumber: true })} />
-                </label>
+                <label className="block"><Label>Cuisine types (comma sep)</Label><input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("cuisine_csv")} /></label>
+                <label className="block"><Label>Rating (0–5)</Label><input type="number" step="0.1" className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("rating", { valueAsNumber: true })} /></label>
               </div>
-
               <div className="grid grid-cols-3 gap-3">
-                <label className="block">
-                  <Label>Phone</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("phone")} />
-                </label>
-                <label className="block">
-                  <Label>Website</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("website")} />
-                </label>
-                <label className="block">
-                  <Label>Opening hours</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("opening_hours")} />
-                </label>
+                <label className="block"><Label>Phone</Label><input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("phone")} /></label>
+                <label className="block"><Label>Website</Label><input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("website")} /></label>
+                <label className="block"><Label>Opening hours</Label><input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("opening_hours")} /></label>
               </div>
-
               <div className="grid grid-cols-2 gap-3">
-                <label className="block">
-                  <Label>Facebook</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("facebook")} />
-                </label>
-                <label className="block">
-                  <Label>Instagram</Label>
-                  <input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("instagram")} />
-                </label>
+                <label className="block"><Label>Facebook</Label><input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("facebook")} /></label>
+                <label className="block"><Label>Instagram</Label><input className="mt-1 w-full border rounded px-3 py-2" {...restForm.register("instagram")} /></label>
               </div>
-
               <div className="flex gap-2">
                 <button className="px-3 py-2 rounded bg-primary-600 text-white" type="submit">Save restaurant</button>
-                {restForm.watch("id") && (
-                  <button type="button" className="px-3 py-2 rounded border" onClick={deleteRestaurant}>Delete</button>
-                )}
+                {restForm.watch("id") && <button type="button" className="px-3 py-2 rounded border" onClick={deleteRestaurant}>Delete</button>}
               </div>
             </form>
           </Section>
         </div>
       )}
 
-      {/* ============ LINKING ============ */}
+      {/* LINKING */}
       {tab==="linking" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Section
-            title="Pick a dish to link"
-            right={
-              <div className="flex items-center gap-2 text-sm text-neutral-600">
-                {linkDish ? <>Linking for: <span className="font-medium">{linkDish.name}</span></> : "—"}
-              </div>
-            }
-          >
-            <div className="mb-3">
-              <SearchBox placeholder="Quick search dish…" value={dishSearch} onChange={setDishSearch} />
-            </div>
+          <Section title="Pick a dish to link" right={<div className="flex items-center gap-2 text-sm text-neutral-600">{linkDish ? <>Linking for: <span className="font-medium">{linkDish.name}</span></> : "—"}</div>}>
+            <div className="mb-3"><SearchBox placeholder="Quick search dish…" value={dishSearch} onChange={setDishSearch} /></div>
             <div className="max-h-80 overflow-auto border rounded">
               {(dishesListQ.data ?? []).map((d) => (
-                <button
-                  key={d.id}
-                  className={`w-full text-left px-3 py-2 border-b hover:bg-neutral-50 ${linkDish?.id===d.id ? "bg-primary-50" : ""}`}
-                  onClick={() => setLinkDish(d)}
-                >
+                <button key={d.id} className={`w-full text-left px-3 py-2 border-b hover:bg-neutral-50 ${linkDish?.id===d.id ? "bg-primary-50" : ""}`} onClick={() => setLinkDish(d)}>
                   <div className="font-medium">{d.name}</div>
                   <div className="text-xs text-neutral-500">{d.slug} · {d.category}</div>
                 </button>
               ))}
             </div>
           </Section>
-
-          <Section
-            title="Link restaurants"
-            right={
-              <div className="flex items-center gap-2">
-                <div className="text-sm text-neutral-600">Filter by municipality:</div>
-                <MunicipalitySelect value={linkMuniId} onChange={setLinkMuniId} placeholder="Choose municipality…" />
-              </div>
-            }
-          >
+          <Section title="Link restaurants" right={<div className="flex items-center gap-2"><div className="text-sm text-neutral-600">Filter by municipality:</div><MunicipalitySelect value={linkMuniId} onChange={setLinkMuniId} placeholder="Choose municipality…" /></div>}>
             {!linkDish ? (
               <div className="text-neutral-500">Pick a dish on the left.</div>
             ) : linkMuniId == null ? (
               <div className="text-neutral-500">Pick a municipality to list restaurants.</div>
             ) : (
               <div className="max-h-[420px] overflow-auto border rounded">
-                {(linkRestaurantsQ.data ?? []).map((r) => {
-                  const checked = (linkedIds.has(r.id));
+                {(useQuery({
+                  enabled: linkMuniId != null,
+                  queryKey: ["admin:link:restaurants", linkMuniId],
+                  queryFn: () => list.restaurants({ municipalityId: linkMuniId ?? undefined, limit: 200 }),
+                  staleTime: 30_000,
+                }).data ?? []).map((r) => {
+                  const checked = (new Set((useQuery({
+                    enabled: !!linkDish?.id,
+                    queryKey: ["admin:link:byDish", linkDish?.id],
+                    queryFn: () => list.restaurantsByDish(linkDish!.id),
+                  }).data ?? []).map(x => x.id))).has(r.id);
                   return (
                     <label key={r.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
-                      <div>
-                        <div className="font-medium">{r.name}</div>
-                        <div className="text-xs text-neutral-500">{r.slug}</div>
-                      </div>
+                      <div><div className="font-medium">{r.name}</div><div className="text-xs text-neutral-500">{r.slug}</div></div>
                       <input type="checkbox" checked={checked} onChange={() => toggleLink(r.id)} />
                     </label>
                   );
                 })}
-                {(linkRestaurantsQ.data ?? []).length === 0 && (
-                  <div className="px-3 py-6 text-sm text-neutral-500">No restaurants in this municipality.</div>
-                )}
               </div>
             )}
           </Section>
         </div>
       )}
 
-      {/* ============ CURATION ============ */}
+      {/* CURATION */}
       {tab==="curation" && (
         <Section
           title="Panel picks per municipality"
@@ -1126,26 +855,15 @@ export default function AdminDashboard() {
               <div>
                 <div className="font-medium mb-2">Top Dishes (Food) — choose up to 3, rank 1–3</div>
                 <div className="max-h-[420px] overflow-auto border rounded">
-                  {(allDishesForCurQ.data ?? []).filter(d=>d.category==="food").map(d => {
-                    const picked = foodRanks[d.id] != null;
+                  {( (allDishesForCurQ.data ?? []).filter(d=>d.category==="food") ).map(d => {
+                    const picked = (foodRanks[d.id] != null);
                     return (
                       <div key={d.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
-                        <div>
-                          <div className="font-medium">{d.name}</div>
-                          <div className="text-xs text-neutral-500">{d.slug}</div>
-                        </div>
+                        <div><div className="font-medium">{d.name}</div><div className="text-xs text-neutral-500">{d.slug}</div></div>
                         <div className="flex items-center gap-2">
-                          <input type="checkbox" checked={picked} onChange={()=>togglePick(foodRanks, setFoodRanks, d.id)} />
-                          <select
-                            className="border rounded px-2 py-1"
-                            value={foodRanks[d.id] ?? ""}
-                            onChange={(e)=> setRank(setFoodRanks, d.id, Number(e.target.value))}
-                            disabled={!picked}
-                          >
-                            <option value="">—</option>
-                            <option value={1}>1</option>
-                            <option value={2}>2</option>
-                            <option value={3}>3</option>
+                          <input type="checkbox" checked={picked} onChange={()=> setFoodRanks(prev => ({ ...prev, ...(picked ? (delete prev[d.id], prev) : { [d.id]: (Object.values(prev).includes(1) ? (Object.values(prev).includes(2) ? 3 : 2) : 1) }) }))} />
+                          <select className="border rounded px-2 py-1" value={foodRanks[d.id] ?? ""} onChange={(e)=> setFoodRanks(prev => ({ ...prev, [d.id]: Number(e.target.value) }))} disabled={!picked}>
+                            <option value="">—</option><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
                           </select>
                         </div>
                       </div>
@@ -1158,26 +876,15 @@ export default function AdminDashboard() {
               <div>
                 <div className="font-medium mb-2">Top Delicacies — choose up to 3, rank 1–3</div>
                 <div className="max-h-[420px] overflow-auto border rounded">
-                  {(allDishesForCurQ.data ?? []).filter(d=>d.category==="delicacy").map(d => {
-                    const picked = delicacyRanks[d.id] != null;
+                  {( (allDishesForCurQ.data ?? []).filter(d=>d.category==="delicacy") ).map(d => {
+                    const picked = (delicacyRanks[d.id] != null);
                     return (
                       <div key={d.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
-                        <div>
-                          <div className="font-medium">{d.name}</div>
-                          <div className="text-xs text-neutral-500">{d.slug}</div>
-                        </div>
+                        <div><div className="font-medium">{d.name}</div><div className="text-xs text-neutral-500">{d.slug}</div></div>
                         <div className="flex items-center gap-2">
-                          <input type="checkbox" checked={picked} onChange={()=>togglePick(delicacyRanks, setDelicacyRanks, d.id)} />
-                          <select
-                            className="border rounded px-2 py-1"
-                            value={delicacyRanks[d.id] ?? ""}
-                            onChange={(e)=> setRank(setDelicacyRanks, d.id, Number(e.target.value))}
-                            disabled={!picked}
-                          >
-                            <option value="">—</option>
-                            <option value={1}>1</option>
-                            <option value={2}>2</option>
-                            <option value={3}>3</option>
+                          <input type="checkbox" checked={picked} onChange={()=> setDelicacyRanks(prev => ({ ...prev, ...(picked ? (delete prev[d.id], prev) : { [d.id]: (Object.values(prev).includes(1) ? (Object.values(prev).includes(2) ? 3 : 2) : 1) }) }))} />
+                          <select className="border rounded px-2 py-1" value={delicacyRanks[d.id] ?? ""} onChange={(e)=> setDelicacyRanks(prev => ({ ...prev, [d.id]: Number(e.target.value) }))} disabled={!picked}>
+                            <option value="">—</option><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
                           </select>
                         </div>
                       </div>
@@ -1191,25 +898,14 @@ export default function AdminDashboard() {
                 <div className="font-medium mb-2">Top Restaurants — choose up to 3, rank 1–3</div>
                 <div className="max-h-[420px] overflow-auto border rounded">
                   {(allRestoForCurQ.data ?? []).map(r => {
-                    const picked = restRanks[r.id] != null;
+                    const picked = (restRanks[r.id] != null);
                     return (
                       <div key={r.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
-                        <div>
-                          <div className="font-medium">{r.name}</div>
-                          <div className="text-xs text-neutral-500">{r.slug}</div>
-                        </div>
+                        <div><div className="font-medium">{r.name}</div><div className="text-xs text-neutral-500">{r.slug}</div></div>
                         <div className="flex items-center gap-2">
-                          <input type="checkbox" checked={picked} onChange={()=>togglePick(restRanks, setRestRanks, r.id)} />
-                          <select
-                            className="border rounded px-2 py-1"
-                            value={restRanks[r.id] ?? ""}
-                            onChange={(e)=> setRank(setRestRanks, r.id, Number(e.target.value))}
-                            disabled={!picked}
-                          >
-                            <option value="">—</option>
-                            <option value={1}>1</option>
-                            <option value={2}>2</option>
-                            <option value={3}>3</option>
+                          <input type="checkbox" checked={picked} onChange={()=> setRestRanks(prev => ({ ...prev, ...(picked ? (delete prev[r.id], prev) : { [r.id]: (Object.values(prev).includes(1) ? (Object.values(prev).includes(2) ? 3 : 2) : 1) }) }))} />
+                          <select className="border rounded px-2 py-1" value={restRanks[r.id] ?? ""} onChange={(e)=> setRestRanks(prev => ({ ...prev, [r.id]: Number(e.target.value) }))} disabled={!picked}>
+                            <option value="">—</option><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
                           </select>
                         </div>
                       </div>
