@@ -501,29 +501,30 @@ app.post('/api/admin/restaurants', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const cols = [
+    // All columns EXCEPT the geometry:
+    const baseCols = [
       'name','slug','kind','description','municipality_id','address',
       'phone','email','website','facebook','instagram','opening_hours',
-      'price_range','cuisine_types','rating','lat','lng','location_pt'
+      'price_range','cuisine_types','rating','lat','lng'
     ];
-    const vals = [
+    if (hasR('image_url')) baseCols.push('image_url');
+    if (hasR('featured')) baseCols.push('featured');
+    if (hasR('featured_rank')) baseCols.push('featured_rank');
+
+    const baseParams = [
       name, slug, kind, description, municipality_id, address,
       phone, email, website, facebook, instagram, opening_hours,
-      price_range, JSON.stringify(cuisine_types), rating, lat, lng,
-      // location point (lng lat)
-      // (use ST_GeomFromText to avoid the ST_SRID signature mismatch on some MySQL versions)
-      // We pass as values after the main placeholders:
+      price_range, JSON.stringify(cuisine_types), rating, lat, lng
     ];
+    if (hasR('image_url')) baseParams.push(image_url);
+    if (hasR('featured')) baseParams.push(featured ?? 0);
+    if (hasR('featured_rank')) baseParams.push(featured_rank ?? null);
 
-    if (hasR('image_url')) { cols.push('image_url'); vals.push(image_url); }
-    if (hasR('featured')) { cols.push('featured'); vals.push(featured ?? 0); }
-    if (hasR('featured_rank')) { cols.push('featured_rank'); vals.push(featured_rank ?? null); }
+    const placeholders = baseCols.map(() => '?').join(',');
 
-    const placeholders = cols.map(() => '?').join(',');
     const sql = `
-      INSERT INTO restaurants (${cols.join(',')})
-      VALUES (${placeholders.substring(0, placeholders.lastIndexOf('?'))}, ?, ?,
-        ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 4326))
+      INSERT INTO restaurants (${baseCols.join(',')}, location_pt)
+      VALUES (${placeholders}, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 4326))
       ON DUPLICATE KEY UPDATE
         description=VALUES(description), address=VALUES(address), kind=VALUES(kind),
         opening_hours=VALUES(opening_hours), price_range=VALUES(price_range),
@@ -533,17 +534,21 @@ app.post('/api/admin/restaurants', async (req, res) => {
         ${hasR('featured') ? ', featured=VALUES(featured)' : ''}
         ${hasR('featured_rank') ? ', featured_rank=VALUES(featured_rank)' : ''}
     `;
-    // build final params with lat/lng twice for ST_GeomFromText
-    const geomParams = [...vals, lat, lng, lng, lat];
-    const [r] = await pool.query(sql, geomParams);
 
-    const id = r.insertId || (await pool.query(`SELECT id FROM restaurants WHERE slug=?`, [slug]))[0][0]?.id;
+    // Geometry params are (lng, lat) for POINT(lng lat)
+    const params = [...baseParams, lng, lat];
+
+    const [r] = await pool.query(sql, params);
+    const id =
+      r.insertId ||
+      (await pool.query(`SELECT id FROM restaurants WHERE slug=?`, [slug]))[0][0]?.id;
     res.json({ id });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to create restaurant', detail: String(e?.message || e) });
   }
 });
+
 
 /** Update restaurant */
 app.patch('/api/admin/restaurants/:id', async (req, res) => {
