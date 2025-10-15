@@ -10,6 +10,8 @@ type Props = {
   label?: string;
   className?: string;
   disabled?: boolean;
+  /** optional: persist the last picked municipality in localStorage */
+  persistKey?: string;
 };
 
 export default function MunicipalitySelect({
@@ -20,6 +22,7 @@ export default function MunicipalitySelect({
   label = "Municipality",
   className = "w-72",
   disabled = false,
+  persistKey,
 }: Props) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -30,6 +33,17 @@ export default function MunicipalitySelect({
     queryFn: fetchMunicipalities,
     staleTime: 5 * 60_000,
   });
+
+  // Restore last pick
+  useEffect(() => {
+    if (!persistKey) return;
+    const saved = localStorage.getItem(persistKey);
+    if (saved) {
+      const id = Number(saved);
+      if (Number.isFinite(id)) onChange(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistKey]);
 
   // Build options and filter by search
   const options = useMemo(() => {
@@ -77,6 +91,10 @@ export default function MunicipalitySelect({
 
   const pick = (id: number | null, labelText?: string) => {
     onChange(id);
+    if (persistKey) {
+      if (id == null) localStorage.removeItem(persistKey);
+      else localStorage.setItem(persistKey, String(id));
+    }
     setQ(id ? labelText ?? q : "");
     setOpen(false);
   };
@@ -110,9 +128,7 @@ export default function MunicipalitySelect({
 
         {open && (
           <div className="absolute left-0 right-0 mt-1 bg-white border rounded shadow max-h-64 overflow-auto z-[1000]">
-            {busy && (
-              <div className="px-3 py-2 text-sm text-neutral-500">Loading…</div>
-            )}
+            {busy && <div className="px-3 py-2 text-sm text-neutral-500">Loading…</div>}
             {err && (
               <div className="px-3 py-2 text-sm text-red-600">
                 Failed to load municipalities
@@ -129,18 +145,20 @@ export default function MunicipalitySelect({
               </button>
             )}
 
-            {!busy && !err && options.map((o) => (
-              <button
-                type="button"
-                key={o.id}
-                className={`w-full text-left px-3 py-2 hover:bg-neutral-50 text-sm ${
-                  value === o.id ? "bg-amber-50" : ""
-                }`}
-                onClick={() => pick(o.id, o.label)}
-              >
-                {o.label}
-              </button>
-            ))}
+            {!busy &&
+              !err &&
+              options.map((o) => (
+                <button
+                  type="button"
+                  key={o.id}
+                  className={`w-full text-left px-3 py-2 hover:bg-neutral-50 text-sm ${
+                    value === o.id ? "bg-amber-50" : ""
+                  }`}
+                  onClick={() => pick(o.id, o.label)}
+                >
+                  {o.label}
+                </button>
+              ))}
 
             {!busy && !err && options.length === 0 && (
               <div className="px-3 py-2 text-sm text-neutral-500">No results</div>

@@ -9,8 +9,8 @@ const app = express();
 
 /* ---------- CORS ---------- */
 const allowedOrigins = new Set([
-  'http://localhost:5173',
-  'https://7cknmad.github.io',
+  'http://localhost:5173',              // Vite dev
+  'https://7cknmad.github.io',          // GitHub Pages (path is not part of origin)
 ]);
 app.use(cors({
   origin: (origin, cb) => {
@@ -51,14 +51,14 @@ const jsonArray = (v) => {
   if (Array.isArray(v)) return JSON.stringify(v);
   try { return JSON.stringify(v); } catch { return '[]'; }
 };
+const safeNum = (v, def=0) => Number.isFinite(Number(v)) ? Number(v) : def;
 
-/* ---------- Public endpoints ---------- */
+/* ---------- Public endpoints (already used by your FE) ---------- */
 app.get('/api/municipalities', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT id, name, slug, description, province, lat, lng, image_url
-       FROM municipalities
-       ORDER BY name`
+       FROM municipalities ORDER BY name`
     );
     res.json(rows);
   } catch (e) {
@@ -75,7 +75,10 @@ app.get('/api/dishes', async (req, res) => {
 
     if (municipalityId) { where.push('d.municipality_id = ?'); params.push(Number(municipalityId)); }
     if (category) { where.push('c.code = ?'); params.push(String(category)); }
-    if (q) { where.push('(MATCH(d.name,d.description) AGAINST(? IN NATURAL LANGUAGE MODE))'); params.push(String(q)); }
+    if (q) {
+      where.push('(MATCH(d.name,d.description) AGAINST(? IN NATURAL LANGUAGE MODE))');
+      params.push(String(q));
+    }
 
     const sql = `
       SELECT d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
@@ -149,7 +152,7 @@ app.get('/api/municipalities/:id/dishes', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('MUNI DISHES ERROR:', e);
+    console.error('GET /api/municipalities/:id/dishes ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch municipality dishes', detail: String(e?.message || e) });
   }
 });
@@ -170,7 +173,7 @@ app.get('/api/municipalities/:id/restaurants', async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('MUNI RESTO ERROR:', e);
+    console.error('MUNI RESTAURANTS ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch municipality restaurants', detail: String(e?.message || e) });
   }
 });
@@ -183,8 +186,8 @@ app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
     const [rows] = await pool.query(
       `SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
               r.facebook, r.instagram, r.opening_hours, r.price_range, r.cuisine_types,
-              r.rating, r.lat, r.lng, r.image_url,
-              dr.price_note, dr.availability
+              r.rating, r.lat, r.lng,
+              dr.price_note, dr.availability, r.image_url
        FROM dish_restaurants dr
        INNER JOIN restaurants r ON r.id = dr.restaurant_id
        WHERE dr.dish_id = ?
@@ -254,35 +257,16 @@ app.post('/api/admin/auth/login', (req, res) => {
   return res.status(401).json({ error: 'Invalid credentials' });
 });
 
-app.get('/api/admin/auth/me', auth, (req, res) => res.json({ user: { email: ADMIN_EMAIL }}) );
-app.post('/api/admin/auth/logout', auth, (req, res) => {
-  const m = (req.header('Authorization')||'').match(/^Bearer\s+(.+)$/i);
-  if (m) validTokens.delete(m[1]);
-  res.json({ ok: true });
+app.get('/api/admin/auth/me', auth, (req, res) => {
+  // very simple: you’re authenticated if token is valid
+  res.json({ user: { email: ADMIN_EMAIL }});
 });
 
-/* ---------- Admin Analytics (NEW) ---------- */
-app.get('/api/admin/analytics/summary', auth, async (req, res) => {
-  try {
-    const { municipalityId } = req.query;
-    const where = municipalityId ? 'WHERE municipality_id=?' : '';
-    const params = municipalityId ? [Number(municipalityId)] : [];
-
-    const [[{ dcount }]] = await pool.query(`SELECT COUNT(*) AS dcount FROM dishes ${where}`, params);
-    const [[{ rcount }]] = await pool.query(`SELECT COUNT(*) AS rcount FROM restaurants ${where}`, params);
-
-    const [topRestaurants] = await pool.query(
-      `SELECT id, name, slug, rating, municipality_id
-       FROM restaurants ${where}
-       ORDER BY rating DESC, name ASC
-       LIMIT 10`, params
-    );
-
-    res.json({ totals: { dishes: dcount, restaurants: rcount }, topRestaurants });
-  } catch (e) {
-    console.error('ANALYTICS ERROR:', e);
-    res.status(500).json({ error: 'Failed analytics', detail: String(e?.message||e) });
-  }
+app.post('/api/admin/auth/logout', auth, (req, res) => {
+  const h = req.header('Authorization') || '';
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  if (m) validTokens.delete(m[1]);
+  res.json({ ok: true });
 });
 
 /* ---------- Admin CRUD: dishes ---------- */
@@ -492,7 +476,7 @@ app.put('/api/admin/restaurants/:id/signature', auth, async (req, res) => {
   }
 });
 
-/* ---------- Linking ---------- */
+/* ---------- Linking (one↔many) ---------- */
 app.post('/api/admin/dish-restaurants', auth, async (req, res) => {
   try {
     const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body || {};
@@ -506,27 +490,6 @@ app.post('/api/admin/dish-restaurants', auth, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error(e); res.status(500).json({ error: 'Failed to link dish & restaurant', detail: String(e?.message||e) });
-  }
-});
-
-app.delete('/api/admin/dish-restaurants', auth, async (req, res) => {
-  try {
-    const { dish_id, restaurant_id } = req.body || {};
-    if (!dish_id || !restaurant_id) return res.status(400).json({ error: 'dish_id and restaurant_id are required' });
-    await pool.query(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [dish_id, restaurant_id]);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e); res.status(500).json({ error: 'Failed to unlink', detail: String(e?.message||e) });
-  }
-});
-
-app.get('/api/admin/dishes/:id/restaurants', auth, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const [rows] = await pool.query(`SELECT restaurant_id FROM dish_restaurants WHERE dish_id=?`, [id]);
-    res.json(rows.map(r => r.restaurant_id));
-  } catch (e) {
-    console.error(e); res.status(500).json({ error: 'Failed to load links' });
   }
 });
 

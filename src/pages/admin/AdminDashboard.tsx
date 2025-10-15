@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminAPI, AdminAuth, type Dish, type Restaurant } from "../../utils/adminApi";
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
-import { Check, LogOut, PlusCircle, Save, Search, Trash2, Link as LinkIcon, Unlink } from "lucide-react";
+import { Check, LogOut, PlusCircle, Save, Search, Trash2, Link as LinkIcon } from "lucide-react";
+import { useAdminMuniPref } from "../../hooks/useAdminPrefs";
 
 type TabKey = "analytics" | "dishes" | "restaurants" | "curation" | "linking";
 
@@ -31,7 +32,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b mb-4">
+      <div className="border-b mb-4 sticky top-0 bg-white z-10">
         <nav className="-mb-px flex gap-6">
           {(["analytics","dishes","restaurants","curation","linking"] as TabKey[]).map(k => (
             <button
@@ -54,52 +55,70 @@ export default function AdminDashboard() {
   );
 }
 
-/* ----------------- Analytics ----------------- */
+/* ----------------- Analytics (with charts) ----------------- */
 function AnalyticsPanel() {
-  const [muniId, setMuniId] = useState<number | null>(null);
-  const sumQ = useQuery({
-    queryKey: ["admin:analytics", muniId],
-    queryFn: () => AdminAPI.analyticsSummary(muniId ?? undefined),
-    staleTime: 30_000,
+  const { muniId, setMuniId } = useAdminMuniPref();
+
+  // Load lists to compute charts client-side (no extra deps)
+  const dishesQ = useQuery({
+    queryKey: ["analytics:dishes", muniId],
+    queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined }),
   });
+  const restosQ = useQuery({
+    queryKey: ["analytics:restos", muniId],
+    queryFn: () => AdminAPI.getRestaurants({ municipalityId: muniId ?? undefined }),
+  });
+
+  const catCounts = useMemo(() => {
+    const d = dishesQ.data ?? [];
+    return {
+      food: d.filter(x => x.category === "food").length,
+      delicacy: d.filter(x => x.category === "delicacy").length,
+      drink: d.filter(x => x.category === "drink").length,
+    };
+  }, [dishesQ.data]);
+
+  const topRestos = useMemo(() => {
+    const r = restosQ.data ?? [];
+    return [...r].sort((a,b) => (b.rating ?? 0) - (a.rating ?? 0)).slice(0, 10);
+  }, [restosQ.data]);
 
   return (
     <main className="space-y-6">
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium">Municipality</label>
-        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="All municipalities" />
+        <MunicipalitySelect
+          value={muniId}
+          onChange={setMuniId}
+          placeholder="All municipalities"
+          persistKey="admin:lastMuniId"
+        />
       </div>
 
       <div className="grid sm:grid-cols-3 gap-4">
-        <StatCard label="Total Dishes" value={sumQ.data?.totals?.dishes ?? "—"} />
-        <StatCard label="Total Restaurants" value={sumQ.data?.totals?.restaurants ?? "—"} />
+        <StatCard label="Total Dishes" value={dishesQ.data?.length ?? "—"} />
+        <StatCard label="Total Restaurants" value={restosQ.data?.length ?? "—"} />
         <StatCard label="Scope" value={muniId ? `Municipality #${muniId}` : "All"} />
       </div>
 
-      <section>
-        <div className="font-medium mb-2">Top Restaurants</div>
-        <div className="border rounded overflow-hidden">
-          {!sumQ.data?.topRestaurants?.length ? (
-            <div className="p-3 text-sm text-neutral-500">No data yet.</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-50">
-                <tr>
-                  <th className="text-left p-2">Name</th>
-                  <th className="text-right p-2">Rating</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sumQ.data.topRestaurants.map((r: any) => (
-                  <tr key={r.id} className="border-t">
-                    <td className="p-2">{r.name}</td>
-                    <td className="p-2 text-right">{r.rating ?? "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+      {/* Category bar chart */}
+      <section className="rounded border p-4">
+        <div className="font-medium mb-2">Dishes by Category</div>
+        <SmallBars data={[
+          { label: "Food", value: catCounts.food },
+          { label: "Delicacy", value: catCounts.delicacy },
+          { label: "Drink", value: catCounts.drink },
+        ]} />
+      </section>
+
+      {/* Top restaurants rating bubbles */}
+      <section className="rounded border p-4">
+        <div className="font-medium mb-2">Top Restaurants (by rating)</div>
+        {topRestos.length === 0 ? (
+          <div className="text-sm text-neutral-500">No data.</div>
+        ) : (
+          <RatingBubbles rows={topRestos} />
+        )}
       </section>
     </main>
   );
@@ -112,12 +131,56 @@ function StatCard({ label, value }: { label: string; value: number|string }) {
     </div>
   );
 }
+function SmallBars({ data }: { data: { label: string; value: number }[] }) {
+  const max = Math.max(1, ...data.map(d => d.value));
+  return (
+    <div className="space-y-2">
+      {data.map(d => (
+        <div key={d.label} className="flex items-center gap-2">
+          <div className="w-24 text-sm">{d.label}</div>
+          <div className="flex-1 h-3 bg-neutral-100 rounded">
+            <div
+              className="h-3 rounded bg-primary-600"
+              style={{ width: `${(d.value / max) * 100}%` }}
+              title={`${d.value}`}
+            />
+          </div>
+          <div className="w-10 text-right text-sm">{d.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+function RatingBubbles({ rows }: { rows: { id:number; name:string; rating:number|null }[] }) {
+  const max = Math.max(1, ...rows.map(r => r.rating ?? 0));
+  const W = 600, H = 120;
+  const pad = 16;
+  return (
+    <div className="overflow-auto">
+      <svg width={W} height={H} className="min-w-[600px]">
+        {rows.map((r, idx) => {
+          const x = pad + (idx * ((W - pad*2) / Math.max(1, rows.length-1)));
+          const val = r.rating ?? 0;
+          const radius = 8 + (val / max) * 22;
+          return (
+            <g key={r.id} transform={`translate(${x},${H/2})`} >
+              <circle r={radius} className="fill-primary-500 opacity-80" />
+              <text textAnchor="middle" y={radius + 14} className="text-[10px] fill-neutral-700">{r.name}</text>
+              <text textAnchor="middle" y={4} className="text-[10px] fill-white font-semibold">{val.toFixed(1)}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
 
 /* ----------------- Dishes CRUD ----------------- */
 function DishesPanel() {
   const qc = useQueryClient();
+  const { muniId, setMuniId } = useAdminMuniPref();
+
   const [q, setQ] = useState("");
-  const [muniId, setMuniId] = useState<number | null>(null);
   const [autoSlug, setAutoSlug] = useState(true);
   const [editing, setEditing] = useState<Partial<Dish> | null>(null);
 
@@ -184,7 +247,11 @@ function DishesPanel() {
   const remove = async (id?: number) => {
     if (!id) return;
     if (!confirm("Delete this dish? This cannot be undone.")) return;
-    await deleteM.mutateAsync(id);
+    try {
+      await deleteM.mutateAsync(id);
+    } catch (e: any) {
+      alert(`Failed to delete dish: ${e?.message || e}`);
+    }
   };
 
   return (
@@ -201,7 +268,12 @@ function DishesPanel() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
-            <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Filter municipality…" />
+            <MunicipalitySelect
+              value={muniId}
+              onChange={setMuniId}
+              placeholder="Filter municipality…"
+              persistKey="admin:lastMuniId"
+            />
           </div>
           <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
             onClick={startCreate}>
@@ -210,175 +282,195 @@ function DishesPanel() {
         </div>
 
         <div className="border rounded overflow-hidden">
-          {listQ.isLoading ? (
-            <div className="p-4 text-sm text-neutral-500">Loading…</div>
-          ) : listQ.error ? (
-            <div className="p-4 text-sm text-red-600">Failed to load dishes.</div>
-          ) : (listQ.data ?? []).length === 0 ? (
-            <div className="p-4 text-sm text-neutral-500">No results.</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-50">
-                <tr>
-                  <th className="text-left p-2">Name</th>
-                  <th className="text-left p-2">Category</th>
-                  <th className="text-left p-2">Flavor</th>
-                  <th className="text-right p-2">Rating</th>
-                  <th className="text-right p-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {listQ.data!.map((d) => (
-                  <tr key={d.id} className="border-t hover:bg-neutral-50">
-                    <td className="p-2">
-                      <button className="text-primary-700 hover:underline" onClick={() => startEdit(d)}>
-                        {d.name}
-                      </button>
-                    </td>
-                    <td className="p-2">{d.category}</td>
-                    <td className="p-2">{(d.flavor_profile ?? []).join(", ")}</td>
-                    <td className="p-2 text-right">{d.rating ?? "-"}</td>
-                    <td className="p-2 text-right">
-                      <button className="text-red-600 hover:text-red-700" onClick={() => remove(d.id)}>
-                        <Trash2 size={16} />
-                      </button>
-                    </td>
+          <div className="max-h-[520px] overflow-auto">
+            {listQ.isLoading ? (
+              <div className="p-4 text-sm text-neutral-500">Loading…</div>
+            ) : listQ.error ? (
+              <div className="p-4 text-sm text-red-600">Failed to load dishes.</div>
+            ) : (listQ.data ?? []).length === 0 ? (
+              <div className="p-4 text-sm text-neutral-500">No results.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-neutral-50 sticky top-0">
+                  <tr>
+                    <th className="text-left p-2">Name</th>
+                    <th className="text-left p-2">Category</th>
+                    <th className="text-left p-2">Flavor</th>
+                    <th className="text-right p-2">Rating</th>
+                    <th className="text-right p-2">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody>
+                  {listQ.data!.map((d) => (
+                    <tr key={d.id} className="border-t hover:bg-neutral-50">
+                      <td className="p-2">
+                        <button className="text-primary-700 hover:underline" onClick={() => startEdit(d)}>
+                          {d.name}
+                        </button>
+                      </td>
+                      <td className="p-2">{d.category}</td>
+                      <td className="p-2">{(d.flavor_profile ?? []).join(", ")}</td>
+                      <td className="p-2 text-right">{d.rating ?? "-"}</td>
+                      <td className="p-2 text-right">
+                        <button className="text-red-600 hover:text-red-700" onClick={() => remove(d.id)}>
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="lg:col-span-2">
-        <div className="rounded border p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-semibold">{editing?.id ? "Edit Dish" : "Create Dish"}</div>
-            <div className="text-xs text-neutral-500">
-              {editing?.municipality_id ? `Municipality ID: ${editing.municipality_id}` : "Select municipality"}
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            <label className="text-sm font-medium">Municipality <span className="text-red-600">*</span></label>
-            <MunicipalitySelect
-              value={editing?.municipality_id ?? null}
-              onChange={(id) => setEditing(prev => prev ? { ...prev, municipality_id: id ?? 0 } : prev)}
-              allowAll={false}
-              placeholder="Choose municipality…"
-            />
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Name <span className="text-red-600">*</span></label>
-              <input className="border rounded px-3 py-2"
-                value={editing?.name ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, name: e.target.value } : prev)} />
-            </div>
-
-            <div className="grid gap-1">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Slug <span className="text-red-600">*</span></label>
-                <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" checked={autoSlug} onChange={(e) => setAutoSlug(e.target.checked)} />
-                  Auto
-                </label>
-              </div>
-              <input className="border rounded px-3 py-2"
-                value={editing?.slug ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, slug: e.target.value } : prev)}
-                disabled={autoSlug} />
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Category</label>
-              <select
-                className="border rounded px-3 py-2"
-                value={editing?.category ?? "food"}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, category: e.target.value as Dish["category"] } : prev)}
-              >
-                <option value="food">Food</option>
-                <option value="delicacy">Delicacy</option>
-                <option value="drink">Drink</option>
-              </select>
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Image URL</label>
-              <input className="border rounded px-3 py-2"
-                placeholder="https://…"
-                value={editing?.image_url ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, image_url: e.target.value } : prev)} />
-              {editing?.image_url ? (
-                <img
-                  src={editing.image_url}
-                  alt="preview"
-                  className="h-20 w-20 rounded object-cover border"
-                  onError={(e) => (e.currentTarget.style.display = "none")}
-                />
-              ) : null}
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Description</label>
-              <textarea className="border rounded px-3 py-2" rows={3}
-                value={editing?.description ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, description: e.target.value } : prev)} />
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Flavor profile (comma-separated)</label>
-              <input className="border rounded px-3 py-2"
-                value={(editing?.flavor_profile ?? []).join(", ")}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, flavor_profile: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Ingredients (comma-separated)</label>
-              <input className="border rounded px-3 py-2"
-                value={(editing?.ingredients ?? []).join(", ")}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, ingredients: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">Popularity</label>
-                <input type="number" className="border rounded px-3 py-2 w-full"
-                  value={editing?.popularity ?? 0}
-                  onChange={(e) => setEditing(prev => prev ? { ...prev, popularity: Number(e.target.value) } : prev)} />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Rating</label>
-                <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
-                  value={editing?.rating ?? 0}
-                  onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              {editing?.id ? (
-                <button className="inline-flex items-center gap-2 px-3 py-2 rounded border text-red-600 hover:bg-red-50"
-                  onClick={() => editing?.id && deleteM.mutate(editing.id)}>
-                  <Trash2 size={16} /> Delete
-                </button>
-              ) : null}
-              <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
-                onClick={save} disabled={createM.isPending || updateM.isPending}>
-                <Save size={16} /> Save
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditDishCard
+          editing={editing}
+          setEditing={setEditing}
+          autoSlug={autoSlug}
+          setAutoSlug={setAutoSlug}
+          onSave={save}
+          saving={createM.isPending || updateM.isPending}
+        />
       </div>
     </main>
   );
 }
 
-/* ----------------- Restaurants CRUD ----------------- */
+function EditDishCard({
+  editing, setEditing, autoSlug, setAutoSlug, onSave, saving
+}: {
+  editing: Partial<Dish> | null;
+  setEditing: (v: Partial<Dish> | null) => void;
+  autoSlug: boolean;
+  setAutoSlug: (v: boolean) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="rounded border p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="font-semibold">{editing?.id ? "Edit Dish" : "Create Dish"}</div>
+        <div className="text-xs text-neutral-500">
+          {editing?.municipality_id ? `Municipality ID: ${editing.municipality_id}` : "Select municipality"}
+        </div>
+      </div>
+
+      <div className="grid gap-3">
+        <label className="text-sm font-medium">Municipality <span className="text-red-600">*</span></label>
+        <MunicipalitySelect
+          value={editing?.municipality_id ?? null}
+          onChange={(id) => setEditing(prev => prev ? { ...prev, municipality_id: id ?? 0 } : prev)}
+          allowAll={false}
+          placeholder="Choose municipality…"
+          persistKey="admin:lastMuniId"
+        />
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Name <span className="text-red-600">*</span></label>
+          <input className="border rounded px-3 py-2"
+            value={editing?.name ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, name: e.target.value } : prev)} />
+        </div>
+
+        <div className="grid gap-1">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">Slug <span className="text-red-600">*</span></label>
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={autoSlug} onChange={(e) => setAutoSlug(e.target.checked)} />
+              Auto
+            </label>
+          </div>
+          <input className="border rounded px-3 py-2"
+            value={editing?.slug ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, slug: e.target.value } : prev)}
+            disabled={autoSlug} />
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Category</label>
+          <select
+            className="border rounded px-3 py-2"
+            value={editing?.category ?? "food"}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, category: e.target.value as Dish["category"] } : prev)}
+          >
+            <option value="food">Food</option>
+            <option value="delicacy">Delicacy</option>
+            <option value="drink">Drink</option>
+          </select>
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Image URL</label>
+          <input className="border rounded px-3 py-2"
+            placeholder="https://…"
+            value={editing?.image_url ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, image_url: e.target.value } : prev)} />
+          {editing?.image_url ? (
+            <img
+              src={editing.image_url}
+              alt="preview"
+              className="h-20 w-20 rounded object-cover border"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+          ) : null}
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Description</label>
+          <textarea className="border rounded px-3 py-2" rows={3}
+            value={editing?.description ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, description: e.target.value } : prev)} />
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Flavor profile (comma-separated)</label>
+          <input className="border rounded px-3 py-2"
+            value={(editing?.flavor_profile ?? []).join(", ")}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, flavor_profile: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Ingredients (comma-separated)</label>
+          <input className="border rounded px-3 py-2"
+            value={(editing?.ingredients ?? []).join(", ")}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, ingredients: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm font-medium">Popularity</label>
+            <input type="number" className="border rounded px-3 py-2 w-full"
+              value={editing?.popularity ?? 0}
+              onChange={(e) => setEditing(prev => prev ? { ...prev, popularity: Number(e.target.value) } : prev)} />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Rating</label>
+            <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
+              value={editing?.rating ?? 0}
+              onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
+            onClick={onSave} disabled={saving}>
+            <Save size={16} /> Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Restaurants CRUD (scrollable + delete handler) ----------------- */
 function RestaurantsPanel() {
   const qc = useQueryClient();
+  const { muniId, setMuniId } = useAdminMuniPref();
+
   const [q, setQ] = useState("");
-  const [muniId, setMuniId] = useState<number | null>(null);
   const [autoSlug, setAutoSlug] = useState(true);
   const [editing, setEditing] = useState<Partial<Restaurant> | null>(null);
 
@@ -441,6 +533,16 @@ function RestaurantsPanel() {
     }
   };
 
+  const remove = async (id?: number) => {
+    if (!id) return;
+    if (!confirm("Delete this restaurant? This cannot be undone.")) return;
+    try {
+      await deleteM.mutateAsync(id);
+    } catch (e: any) {
+      alert(`Failed to delete restaurant: ${e?.message || e}`);
+    }
+  };
+
   return (
     <main className="grid lg:grid-cols-5 gap-6">
       <div className="lg:col-span-3">
@@ -455,7 +557,12 @@ function RestaurantsPanel() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
-            <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Filter municipality…" />
+            <MunicipalitySelect
+              value={muniId}
+              onChange={setMuniId}
+              placeholder="Filter municipality…"
+              persistKey="admin:lastMuniId"
+            />
           </div>
           <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
             onClick={startCreate}>
@@ -464,196 +571,215 @@ function RestaurantsPanel() {
         </div>
 
         <div className="border rounded overflow-hidden">
-          {listQ.isLoading ? (
-            <div className="p-4 text-sm text-neutral-500">Loading…</div>
-          ) : listQ.error ? (
-            <div className="p-4 text-sm text-red-600">Failed to load restaurants.</div>
-          ) : (listQ.data ?? []).length === 0 ? (
-            <div className="p-4 text-sm text-neutral-500">No results.</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-50">
-                <tr>
-                  <th className="text-left p-2">Name</th>
-                  <th className="text-left p-2">Kind</th>
-                  <th className="text-left p-2">Cuisine</th>
-                  <th className="text-right p-2">Rating</th>
-                  <th className="text-right p-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {listQ.data!.map((r) => (
-                  <tr key={r.id} className="border-t hover:bg-neutral-50">
-                    <td className="p-2">
-                      <button className="text-primary-700 hover:underline" onClick={() => startEdit(r)}>
-                        {r.name}
-                      </button>
-                    </td>
-                    <td className="p-2">{r.kind}</td>
-                    <td className="p-2">{(r.cuisine_types ?? []).join(", ")}</td>
-                    <td className="p-2 text-right">{r.rating ?? "-"}</td>
-                    <td className="p-2 text-right">
-                      <button className="text-red-600 hover:text-red-700" onClick={() => r.id && deleteM.mutate(r.id)}>
-                        <Trash2 size={16} />
-                      </button>
-                    </td>
+          <div className="max-h-[520px] overflow-auto">
+            {listQ.isLoading ? (
+              <div className="p-4 text-sm text-neutral-500">Loading…</div>
+            ) : listQ.error ? (
+              <div className="p-4 text-sm text-red-600">Failed to load restaurants.</div>
+            ) : (listQ.data ?? []).length === 0 ? (
+              <div className="p-4 text-sm text-neutral-500">No results.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-neutral-50 sticky top-0">
+                  <tr>
+                    <th className="text-left p-2">Name</th>
+                    <th className="text-left p-2">Kind</th>
+                    <th className="text-left p-2">Cuisine</th>
+                    <th className="text-right p-2">Rating</th>
+                    <th className="text-right p-2">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody>
+                  {listQ.data!.map((r) => (
+                    <tr key={r.id} className="border-t hover:bg-neutral-50">
+                      <td className="p-2">
+                        <button className="text-primary-700 hover:underline" onClick={() => startEdit(r)}>
+                          {r.name}
+                        </button>
+                      </td>
+                      <td className="p-2">{r.kind}</td>
+                      <td className="p-2">{(r.cuisine_types ?? []).join(", ")}</td>
+                      <td className="p-2 text-right">{r.rating ?? "-"}</td>
+                      <td className="p-2 text-right">
+                        <button className="text-red-600 hover:text-red-700" onClick={() => remove(r.id)}>
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="lg:col-span-2">
-        <div className="rounded border p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-semibold">{editing?.id ? "Edit Restaurant" : "Create Restaurant"}</div>
-            <div className="text-xs text-neutral-500">
-              {editing?.municipality_id ? `Municipality ID: ${editing.municipality_id}` : "Select municipality"}
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            <label className="text-sm font-medium">Municipality <span className="text-red-600">*</span></label>
-            <MunicipalitySelect
-              value={editing?.municipality_id ?? null}
-              onChange={(id) => setEditing(prev => prev ? { ...prev, municipality_id: id ?? 0 } : prev)}
-              allowAll={false}
-              placeholder="Choose municipality…"
-            />
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Name <span className="text-red-600">*</span></label>
-              <input className="border rounded px-3 py-2"
-                value={editing?.name ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, name: e.target.value } : prev)} />
-            </div>
-
-            <div className="grid gap-1">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Slug <span className="text-red-600">*</span></label>
-                <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" checked={autoSlug} onChange={(e) => setAutoSlug(e.target.checked)} />
-                  Auto
-                </label>
-              </div>
-              <input className="border rounded px-3 py-2"
-                value={editing?.slug ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, slug: e.target.value } : prev)}
-                disabled={autoSlug} />
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Kind</label>
-              <select
-                className="border rounded px-3 py-2"
-                value={editing?.kind ?? "restaurant"}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, kind: e.target.value as Restaurant["kind"] } : prev)}
-              >
-                <option value="restaurant">Restaurant</option>
-                <option value="stall">Stall</option>
-                <option value="store">Store</option>
-                <option value="dealer">Dealer</option>
-                <option value="market">Market</option>
-                <option value="home-based">Home-based</option>
-              </select>
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Image URL</label>
-              <input className="border rounded px-3 py-2"
-                placeholder="https://…"
-                value={editing?.image_url ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, image_url: e.target.value } : prev)} />
-              {editing?.image_url ? (
-                <img
-                  src={editing.image_url}
-                  alt="preview"
-                  className="h-20 w-20 rounded object-cover border"
-                  onError={(e) => (e.currentTarget.style.display = "none")}
-                />
-              ) : null}
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Address <span className="text-red-600">*</span></label>
-              <input className="border rounded px-3 py-2"
-                value={editing?.address ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, address: e.target.value } : prev)} />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">Latitude</label>
-                <input type="number" className="border rounded px-3 py-2 w-full"
-                  value={editing?.lat ?? 0}
-                  onChange={(e) => setEditing(prev => prev ? { ...prev, lat: Number(e.target.value) } : prev)} />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Longitude</label>
-                <input type="number" className="border rounded px-3 py-2 w-full"
-                  value={editing?.lng ?? 0}
-                  onChange={(e) => setEditing(prev => prev ? { ...prev, lng: Number(e.target.value) } : prev)} />
-              </div>
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Description</label>
-              <textarea className="border rounded px-3 py-2" rows={3}
-                value={editing?.description ?? ""}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, description: e.target.value } : prev)} />
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Cuisine types (comma-separated)</label>
-              <input className="border rounded px-3 py-2"
-                value={(editing?.cuisine_types ?? []).join(", ")}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, cuisine_types: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Price range</label>
-              <select
-                className="border rounded px-3 py-2"
-                value={editing?.price_range ?? "moderate"}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, price_range: e.target.value as Restaurant["price_range"] } : prev)}
-              >
-                <option value="budget">Budget</option>
-                <option value="moderate">Moderate</option>
-                <option value="expensive">Expensive</option>
-              </select>
-            </div>
-
-            <div className="grid gap-1">
-              <label className="text-sm font-medium">Rating</label>
-              <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
-                value={editing?.rating ?? 0}
-                onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              {editing?.id ? (
-                <button className="inline-flex items-center gap-2 px-3 py-2 rounded border text-red-600 hover:bg-red-50"
-                  onClick={() => editing?.id && deleteM.mutate(editing.id)}>
-                  <Trash2 size={16} /> Delete
-                </button>
-              ) : null}
-              <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
-                onClick={save} disabled={createM.isPending || updateM.isPending}>
-                <Save size={16} /> Save
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditRestaurantCard
+          editing={editing}
+          setEditing={setEditing}
+          autoSlug={autoSlug}
+          setAutoSlug={setAutoSlug}
+          onSave={save}
+          saving={createM.isPending || updateM.isPending}
+        />
       </div>
     </main>
   );
 }
 
-/* ----------------- Curation (top 3) ----------------- */
+function EditRestaurantCard({
+  editing, setEditing, autoSlug, setAutoSlug, onSave, saving
+}: {
+  editing: Partial<Restaurant> | null;
+  setEditing: (v: Partial<Restaurant> | null) => void;
+  autoSlug: boolean;
+  setAutoSlug: (v: boolean) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="rounded border p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="font-semibold">{editing?.id ? "Edit Restaurant" : "Create Restaurant"}</div>
+        <div className="text-xs text-neutral-500">
+          {editing?.municipality_id ? `Municipality ID: ${editing.municipality_id}` : "Select municipality"}
+        </div>
+      </div>
+
+      <div className="grid gap-3">
+        <label className="text-sm font-medium">Municipality <span className="text-red-600">*</span></label>
+        <MunicipalitySelect
+          value={editing?.municipality_id ?? null}
+          onChange={(id) => setEditing(prev => prev ? { ...prev, municipality_id: id ?? 0 } : prev)}
+          allowAll={false}
+          placeholder="Choose municipality…"
+          persistKey="admin:lastMuniId"
+        />
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Name <span className="text-red-600">*</span></label>
+          <input className="border rounded px-3 py-2"
+            value={editing?.name ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, name: e.target.value } : prev)} />
+        </div>
+
+        <div className="grid gap-1">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">Slug <span className="text-red-600">*</span></label>
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={autoSlug} onChange={(e) => setAutoSlug(e.target.checked)} />
+              Auto
+            </label>
+          </div>
+          <input className="border rounded px-3 py-2"
+            value={editing?.slug ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, slug: e.target.value } : prev)}
+            disabled={autoSlug} />
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Kind</label>
+          <select
+            className="border rounded px-3 py-2"
+            value={editing?.kind ?? "restaurant"}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, kind: e.target.value as Restaurant["kind"] } : prev)}
+          >
+            <option value="restaurant">Restaurant</option>
+            <option value="stall">Stall</option>
+            <option value="store">Store</option>
+            <option value="dealer">Dealer</option>
+            <option value="market">Market</option>
+            <option value="home-based">Home-based</option>
+          </select>
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Image URL</label>
+          <input className="border rounded px-3 py-2"
+            placeholder="https://…"
+            value={editing?.image_url ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, image_url: e.target.value } : prev)} />
+          {editing?.image_url ? (
+            <img
+              src={editing.image_url}
+              alt="preview"
+              className="h-20 w-20 rounded object-cover border"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+          ) : null}
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Address <span className="text-red-600">*</span></label>
+          <input className="border rounded px-3 py-2"
+            value={editing?.address ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, address: e.target.value } : prev)} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm font-medium">Latitude</label>
+            <input type="number" className="border rounded px-3 py-2 w-full"
+              value={editing?.lat ?? 0}
+              onChange={(e) => setEditing(prev => prev ? { ...prev, lat: Number(e.target.value) } : prev)} />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Longitude</label>
+            <input type="number" className="border rounded px-3 py-2 w-full"
+              value={editing?.lng ?? 0}
+              onChange={(e) => setEditing(prev => prev ? { ...prev, lng: Number(e.target.value) } : prev)} />
+          </div>
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Description</label>
+          <textarea className="border rounded px-3 py-2" rows={3}
+            value={editing?.description ?? ""}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, description: e.target.value } : prev)} />
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Cuisine types (comma-separated)</label>
+          <input className="border rounded px-3 py-2"
+            value={(editing?.cuisine_types ?? []).join(", ")}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, cuisine_types: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Price range</label>
+          <select
+            className="border rounded px-3 py-2"
+            value={editing?.price_range ?? "moderate"}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, price_range: e.target.value as Restaurant["price_range"] } : prev)}
+          >
+            <option value="budget">Budget</option>
+            <option value="moderate">Moderate</option>
+            <option value="expensive">Expensive</option>
+          </select>
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium">Rating</label>
+          <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
+            value={editing?.rating ?? 0}
+            onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
+            onClick={onSave} disabled={saving}>
+            <Save size={16} /> Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Curation (sticky muni) ----------------- */
 function CurationPanel() {
-  const [muniId, setMuniId] = useState<number | null>(null);
+  const { muniId, setMuniId } = useAdminMuniPref();
 
   const dishesQ = useQuery({
     queryKey: ["curation:dishes", muniId],
@@ -685,7 +811,13 @@ function CurationPanel() {
     <main className="space-y-6">
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium">Municipality</label>
-        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Choose municipality…" allowAll={false} />
+        <MunicipalitySelect
+          value={muniId}
+          onChange={setMuniId}
+          placeholder="Choose municipality…"
+          allowAll={false}
+          persistKey="admin:lastMuniId"
+        />
       </div>
 
       {muniId === null ? (
@@ -726,11 +858,10 @@ function CurateList<T extends { id: number; name: string }>(
   { title: string; items: T[]; getRank: (x: T) => number | null; setRank: (x: T, rank: number | null) => void }
 ) {
   const sorted = [...items].sort((a, b) => (getRank(a) ?? 99) - (getRank(b) ?? 99));
-
   return (
     <div className="border rounded">
       <div className="px-3 py-2 border-b font-medium">{title}</div>
-      <ul className="divide-y">
+      <ul className="max-h-[360px] overflow-auto divide-y">
         {sorted.map(item => {
           const rank = getRank(item);
           return (
@@ -762,9 +893,9 @@ function CurateList<T extends { id: number; name: string }>(
   );
 }
 
-/* ----------------- Linking (NEW) ----------------- */
+/* ----------------- Linking (unchanged, sticky muni) ----------------- */
 function LinkingPanel() {
-  const [muniId, setMuniId] = useState<number | null>(null);
+  const { muniId, setMuniId } = useAdminMuniPref();
   const [qDish, setQDish] = useState("");
   const [qResto, setQResto] = useState("");
   const [selectedDish, setSelectedDish] = useState<Dish | null>(null);
@@ -798,7 +929,13 @@ function LinkingPanel() {
     <main className="space-y-6">
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium">Municipality</label>
-        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Choose municipality…" allowAll={false} />
+        <MunicipalitySelect
+          value={muniId}
+          onChange={setMuniId}
+          placeholder="Choose municipality…"
+          allowAll={false}
+          persistKey="admin:lastMuniId"
+        />
       </div>
 
       {muniId === null ? (
