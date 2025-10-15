@@ -1,24 +1,15 @@
 // src/pages/admin/AdminDashboard.tsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminAPI, AdminAuth, type Dish, type Restaurant } from "../../utils/adminApi";
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
-import { Check, LogOut, PlusCircle, Save, Search, Trash2, Wand2 } from "lucide-react";
-import LinkingTab from "./tabs/LinkingTab";
-import useConfirmLeave from "../../hooks/useConfirmLeave";
+import { Check, LogOut, PlusCircle, Save, Search, Trash2 } from "lucide-react";
 
-type TabKey = "analytics" | "dishes" | "restaurants" | "linking" | "curation";
+type TabKey = "analytics" | "dishes" | "restaurants" | "curation";
 
 export default function AdminDashboard() {
-  const qc = useQueryClient();
   const [active, setActive] = useState<TabKey>("analytics");
-
-  // banner + logout
   const meQ = useQuery({ queryKey: ["admin:me"], queryFn: AdminAuth.me, staleTime: 60_000 });
-
-  // ---- Global-ish editing dirty tracking
-  const [isDirty, setIsDirty] = useState(false);
-  useConfirmLeave(isDirty);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -42,7 +33,7 @@ export default function AdminDashboard() {
       {/* Tabs */}
       <div className="border-b mb-4">
         <nav className="-mb-px flex gap-6">
-          {(["analytics","dishes","restaurants","linking","curation"] as TabKey[]).map(k => (
+          {(["analytics","dishes","restaurants","curation"] as TabKey[]).map(k => (
             <button
               key={k}
               className={`pb-2 border-b-2 ${active===k ? "border-primary-600 text-primary-700" : "border-transparent text-neutral-600 hover:text-neutral-800"}`}
@@ -54,11 +45,9 @@ export default function AdminDashboard() {
         </nav>
       </div>
 
-      {/* Panels */}
       {active === "analytics" && <AnalyticsPanel />}
-      {active === "dishes" && <DishesPanel onDirty={setIsDirty} />}
-      {active === "restaurants" && <RestaurantsPanel onDirty={setIsDirty} />}
-      {active === "linking" && <LinkingTab />}
+      {active === "dishes" && <DishesPanel />}
+      {active === "restaurants" && <RestaurantsPanel />}
       {active === "curation" && <CurationPanel />}
     </div>
   );
@@ -67,8 +56,6 @@ export default function AdminDashboard() {
 /* ----------------- Analytics ----------------- */
 function AnalyticsPanel() {
   const muniQ = useQuery({ queryKey: ["admin:munis"], queryFn: AdminAPI.municipalities, staleTime: 5*60_000 });
-
-  // simple counts (upgrade later)
   const dishesQ = useQuery({ queryKey: ["admin:dishes:analytics"], queryFn: () => AdminAPI.getDishes(), staleTime: 30_000 });
   const restQ = useQuery({ queryKey: ["admin:restaurants:analytics"], queryFn: () => AdminAPI.getRestaurants(), staleTime: 30_000 });
 
@@ -87,7 +74,6 @@ function AnalyticsPanel() {
     </main>
   );
 }
-
 function StatCard({ label, value }: { label: string; value: number|string }) {
   return (
     <div className="rounded-lg border bg-white p-4">
@@ -98,7 +84,7 @@ function StatCard({ label, value }: { label: string; value: number|string }) {
 }
 
 /* ----------------- Dishes CRUD ----------------- */
-function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
+function DishesPanel() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [muniId, setMuniId] = useState<number | null>(null);
@@ -110,8 +96,6 @@ function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
     queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined, q }),
     staleTime: 15_000,
   });
-
-  useEffect(() => { onDirty(!!editing); }, [editing, onDirty]);
 
   const createM = useMutation({
     mutationFn: (payload: any) => AdminAPI.createDish(payload),
@@ -141,16 +125,19 @@ function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
       rating: 0,
     });
   };
+  const startEdit = (row: Dish) => setEditing({ ...row });
 
-  const startEdit = (row: Dish) => {
-    // row already normalized; make a shallow copy
-    setEditing({ ...row });
-  };
+  useEffect(() => {
+    if (autoSlug && editing?.name) {
+      const s = editing.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
+      setEditing(prev => prev ? { ...prev, slug: s } : prev);
+    }
+  }, [editing?.name, autoSlug]);
 
   const save = async () => {
     if (!editing) return;
     if (!editing.municipality_id || !editing.name || !editing.slug) {
-      alert("Municipality, Name, and Slug are required.");
+      alert("Municipality, Name and Slug are required.");
       return;
     }
     const payload = {
@@ -164,27 +151,14 @@ function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
       await createM.mutateAsync(payload as any);
     }
   };
-
   const remove = async (id?: number) => {
     if (!id) return;
     if (!confirm("Delete this dish? This cannot be undone.")) return;
     await deleteM.mutateAsync(id);
   };
 
-  // slug auto
-  useEffect(() => {
-    if (autoSlug && editing?.name) {
-      const s = editing.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/(^-|-$)+/g, "");
-      setEditing(prev => prev ? { ...prev, slug: s } : prev);
-    }
-  }, [editing?.name, autoSlug]);
-
   return (
     <main className="grid lg:grid-cols-5 gap-6">
-      {/* left: list */}
       <div className="lg:col-span-3">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -192,7 +166,7 @@ function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-neutral-400" />
               <input
                 className="pl-8 pr-3 py-2 border rounded w-72"
-                placeholder="Search by name/desc…"
+                placeholder="Search by name/slug…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
@@ -247,7 +221,6 @@ function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
         </div>
       </div>
 
-      {/* right: form */}
       <div className="lg:col-span-2">
         <div className="rounded border p-4">
           <div className="flex items-center justify-between mb-3">
@@ -364,18 +337,6 @@ function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
                 <Save size={16} /> Save
               </button>
             </div>
-
-            {(createM.isError || updateM.isError || deleteM.isError) && (
-              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
-                {((createM.error || updateM.error || deleteM.error) as Error)?.message}
-              </div>
-            )}
-            {(createM.isSuccess || updateM.isSuccess || deleteM.isSuccess) && (
-              <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-2">
-                <Check className="inline mr-1" size={14} />
-                Saved.
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -384,7 +345,7 @@ function DishesPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
 }
 
 /* ----------------- Restaurants CRUD ----------------- */
-function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
+function RestaurantsPanel() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [muniId, setMuniId] = useState<number | null>(null);
@@ -396,8 +357,6 @@ function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
     queryFn: () => AdminAPI.getRestaurants({ municipalityId: muniId ?? undefined, q }),
     staleTime: 15_000,
   });
-
-  useEffect(() => { onDirty(!!editing); }, [editing, onDirty]);
 
   const createM = useMutation({
     mutationFn: (payload: any) => AdminAPI.createRestaurant(payload),
@@ -429,8 +388,14 @@ function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
       lng: 0,
     });
   };
-
   const startEdit = (row: Restaurant) => setEditing({ ...row });
+
+  useEffect(() => {
+    if (autoSlug && editing?.name) {
+      const s = editing.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
+      setEditing(prev => prev ? { ...prev, slug: s } : prev);
+    }
+  }, [editing?.name, autoSlug]);
 
   const save = async () => {
     if (!editing) return;
@@ -445,26 +410,14 @@ function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
       await createM.mutateAsync(payload as any);
     }
   };
-
   const remove = async (id?: number) => {
     if (!id) return;
     if (!confirm("Delete this restaurant? This cannot be undone.")) return;
     await deleteM.mutateAsync(id);
   };
 
-  useEffect(() => {
-    if (autoSlug && editing?.name) {
-      const s = editing.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/(^-|-$)+/g, "");
-      setEditing(prev => prev ? { ...prev, slug: s } : prev);
-    }
-  }, [editing?.name, autoSlug]);
-
   return (
     <main className="grid lg:grid-cols-5 gap-6">
-      {/* left: list */}
       <div className="lg:col-span-3">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -527,7 +480,6 @@ function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
         </div>
       </div>
 
-      {/* right: form */}
       <div className="lg:col-span-2">
         <div className="rounded border p-4">
           <div className="flex items-center justify-between mb-3">
@@ -648,13 +600,11 @@ function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium">Rating</label>
-                <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
-                  value={editing?.rating ?? 0}
-                  onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
-              </div>
+            <div className="grid gap-1">
+              <label className="text-sm font-medium">Rating</label>
+              <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
+                value={editing?.rating ?? 0}
+                onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">
@@ -669,18 +619,6 @@ function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
                 <Save size={16} /> Save
               </button>
             </div>
-
-            {(createM.isError || updateM.isError || deleteM.isError) && (
-              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
-                {((createM.error || updateM.error || deleteM.error) as Error)?.message}
-              </div>
-            )}
-            {(createM.isSuccess || updateM.isSuccess || deleteM.isSuccess) && (
-              <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-2">
-                <Check className="inline mr-1" size={14} />
-                Saved.
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -691,6 +629,7 @@ function RestaurantsPanel({ onDirty }: { onDirty: (b: boolean) => void }) {
 /* ----------------- Curation (top 3) ----------------- */
 function CurationPanel() {
   const [muniId, setMuniId] = useState<number | null>(null);
+
   const dishesQ = useQuery({
     queryKey: ["curation:dishes", muniId],
     queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined }),
@@ -705,11 +644,6 @@ function CurationPanel() {
   const setFeat = useMutation({
     mutationFn: ({ id, featured, rank }: { id: number; featured: 0|1; rank: number|null }) =>
       AdminAPI.setDishFeatured(id, featured, rank),
-    onSuccess: () => {
-      if (muniId) {
-        // refresh lists
-      }
-    }
   });
 
   const setSig = useMutation({
