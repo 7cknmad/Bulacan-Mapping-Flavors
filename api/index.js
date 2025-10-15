@@ -30,10 +30,13 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('/api/*', cors(corsOptions));       // Express 5: avoid bare "*"
-app.options('/api/admin/*', cors(corsOptions)); // preflight for admin
-app.options('/*', cors(corsOptions));
-
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    // CORS middleware above already set the headers
+    return res.sendStatus(204);
+  }
+  next();
+});
 app.use(express.json());
 
 /* =========================
