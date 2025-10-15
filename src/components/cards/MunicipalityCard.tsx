@@ -68,8 +68,7 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
   const [delicsErr, setDelicsErr] = useState<string | null>(null);
   const [restos, setRestos] = useState<Restaurant[] | null>(null);
   const [restosErr, setRestosErr] = useState<string | null>(null);
-
-  // coords & map link
+  const heroSrc = municipality.image_url || assetUrl(`images/municipalities/${municipality.slug}.jpg`);
   const [latRaw, lngRaw] = municipality.coordinates as any;
   const latNum = Number(latRaw), lngNum = Number(lngRaw);
   const hasCoords = Number.isFinite(latNum) && Number.isFinite(lngNum);
@@ -82,8 +81,6 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
     onClose?.(); setTimeout(() => navigate(url), 220);
   };
 
-  // Helper: server may ignore signature/featured.
-  // Sort by (signature>0 / featured>0) or panel_rank asc, then popularity/ rating.
   function sortAndSlice<T extends Dish | Restaurant>(
     list: T[],
     { forDish }: { forDish: boolean },
@@ -170,10 +167,6 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
 
   const desc = municipality.description ?? "";
   const shortDesc = useMemo(() => (desc.length > 220 ? `${desc.slice(0, 220)}…` : desc), [desc]);
-  const heroSrc =
-  municipality.image_url ||
-  assetUrl(`images/municipalities/${municipality.slug}.jpg`);
-
   return (
     <motion.aside
       role="dialog" aria-modal="false" aria-labelledby="municipality-title"
