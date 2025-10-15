@@ -1,6 +1,3 @@
-// src/utils/asset.ts
-
-/** Return a correct path for files under /public across dev & GitHub Pages. */
 export const assetUrl = (p: string) => {
   if (!p) return "";
   // If it's already absolute (http(s), data URIs), just return it.
