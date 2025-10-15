@@ -3,6 +3,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { X as XIcon, MapPin, Utensils, ExternalLink, ChevronRight } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import { assetUrl } from "../../utils/assets";
 
 type Dish = {
   id: number | string;
@@ -169,7 +170,9 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
 
   const desc = municipality.description ?? "";
   const shortDesc = useMemo(() => (desc.length > 220 ? `${desc.slice(0, 220)}…` : desc), [desc]);
-  const heroSrc = municipality.image_url || `/images/municipalities/${municipality.slug}.jpg`;
+  const heroSrc =
+  municipality.image_url ||
+  assetUrl(`images/municipalities/${municipality.slug}.jpg`);
 
   return (
     <motion.aside
@@ -190,10 +193,10 @@ const MunicipalityCard: React.FC<MunicipalityCardProps> = ({ municipality, onClo
         <img
           src={heroSrc}
           alt={municipality.name}
-          className="w-full h-56 md:h-64 lg:h-72 object-cover"
-          onError={(e) => ((e.currentTarget.src =
-            "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1600&auto=format&fit=crop"))}
-        />
+          onError={(e) => {
+            e.currentTarget.src = assetUrl("images/placeholders/municipality.jpg");
+  }}
+/>
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
         <button
           onClick={onClose}

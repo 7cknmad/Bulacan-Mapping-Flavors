@@ -62,6 +62,7 @@ export type Restaurant = {
   rating: number;
   lat: number;
   lng: number;
+  image_url: string | null;
   municipality_name?: string;
 };
 
@@ -86,3 +87,4 @@ export const fetchRestaurants = (opts: { municipalityId?: number; dishId?: numbe
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return getPath<Restaurant[]>(`/api/restaurants${suffix}`);
 };
+

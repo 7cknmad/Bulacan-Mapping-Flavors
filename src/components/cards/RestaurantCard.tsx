@@ -2,7 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { Star as StarIcon, MapPin as MapPinIcon } from "lucide-react";
 import type { Restaurant } from "../../utils/api";
-
+import { assetUrl } from "../../utils/assets";
 // Normalize cuisine_types: null | string | JSON string | string[] -> string[]
 function toArray(v: unknown): string[] {
   if (Array.isArray(v)) return v as string[];
@@ -35,20 +35,15 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, compact = f
 
   const addressFirst = (restaurant.address || "").split(",")[0] || "Bulacan";
   const href = `/restaurant/${encodeURIComponent(restaurant.slug || String(restaurant.id))}`;
-
-  // no images in API yet; use a neutral placeholder (swap once you add image_url)
-  const hero =
-    "https://images.unsplash.com/photo-1559339352-11d035aa65de?q=80&w=1200&auto=format&fit=crop";
+  const thumb = restaurant.image_url?.startsWith("http")
+  ? restaurant.image_url
+  : assetUrl(restaurant.image_url || "images/placeholders/restaurant.jpg");
 
   if (compact) {
     return (
       <Link to={href} className="block">
         <div className="flex items-center p-3 hover:bg-neutral-50 transition-colors rounded-lg">
-          <img
-            src={hero}
-            alt={restaurant.name}
-            className="w-16 h-16 object-cover rounded-md mr-3"
-          />
+          <img src={thumb} alt={restaurant.name} />
           <div>
             <h3 className="font-medium text-neutral-900">{restaurant.name}</h3>
             <div className="flex items-center text-xs text-neutral-500 mt-0.5">
@@ -78,7 +73,7 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, compact = f
     <Link to={href} className="block">
       <div className="card group hover:scale-[1.02] transition overflow-hidden">
         <div className="relative">
-          <img src={hero} alt={restaurant.name} className="w-full h-48 object-cover" />
+          <img src={thumb} alt={restaurant.name} />
           <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded-md text-xs font-medium">
             {price}
           </div>

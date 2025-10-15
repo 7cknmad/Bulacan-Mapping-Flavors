@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { StarIcon } from 'lucide-react';
-
+import { assetUrl } from "../../utils/assets";
 // Accepts either old mock shape or new API shape
 type AnyDish = {
   id?: number | string;
@@ -23,7 +23,9 @@ interface DishCardProps {
 
 const DishCard: React.FC<DishCardProps> = ({ dish, compact = false }) => {
   const href = `/dish/${encodeURIComponent((dish.slug ?? dish.id) as string)}`;
-  const imgSrc = dish.image_url || dish.image || 'https://via.placeholder.com/600x300';
+  const src = dish.image_url?.startsWith("http")
+  ? dish.image_url
+  : assetUrl(dish.image_url || "images/placeholders/dish.jpg");
   const rating = typeof dish.rating === 'number' ? dish.rating : 0;
   const ingredientsCount = Array.isArray(dish.ingredients) ? dish.ingredients.length : 0;
   const muniLabel = dish.municipality_name || '';
@@ -44,11 +46,7 @@ const DishCard: React.FC<DishCardProps> = ({ dish, compact = false }) => {
     return (
       <Link to={href} className="block">
         <div className="flex items-center p-3 hover:bg-neutral-50 transition-colors rounded-lg">
-          <img
-            src={imgSrc}
-            alt={dish.name}
-            className="w-16 h-16 object-cover rounded-md mr-3"
-          />
+          <img src={src} alt={dish.name} />
           <div>
             <h3 className="font-medium text-neutral-900">{dish.name}</h3>
             {muniLabel && <p className="text-xs text-neutral-500">{muniLabel}</p>}
@@ -68,11 +66,7 @@ const DishCard: React.FC<DishCardProps> = ({ dish, compact = false }) => {
     <Link to={href} className="block">
       <div className="card group hover:scale-[1.02] transition-transform">
         <div className="relative">
-          <img
-            src={imgSrc}
-            alt={dish.name}
-            className="w-full h-48 object-cover"
-          />
+          <img src={src} alt={dish.name} />
           <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded-md text-xs font-medium flex items-center">
             <StarIcon size={14} className="text-yellow-500 fill-yellow-500 mr-1" />
             {rating.toFixed(1)}
