@@ -2,10 +2,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminAPI, AdminAuth, type Dish, type Restaurant } from "../../utils/adminApi";
+import { API as PUBLIC_API } from "../../utils/api";
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
 import { Check, LogOut, PlusCircle, Save, Search, Trash2, Link as LinkIcon } from "lucide-react";
 import { useAdminMuniPref } from "../../hooks/useAdminPrefs";
 
+/** Tabs present */
 type TabKey = "analytics" | "dishes" | "restaurants" | "curation" | "linking";
 
 export default function AdminDashboard() {
@@ -55,11 +57,12 @@ export default function AdminDashboard() {
   );
 }
 
-/* ----------------- Analytics (with charts) ----------------- */
+/* =============== Analytics =============== */
+
 function AnalyticsPanel() {
   const { muniId, setMuniId } = useAdminMuniPref();
 
-  // Load lists to compute charts client-side (no extra deps)
+  // Load lists to compute charts client-side (no analytics API needed)
   const dishesQ = useQuery({
     queryKey: ["analytics:dishes", muniId],
     queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined }),
@@ -101,7 +104,7 @@ function AnalyticsPanel() {
         <StatCard label="Scope" value={muniId ? `Municipality #${muniId}` : "All"} />
       </div>
 
-      {/* Category bar chart */}
+      {/* Category bars */}
       <section className="rounded border p-4">
         <div className="font-medium mb-2">Dishes by Category</div>
         <SmallBars data={[
@@ -111,18 +114,17 @@ function AnalyticsPanel() {
         ]} />
       </section>
 
-      {/* Top restaurants rating bubbles */}
+      {/* Top restaurants bubbles */}
       <section className="rounded border p-4">
         <div className="font-medium mb-2">Top Restaurants (by rating)</div>
-        {topRestos.length === 0 ? (
-          <div className="text-sm text-neutral-500">No data.</div>
-        ) : (
-          <RatingBubbles rows={topRestos} />
-        )}
+        {(topRestos.length === 0)
+          ? <div className="text-sm text-neutral-500">No data.</div>
+          : <RatingBubbles rows={topRestos} />}
       </section>
     </main>
   );
 }
+
 function StatCard({ label, value }: { label: string; value: number|string }) {
   return (
     <div className="rounded-lg border bg-white p-4">
@@ -175,7 +177,8 @@ function RatingBubbles({ rows }: { rows: { id:number; name:string; rating:number
   );
 }
 
-/* ----------------- Dishes CRUD ----------------- */
+/* =============== Dishes (CRUD + scrollable) =============== */
+
 function DishesPanel() {
   const qc = useQueryClient();
   const { muniId, setMuniId } = useAdminMuniPref();
@@ -465,7 +468,8 @@ function EditDishCard({
   );
 }
 
-/* ----------------- Restaurants CRUD (scrollable + delete handler) ----------------- */
+/* =============== Restaurants (CRUD + scrollable) =============== */
+
 function RestaurantsPanel() {
   const qc = useQueryClient();
   const { muniId, setMuniId } = useAdminMuniPref();
@@ -571,7 +575,7 @@ function RestaurantsPanel() {
         </div>
 
         <div className="border rounded overflow-hidden">
-          <div className="max-h-[520px] overflow-auto">
+          <div className="max-h=[520px] md:max-h-[520px] overflow-auto">
             {listQ.isLoading ? (
               <div className="p-4 text-sm text-neutral-500">Loading…</div>
             ) : listQ.error ? (
@@ -777,7 +781,8 @@ function EditRestaurantCard({
   );
 }
 
-/* ----------------- Curation (sticky muni) ----------------- */
+/* =============== Curation =============== */
+
 function CurationPanel() {
   const { muniId, setMuniId } = useAdminMuniPref();
 
@@ -792,9 +797,13 @@ function CurationPanel() {
     enabled: muniId !== null,
   });
 
+  // Mutations: ensure your backend updates featured/featured_rank & signature/signature_rank respectively
   const setFeat = useMutation({
     mutationFn: ({ id, featured, rank }: { id: number; featured: 0|1; rank: number|null }) =>
       AdminAPI.setDishFeatured(id, featured, rank),
+    onSuccess: () => {
+      // Refresh lists used by Map/MunicipalityCard if you keep them in react-query elsewhere
+    }
   });
 
   const setSig = useMutation({
@@ -893,7 +902,8 @@ function CurateList<T extends { id: number; name: string }>(
   );
 }
 
-/* ----------------- Linking (unchanged, sticky muni) ----------------- */
+/* =============== Linking (uses public fallback for linked IDs) =============== */
+
 function LinkingPanel() {
   const { muniId, setMuniId } = useAdminMuniPref();
   const [qDish, setQDish] = useState("");
@@ -913,8 +923,20 @@ function LinkingPanel() {
 
   const linkedIdsQ = useQuery({
     queryKey: ["link:linkedIds", selectedDish?.id],
-    queryFn: () => selectedDish ? AdminAPI.getLinkedRestaurantIds(selectedDish.id) : Promise.resolve([]),
     enabled: !!selectedDish?.id,
+    queryFn: async () => {
+      if (!selectedDish?.id) return [];
+      // Try admin endpoint first (if your backend has it). If 404, fallback to public route /api/restaurants/by-dish/:dishId
+      try {
+        const ids = await AdminAPI.getLinkedRestaurantIds(selectedDish.id);
+        return ids;
+      } catch {
+        const res = await fetch(`${PUBLIC_API}/api/restaurants/by-dish/${selectedDish.id}`);
+        if (!res.ok) return [];
+        const rows: { id: number }[] = await res.json();
+        return rows.map(r => r.id);
+      }
+    },
   });
 
   const linkM = useMutation({
