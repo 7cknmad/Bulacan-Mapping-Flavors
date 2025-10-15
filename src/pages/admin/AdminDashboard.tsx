@@ -1,7 +1,7 @@
 // src/pages/admin/AdminDashboard.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AdminAPI, AdminAuth, type Dish, type Restaurant } from "../../utils/adminApi";
+import { AdminAPI, AdminAuth, type Dish, type Restaurant } from "../../utils/AdminAPI";
 import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
 import { Check, LogOut, PlusCircle, Save, Search, Trash2, Wand2 } from "lucide-react";
 import LinkingTab from "./tabs/LinkingTab";
