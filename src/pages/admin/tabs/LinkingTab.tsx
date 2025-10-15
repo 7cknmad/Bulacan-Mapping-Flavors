@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import MunicipalitySelect from "../../../components/admin/MunicipalitySelect";
-import { AdminAPI, type Dish, type Restaurant } from "../../../utils/AdminAPI";
+import { AdminAPI, type Dish, type Restaurant } from "../../../utils/adminApi";
 import { Check, Link as LinkIcon, Search } from "lucide-react";
 
 export default function LinkingTab() {
