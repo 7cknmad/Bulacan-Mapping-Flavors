@@ -4,6 +4,7 @@ import cors from 'cors';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
+import crypto from 'crypto';
 dotenv.config();
 
 const app = express();
@@ -49,21 +50,49 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true, // <<< IMPORTANT
 }));
+
 app.post('/api/admin/auth/login', (req, res) => {
   const { email, password } = req.body || {};
-  if (email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD) {
-    // secure cookie so it works via https tunnel/pages
-    res.cookie('adm', '1', {
-      httpOnly: true,
-      sameSite: 'None',
-      secure: true,
-      path: '/',
-      maxAge: 7 * 24 * 3600 * 1000,
-    });
-    return res.json({ ok: true });
+  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Invalid credentials' });
   }
-  return res.status(401).json({ error: 'Invalid credentials' });
+  const token = makeToken(email);
+  res.cookie('adm', token, {
+    httpOnly: true,
+    sameSite: isProd ? 'None' : 'Lax',  // GitHub Pages + tunnel is cross-site → None in prod
+    secure: isProd,                     // must be true when sameSite=None
+    path: '/',
+    maxAge: 7 * 24 * 3600 * 1000,       // 7 days
+  });
+  res.json({ ok: true, email });
 });
+
+app.set('trust proxy', 1); // for sameSite/secure cookies behind tunnel/CDN
+const isProd = process.env.NODE_ENV === 'production';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@bulacan.local';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+
+// super lightweight token (not a real JWT; good enough for staging)
+function makeToken(email) {
+  const ts = Date.now().toString();
+  const sig = crypto.createHmac('sha256', JWT_SECRET).update(email + '|' + ts).digest('hex');
+  return Buffer.from(JSON.stringify({ email, ts, sig })).toString('base64url');
+}
+function verifyToken(raw) {
+  try {
+    const { email, ts, sig } = JSON.parse(Buffer.from(raw, 'base64url').toString());
+    const expect = crypto.createHmac('sha256', JWT_SECRET).update(email + '|' + ts).digest('hex');
+    if (expect !== sig) return null;
+    // optional: expire after 7 days
+    if (Date.now() - Number(ts) > 7 * 24 * 3600 * 1000) return null;
+    return { email };
+  } catch {
+    return null;
+  }
+}
+
+
 /* =========================
    MySQL pool + schema probe
    ========================= */
@@ -354,15 +383,12 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
   }
 });
 
-/* =========================
-   Admin (auth stub + CRUD)
-   ========================= */
-
-// Minimal “me” to unblock UI (replace with real session later)
-app.get('/api/admin/auth/me', (_req, res) => {
-  res.json({ ok: true, user: { email: 'admin@local' } });
+app.get('/api/admin/auth/me', (req, res) => {
+  const raw = req.cookies?.adm;
+  const payload = raw ? verifyToken(raw) : null;
+  if (!payload) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ email: payload.email, name: 'Admin' });
 });
-
 /** Create dish */
 app.post('/api/admin/dishes', async (req, res) => {
   try {
@@ -722,10 +748,9 @@ app.get('/api/admin/auth/me', (req, res) => {
 });
 
 app.post('/api/admin/auth/logout', (req, res) => {
-  res.clearCookie('adm', { path: '/', sameSite: 'None', secure: true });
+  res.clearCookie('adm', { path: '/', sameSite: isProd ? 'None' : 'Lax', secure: isProd });
   res.json({ ok: true });
 });
-
 /* =========================
    Start server
    ========================= */
