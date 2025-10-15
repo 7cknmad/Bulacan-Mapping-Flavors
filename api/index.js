@@ -14,7 +14,7 @@ const allowedOrigins = new Set([
   'http://localhost:5173', // Vite dev
   'https://7cknmad.github.io', // GitHub Pages origin (path is ignored)
   // Add your current tunnel(s). Update when the URL changes:
-  'https://herb-store-diagram-astrology.trycloudflare.com',
+  'https://captured-cosmetic-acquisition-pad.trycloudflare.com',
 ]);
 
 const corsOptions = {
