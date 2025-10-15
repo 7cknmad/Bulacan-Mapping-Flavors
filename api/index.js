@@ -64,18 +64,6 @@ app.post('/api/admin/auth/login', (req, res) => {
   }
   return res.status(401).json({ error: 'Invalid credentials' });
 });
-
-app.get('/api/admin/auth/me', (req, res) => {
-  if (req.cookies?.adm === '1') {
-    return res.json({ ok: true, email: process.env.ADMIN_EMAIL || 'admin' });
-  }
-  return res.status(401).json({ ok: false });
-});
-
-app.post('/api/admin/auth/logout', (req, res) => {
-  res.clearCookie('adm', { path: '/', sameSite: 'None', secure: true });
-  res.json({ ok: true });
-});
 /* =========================
    MySQL pool + schema probe
    ========================= */
@@ -724,6 +712,18 @@ app.get('/api/admin/analytics/summary', async (_req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Failed analytics', detail: String(e?.message || e) });
   }
+});
+
+app.get('/api/admin/auth/me', (req, res) => {
+  if (req.cookies?.adm === '1') {
+    return res.json({ ok: true, email: process.env.ADMIN_EMAIL || 'admin' });
+  }
+  return res.status(401).json({ ok: false });
+});
+
+app.post('/api/admin/auth/logout', (req, res) => {
+  res.clearCookie('adm', { path: '/', sameSite: 'None', secure: true });
+  res.json({ ok: true });
 });
 
 /* =========================
