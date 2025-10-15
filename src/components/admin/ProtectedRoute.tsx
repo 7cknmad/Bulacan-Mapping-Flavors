@@ -1,29 +1,29 @@
 // src/components/admin/ProtectedRoute.tsx
-import { ReactNode, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { AdminAuth } from "../../utils/adminApi";
+import { ReactNode } from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { adminAuth } from "../../utils/adminApi";
 
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
-  const nav = useNavigate();
-  const [ok, setOk] = useState<boolean | null>(null);
+  const loc = useLocation();
+  const q = useQuery({
+    queryKey: ["admin:me"],
+    queryFn: adminAuth.me,
+    retry: false,
+  });
 
-  useEffect(() => {
-    (async () => {
-      try {
-        await fetch(`${import.meta.env.VITE_API_URL}/api/admin/auth/me`, {
-          headers: { Authorization: `Bearer ${AdminAuth.token}` }
-        }).then((r) => {
-          if (r.status === 401) throw new Error("401");
-        });
-        setOk(true);
-      } catch {
-        setOk(false);
-        nav("/admin/login", { replace: true });
-      }
-    })();
-  }, [nav]);
+  if (q.isLoading) {
+    return (
+      <div className="p-6 text-center text-neutral-500">
+        Checking admin session…
+      </div>
+    );
+  }
 
-  if (ok === null) return <div className="p-6 text-center text-neutral-500">Checking session…</div>;
-  if (!ok) return null;
+  // not authenticated
+  if (q.isError) {
+    return <Navigate to="/admin/login" state={{ from: loc }} replace />;
+  }
+
   return <>{children}</>;
 }

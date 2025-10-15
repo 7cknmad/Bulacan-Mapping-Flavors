@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import cors from 'cors';
+import cookieParser from 'cookie-parser';
 dotenv.config();
 
 const app = express();
@@ -38,6 +40,47 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
+app.use(cookieParser());
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // curl/postman
+    const ok = [
+      'http://localhost:5173',
+      'https://7cknmad.github.io',
+    ].includes(origin);
+    cb(ok ? null : new Error(`Not allowed by CORS: ${origin}`), ok);
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true, // <<< IMPORTANT
+}));
+app.post('/api/admin/auth/login', (req, res) => {
+  const { email, password } = req.body || {};
+  if (email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD) {
+    // secure cookie so it works via https tunnel/pages
+    res.cookie('adm', '1', {
+      httpOnly: true,
+      sameSite: 'None',
+      secure: true,
+      path: '/',
+      maxAge: 7 * 24 * 3600 * 1000,
+    });
+    return res.json({ ok: true });
+  }
+  return res.status(401).json({ error: 'Invalid credentials' });
+});
+
+app.get('/api/admin/auth/me', (req, res) => {
+  if (req.cookies?.adm === '1') {
+    return res.json({ ok: true, email: process.env.ADMIN_EMAIL || 'admin' });
+  }
+  return res.status(401).json({ ok: false });
+});
+
+app.post('/api/admin/auth/logout', (req, res) => {
+  res.clearCookie('adm', { path: '/', sameSite: 'None', secure: true });
+  res.json({ ok: true });
+});
 /* =========================
    MySQL pool + schema probe
    ========================= */
@@ -128,49 +171,29 @@ app.get('/api/dishes', async (req, res) => {
     const where = [];
     const params = [];
 
-    if (municipalityId) {
-      const id = Number(municipalityId);
-      if (!Number.isFinite(id)) return res.status(400).json({ error: 'municipalityId must be a number' });
-      where.push('d.municipality_id = ?');
-      params.push(id);
-    }
-
-    if (category) {
-      where.push('c.code = ?');
-      params.push(String(category));
-    }
-
+    if (municipalityId) { where.push('d.municipality_id = ?'); params.push(Number(municipalityId)); }
+    if (category)        { where.push('c.code = ?');            params.push(String(category)); }
+    if (signature != null) { where.push('d.is_signature = ?');  params.push(Number(signature) ? 1 : 0); }
     if (q) {
-      where.push('(MATCH(d.name, d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
+      where.push('(MATCH(d.name,d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
       params.push(String(q), `%${String(q)}%`);
     }
 
-    if (signature != null && hasD('is_signature')) {
-      where.push('d.is_signature = ?');
-      params.push(Number(signature) ? 1 : 0);
-    }
-
-    const selectCols = [
-      'd.id', 'd.name', 'd.slug', 'd.description', 'd.image_url',
-      'd.rating', 'd.popularity',
-      // ensure arrays even if stored as JSON text
-      "JSON_EXTRACT(d.flavor_profile, '$') AS flavor_profile",
-      "JSON_EXTRACT(d.ingredients, '$') AS ingredients",
-      'm.id AS municipality_id', 'm.name AS municipality_name',
-      'c.code AS category',
-    ];
-
-    if (hasD('is_signature')) selectCols.push('d.is_signature');
-    if (hasD('panel_rank')) selectCols.push('d.panel_rank');
-
     const sql = `
-      SELECT ${selectCols.join(', ')}
+      SELECT
+        d.id, d.name, d.slug, d.description, d.image_url, d.rating, d.popularity,
+        JSON_EXTRACT(d.flavor_profile,'$') AS flavor_profile,
+        JSON_EXTRACT(d.ingredients,'$')     AS ingredients,
+        d.is_signature, d.panel_rank,
+        m.id AS municipality_id, m.name AS municipality_name,
+        c.code AS category
       FROM dishes d
       JOIN municipalities m ON m.id = d.municipality_id
       JOIN dish_categories c ON c.id = d.category_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY
-        ${hasD('panel_rank') ? 'COALESCE(d.panel_rank, 999),' : ''}
+        CASE WHEN d.panel_rank IS NOT NULL THEN 0 ELSE 1 END,
+        d.panel_rank ASC,
         d.popularity DESC, d.name ASC
       LIMIT ${Number(limit) > 0 ? Number(limit) : 200}
     `;
@@ -186,58 +209,37 @@ app.get('/api/dishes', async (req, res) => {
 /** GET /api/restaurants?municipalityId=&dishId=&q=&featured=&limit=&kind= */
 app.get('/api/restaurants', async (req, res) => {
   try {
-    const { municipalityId, dishId, q, featured, limit, kind } = req.query;
+    const { municipalityId, dishId, kind, q, featured, limit } = req.query;
 
     const where = [];
     const params = [];
 
-    // optional join by dish
     const joinDish = dishId
       ? 'INNER JOIN dish_restaurants dr ON dr.restaurant_id = r.id AND dr.dish_id = ?'
       : '';
     if (dishId) params.push(Number(dishId));
 
-    if (municipalityId) {
-      const id = Number(municipalityId);
-      if (!Number.isFinite(id)) return res.status(400).json({ error: 'municipalityId must be a number' });
-      where.push('r.municipality_id = ?');
-      params.push(id);
-    }
-
-    if (kind) {
-      where.push('r.kind = ?');
-      params.push(String(kind));
-    }
-
+    if (municipalityId) { where.push('r.municipality_id = ?'); params.push(Number(municipalityId)); }
+    if (kind)           { where.push('r.kind = ?');            params.push(String(kind)); }
+    if (featured != null) { where.push('r.featured = ?');      params.push(Number(featured) ? 1 : 0); }
     if (q) {
       where.push('(MATCH(r.name, r.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR r.name LIKE ?)');
       params.push(String(q), `%${String(q)}%`);
     }
 
-    if (featured != null && hasR('featured')) {
-      where.push('r.featured = ?');
-      params.push(Number(featured) ? 1 : 0);
-    }
-
-    const selectCols = [
-      'r.id', 'r.name', 'r.slug', 'r.kind',
-      'r.description', 'r.address', 'r.phone', 'r.website',
-      'r.facebook', 'r.instagram', 'r.opening_hours',
-      'r.price_range',
-      "JSON_EXTRACT(r.cuisine_types, '$') AS cuisine_types",
-      'r.rating', 'r.lat', 'r.lng',
-    ];
-    if (hasR('image_url')) selectCols.push('r.image_url');
-    if (hasR('featured')) selectCols.push('r.featured');
-    if (hasR('featured_rank')) selectCols.push('r.featured_rank');
-
     const sql = `
-      SELECT ${selectCols.join(', ')}
+      SELECT
+        r.id, r.name, r.slug, r.kind,
+        r.description, r.address, r.phone, r.website,
+        r.facebook, r.instagram, r.opening_hours,
+        r.price_range, JSON_EXTRACT(r.cuisine_types,'$') AS cuisine_types,
+        r.rating, r.lat, r.lng, r.image_url, r.featured, r.featured_rank
       FROM restaurants r
       ${joinDish}
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY
-        ${hasR('featured_rank') ? 'COALESCE(r.featured_rank, 999),' : ''}
+        CASE WHEN r.featured_rank IS NOT NULL THEN 0 ELSE 1 END,
+        r.featured_rank ASC,
         r.rating DESC, r.name ASC
       LIMIT ${Number(limit) > 0 ? Number(limit) : 200}
     `;
@@ -317,21 +319,19 @@ app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
     const dishId = Number(req.params.dishId);
     if (!Number.isFinite(dishId)) return res.status(400).json({ error: 'Invalid dish id' });
 
-    const selectCols = [
-      'r.id','r.name','r.slug','r.kind','r.description','r.address','r.phone','r.website',
-      'r.facebook','r.instagram','r.opening_hours','r.price_range',
-      "JSON_EXTRACT(r.cuisine_types, '$') AS cuisine_types",
-      'r.rating','r.lat','r.lng',
-      'dr.price_note','dr.availability'
-    ];
-    if (hasR('image_url')) selectCols.push('r.image_url');
-
     const [rows] = await pool.query(
-      `SELECT ${selectCols.join(', ')}
+      `SELECT r.id, r.name, r.slug, r.kind, r.description, r.address, r.phone, r.website,
+              r.facebook, r.instagram, r.opening_hours, r.price_range,
+              JSON_EXTRACT(r.cuisine_types,'$') AS cuisine_types,
+              r.rating, r.lat, r.lng, r.image_url, r.featured, r.featured_rank,
+              dr.price_note, dr.availability
        FROM dish_restaurants dr
        INNER JOIN restaurants r ON r.id = dr.restaurant_id
        WHERE dr.dish_id = ?
-       ORDER BY r.rating DESC, r.name ASC`,
+       ORDER BY
+         CASE WHEN r.featured_rank IS NOT NULL THEN 0 ELSE 1 END,
+         r.featured_rank ASC,
+         r.rating DESC, r.name ASC`,
       [dishId]
     );
     res.json(rows);
@@ -340,6 +340,7 @@ app.get('/api/restaurants/by-dish/:dishId', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch restaurants for dish', detail: String(e?.message || e) });
   }
 });
+
 
 app.get('/api/restaurants/:id/dishes', async (req, res) => {
   try {
