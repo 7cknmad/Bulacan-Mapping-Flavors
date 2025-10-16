@@ -6,34 +6,62 @@ import mysql from 'mysql2/promise';
 
 dotenv.config();
 
-/* ===================== Setup ===================== */
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-const rawOrigins = (process.env.CORS_ORIGINS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-const allowedOrigins = new Set(rawOrigins);
+function parseOrigins(input) {
+  if (!input) return [];
+  const s = input.trim();
+  // Accept JSON array or simple CSV
+  if ((s.startsWith('[') && s.endsWith(']')) || (s.startsWith('"') && s.endsWith('"'))) {
+    try {
+      const arr = JSON.parse(s);
+      return Array.isArray(arr) ? arr.map(x => String(x).trim()).filter(Boolean) : [];
+    } catch {
+      // fall through to CSV
+    }
+  }
+  return s.split(',').map(x => x.trim()).filter(Boolean);
+}
+
+const rawOrigins = parseOrigins(process.env.CORS_ORIGINS || '');
+// Always allow localhost dev ports commonly used by Vite
+const devDefaults = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+const allowedOrigins = new Set([...rawOrigins, ...devDefaults]);
+
+// If nothing configured and not prod, allow any (handy for local)
 const allowAnyInDev = allowedOrigins.size === 0 && process.env.NODE_ENV !== 'production';
 
 app.use(cors({
   origin(origin, cb) {
-    // Allow tools/curl (no Origin), allow dev-any if configured, otherwise whitelist
+    // No Origin (curl/postman) → allow
     if (!origin) return cb(null, true);
+
+    // Allow any origin in dev if nothing configured
     if (allowAnyInDev) return cb(null, true);
+
+    // Allow your GH Pages domain explicitly
+    if (origin === 'https://7cknmad.github.io') return cb(null, true);
+
+    // Allow any Cloudflare tunnel subdomain (origin changes each run)
+    try {
+      const u = new URL(origin);
+      if (u.hostname.endsWith('.trycloudflare.com')) return cb(null, true);
+    } catch { /* ignore */ }
+
+    // Allow anything explicitly listed in CORS_ORIGINS
     if (allowedOrigins.has(origin)) return cb(null, true);
+
     return cb(new Error(`Not allowed by CORS: ${origin}`));
   },
-  credentials: true,
+  credentials: true, // sets Access-Control-Allow-Credentials: true
 }));
 
 app.use(express.json());
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // needed for secure cookies behind proxies
 
 const isProd = process.env.NODE_ENV === 'production';
-const secureCookie = isProd;
+const secureCookie = isProd;           // true on https
 const sameSiteMode = isProd ? 'none' : 'lax';
 
 app.use(session({
