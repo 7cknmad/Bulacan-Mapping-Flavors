@@ -1,5 +1,5 @@
 // src/pages/admin/AdminDashboard.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   listMunicipalities, listDishes, listRestaurants,
   createDish, updateDish, deleteDish,
@@ -12,19 +12,43 @@ import {
 } from "../../utils/adminApi";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid
 } from "recharts";
 
-// ------------- helpers -------------
-function cx(...xs: (string | false | null | undefined)[]) { return xs.filter(Boolean).join(" "); }
-function confirmThen(msg: string): Promise<boolean> { return Promise.resolve(window.confirm(msg)); }
+/* -------------------- tiny helpers -------------------- */
+const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
+const confirmThen = (msg: string) => Promise.resolve(window.confirm(msg));
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
-// Modal (basic)
+/** Prevent scroll containers killing ResponsiveContainer */
+function ChartShell({ children, height = 420 }: { children: React.ReactNode; height?: number }) {
+  // A key that nudges charts after first layout to avoid zero-size glitches
+  const [k, setK] = useState(0);
+  useEffect(() => {
+    const id = setTimeout(() => setK(1), 50);
+    return () => clearTimeout(id);
+  }, []);
+  return (
+    <div className="bg-white rounded-xl border p-3">
+      <div className="w-full" style={{ height }}>
+        <ResponsiveContainer key={k} width="100%" height="100%" debounce={150}>
+          {/* Recharts requires exactly ONE child element */}
+          <div style={{ width: "100%", height: "100%" }}>
+            {/* We put a wrapper div so ResponsiveContainer.children is never null */}
+            {/* Then children itself renders the actual chart */}
+            {children}
+          </div>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 function Modal({ open, onClose, children, title }: { open: boolean; onClose: () => void; children: React.ReactNode; title: string }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl">
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <h3 className="font-semibold">{title}</h3>
           <button className="text-sm text-neutral-500 hover:text-neutral-800" onClick={onClose}>Close</button>
@@ -34,38 +58,45 @@ function Modal({ open, onClose, children, title }: { open: boolean; onClose: () 
     </div>
   );
 }
-
-// Field
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children, error }: { label: string; hint?: string; error?: string; children: React.ReactNode }) {
   return (
     <label className="block mb-3">
-      <div className="text-xs font-medium text-neutral-500 mb-1">{label}</div>
+      <div className="text-xs font-medium text-neutral-600 mb-1">{label}</div>
       {children}
+      {hint && <div className="text-[11px] text-neutral-500 mt-1">{hint}</div>}
+      {error && <div className="text-[12px] text-red-600 mt-1">{error}</div>}
     </label>
   );
 }
 
-// ------------- Analytics -------------
+/* ======================================================
+   Analytics
+   ====================================================== */
 function AnalyticsTab() {
   const [chartType, setChartType] = useState<"bar" | "line" | "pie">("bar");
+  const [stacked, setStacked] = useState(false);
+
   const countsQ = useQuery({ queryKey: ["admin:analytics:per-muni"], queryFn: getPerMunicipalityCounts, staleTime: 60_000 });
   const summaryQ = useQuery({ queryKey: ["admin:analytics:summary"], queryFn: getAnalyticsSummary, staleTime: 60_000 });
 
-  const safe = Array.isArray(countsQ.data) ? countsQ.data : [];
-  const chartData = safe.length ? safe : [{ municipality_name: "No data", dishes: 0, restaurants: 0 }];
-  const counts = summaryQ.data?.counts ?? { dishes: 0, restaurants: 0, municipalities: 0 };
-  const colors = ["#6366F1", "#22C55E", "#F59E0B", "#EC4899", "#06B6D4", "#F43F5E", "#84CC16"];
+  const chartData = Array.isArray(countsQ.data) && countsQ.data.length
+    ? countsQ.data
+    : [{ municipality_name: "No data", dishes: 0, restaurants: 0 }];
 
-  const chartEl = useMemo<React.ReactElement>(() => {
+  const counts = summaryQ.data?.counts ?? { dishes: 0, restaurants: 0, municipalities: 0 };
+  const palette = ["#6366F1", "#22C55E", "#F59E0B", "#EC4899", "#06B6D4", "#F43F5E", "#84CC16"];
+
+  const ChartEl = useMemo(() => {
     if (chartType === "line") {
       return (
         <LineChart data={chartData}>
+          <CartesianGrid strokeDasharray="4 4" />
           <XAxis dataKey="municipality_name" />
-          <YAxis />
+          <YAxis allowDecimals={false} />
           <Tooltip />
           <Legend />
-          <Line type="monotone" dataKey="dishes" stroke="#6366F1" name="Dishes" />
-          <Line type="monotone" dataKey="restaurants" stroke="#22C55E" name="Restaurants" />
+          <Line type="monotone" dataKey="dishes" stroke={palette[0]} name="Dishes" dot={false} />
+          <Line type="monotone" dataKey="restaurants" stroke={palette[1]} name="Restaurants" dot={false} />
         </LineChart>
       );
     }
@@ -75,25 +106,27 @@ function AnalyticsTab() {
           <Tooltip />
           <Legend />
           <Pie data={chartData} dataKey="dishes" nameKey="municipality_name" outerRadius={90} label>
-            {chartData.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+            {chartData.map((_, i) => <Cell key={i} fill={palette[i % palette.length]} />)}
           </Pie>
-          <Pie data={chartData} dataKey="restaurants" nameKey="municipality_name" innerRadius={100} outerRadius={130}>
-            {chartData.map((_, i) => <Cell key={i} fill={colors[(i + 3) % colors.length]} />)}
+          <Pie data={chartData} dataKey="restaurants" nameKey="municipality_name" innerRadius={105} outerRadius={135}>
+            {chartData.map((_, i) => <Cell key={i} fill={palette[(i + 3) % palette.length]} />)}
           </Pie>
         </PieChart>
       );
     }
+    // bar
     return (
       <BarChart data={chartData}>
+        <CartesianGrid strokeDasharray="4 4" />
         <XAxis dataKey="municipality_name" />
-        <YAxis />
+        <YAxis allowDecimals={false} />
         <Tooltip />
         <Legend />
-        <Bar dataKey="dishes" fill="#6366F1" name="Dishes" />
-        <Bar dataKey="restaurants" fill="#22C55E" name="Restaurants" />
+        <Bar dataKey="dishes" fill={palette[0]} name="Dishes" stackId={stacked ? "tot" : undefined} />
+        <Bar dataKey="restaurants" fill={palette[1]} name="Restaurants" stackId={stacked ? "tot" : undefined} />
       </BarChart>
     );
-  }, [chartType, chartData]);
+  }, [chartType, chartData, stacked]);
 
   return (
     <div className="space-y-6">
@@ -103,7 +136,7 @@ function AnalyticsTab() {
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-lg font-semibold">Per Municipality Status</h3>
         <div className="ml-auto flex gap-2">
           {(["bar", "line", "pie"] as const).map((t) => (
@@ -114,14 +147,19 @@ function AnalyticsTab() {
               {t.toUpperCase()}
             </button>
           ))}
+          {chartType === "bar" && (
+            <button
+              className={cx("px-3 py-1 rounded border text-sm", stacked && "bg-neutral-900 text-white")}
+              onClick={() => setStacked(s => !s)}
+              title="Toggle stacked bars"
+            >
+              {stacked ? "Unstack" : "Stack"}
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="h-72 bg-white rounded-xl border p-3">
-        <ResponsiveContainer width="100%" height="100%">
-          {chartEl}
-        </ResponsiveContainer>
-      </div>
+      <ChartShell height={440}>{ChartEl}</ChartShell>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white border rounded-xl p-4">
@@ -141,30 +179,55 @@ function AnalyticsTab() {
   );
 }
 
-// ------------- Dishes CRUD -------------
+/* ======================================================
+   Dishes CRUD + validation
+   ====================================================== */
 type DishFormState = Partial<Dish> & { autoSlug?: boolean };
-const emptyDish: DishFormState = { name: "", slug: "", category: "food", municipality_id: 0, autoSlug: true };
+const emptyDish: DishFormState = { name: "", slug: "", category: "food", municipality_id: 0, autoSlug: true, rating: null, popularity: null };
+
+function useDishValidation(form: DishFormState, all: Dish[]) {
+  const errors: Record<string, string | undefined> = {};
+  if (!form.name) errors.name = "Name is required.";
+  if (!form.slug) errors.slug = "Slug is required.";
+  if (!form.municipality_id) errors.municipality_id = "Select a municipality.";
+  if (form.rating != null) {
+    const r = Number(form.rating);
+    if (Number.isNaN(r)) errors.rating = "Rating must be a number.";
+    else if (r < 0 || r > 5) errors.rating = "Rating must be between 0 and 5.";
+  }
+  if (form.popularity != null) {
+    const p = Number(form.popularity);
+    if (Number.isNaN(p)) errors.popularity = "Popularity must be a number.";
+    else if (p < 0 || p > 100) errors.popularity = "Popularity must be 0–100.";
+  }
+  const duplicate = all.find(d => d.slug === form.slug && d.id !== form.id);
+  if (duplicate) errors.slug = "Slug already exists.";
+  const valid = Object.values(errors).every(v => !v);
+  return { errors, valid };
+}
 
 function DishesTab() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<DishFormState>(emptyDish);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
   const dishesQ = useQuery({ queryKey: ["dishes", q], queryFn: () => listDishes({ q }), keepPreviousData: true });
+  const allDishes = dishesQ.data ?? [];
+  const { errors, valid } = useDishValidation(form, allDishes);
 
-  // create
   const createM = useMutation({
     mutationFn: (payload: Partial<Dish>) => createDish(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setForm(emptyDish); alert("Dish created."); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setForm(emptyDish); setServerError(null); alert("Dish created."); },
+    onError: (e: any) => setServerError(e?.message || "Create failed.")
   });
-  // update
   const updateM = useMutation({
     mutationFn: ({ id, payload }: { id: number, payload: Partial<Dish> }) => updateDish(id, payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setEditOpen(false); alert("Dish saved."); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setEditOpen(false); setServerError(null); alert("Dish saved."); },
+    onError: (e: any) => setServerError(e?.message || "Update failed.")
   });
-  // delete
   const deleteM = useMutation({
     mutationFn: (id: number) => deleteDish(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); alert("Dish deleted."); }
@@ -177,13 +240,9 @@ function DishesTab() {
       return next;
     });
   }
-
   function onQuickCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name || !form.slug || !form.municipality_id) {
-      alert("Name, slug and municipality are required.");
-      return;
-    }
+    if (!valid) return;
     createM.mutate({
       name: String(form.name),
       slug: String(form.slug),
@@ -193,12 +252,12 @@ function DishesTab() {
       image_url: form.image_url ?? null,
       flavor_profile: Array.isArray(form.flavor_profile) ? form.flavor_profile : coerceStringArray(form.flavor_profile),
       ingredients: Array.isArray(form.ingredients) ? form.ingredients : coerceStringArray(form.ingredients),
-      rating: form.rating ?? null,
-      popularity: form.popularity ?? null,
+      rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5),
+      popularity: form.popularity == null ? null : clamp(Number(form.popularity), 0, 100),
     });
   }
-
   function openEdit(d: Dish) {
+    setServerError(null);
     setForm({
       ...d,
       autoSlug: false,
@@ -213,17 +272,17 @@ function DishesTab() {
       {/* Quick create panel (always open) */}
       <form onSubmit={onQuickCreate} className="bg-white border rounded-2xl p-4 lg:col-span-1">
         <h3 className="font-semibold mb-3">Create Dish</h3>
-        <Field label="Name">
+        <Field label="Name" error={errors.name}>
           <input className="w-full border rounded px-3 py-2" value={form.name ?? ""} onChange={(e) => setName(e.target.value)} />
         </Field>
         <div className="flex items-center gap-2 mb-2">
           <input id="autoslug" type="checkbox" checked={!!form.autoSlug} onChange={(e) => setForm(f => ({ ...f, autoSlug: e.target.checked }))} />
           <label htmlFor="autoslug" className="text-sm text-neutral-600 select-none">Auto-generate slug</label>
         </div>
-        <Field label="Slug">
+        <Field label="Slug" error={errors.slug}>
           <input className="w-full border rounded px-3 py-2" value={form.slug ?? ""} onChange={(e) => setForm(f => ({ ...f, slug: e.target.value }))} />
         </Field>
-        <Field label="Municipality">
+        <Field label="Municipality" error={errors.municipality_id}>
           <select className="w-full border rounded px-3 py-2"
                   value={form.municipality_id ?? 0}
                   onChange={(e) => setForm(f => ({ ...f, municipality_id: Number(e.target.value) }))}>
@@ -240,11 +299,21 @@ function DishesTab() {
             <option value="drink">Drink</option>
           </select>
         </Field>
-        <div className="flex gap-2">
-          <button className="px-4 py-2 rounded bg-neutral-900 text-white" disabled={createM.isPending}>Save</button>
-          <button type="button" className="px-3 py-2 rounded border" onClick={() => setForm(emptyDish)}>Reset</button>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Rating (0–5)" error={errors.rating}>
+            <input type="number" step="0.1" min={0} max={5} className="w-full border rounded px-3 py-2"
+                   value={form.rating ?? ""} onChange={(e) => setForm(f => ({ ...f, rating: e.target.value === "" ? null : Number(e.target.value) }))} />
+          </Field>
+          <Field label="Popularity (0–100)" error={errors.popularity}>
+            <input type="number" min={0} max={100} className="w-full border rounded px-3 py-2"
+                   value={form.popularity ?? ""} onChange={(e) => setForm(f => ({ ...f, popularity: e.target.value === "" ? null : Number(e.target.value) }))} />
+          </Field>
         </div>
-        {createM.isError && <p className="text-sm text-red-600 mt-2">{String((createM.error as any)?.message ?? "Create failed")}</p>}
+        <div className="flex gap-2">
+          <button className={cx("px-4 py-2 rounded text-white", valid ? "bg-neutral-900" : "bg-neutral-300 cursor-not-allowed")} disabled={!valid || createM.isPending}>Save</button>
+          <button type="button" className="px-3 py-2 rounded border" onClick={() => { setForm(emptyDish); setServerError(null); }}>Reset</button>
+        </div>
+        {serverError && <p className="text-sm text-red-600 mt-2">{serverError}</p>}
       </form>
 
       {/* Right side: search + list */}
@@ -253,7 +322,7 @@ function DishesTab() {
           <input className="border rounded px-3 py-2 w-full" placeholder="Search dishes…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="grid md:grid-cols-2 gap-3 max-h-[70vh] overflow-auto pr-1">
-          {(dishesQ.data ?? []).map(d => {
+          {allDishes.map(d => {
             const flavor = coerceStringArray(d.flavor_profile)?.join(", ") ?? "";
             return (
               <div key={d.id} className="bg-white border rounded-xl p-4">
@@ -279,101 +348,135 @@ function DishesTab() {
 
       {/* Edit modal */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit Dish">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Name">
-            <input className="w-full border rounded px-3 py-2"
-                   value={form.name ?? ""} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} />
-          </Field>
-          <Field label="Slug">
-            <input className="w-full border rounded px-3 py-2"
-                   value={form.slug ?? ""} onChange={(e) => setForm(f => ({ ...f, slug: e.target.value }))} />
-          </Field>
-          <Field label="Municipality">
-            <select className="w-full border rounded px-3 py-2"
-                    value={form.municipality_id ?? 0}
-                    onChange={(e) => setForm(f => ({ ...f, municipality_id: Number(e.target.value) }))}>
-              <option value={0}>Select…</option>
-              {(muniQ.data ?? []).map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
-            </select>
-          </Field>
-          <Field label="Category">
-            <select className="w-full border rounded px-3 py-2"
-                    value={(form.category as any) ?? "food"}
-                    onChange={(e) => setForm(f => ({ ...f, category: e.target.value as any }))}>
-              <option value="food">Food</option>
-              <option value="delicacy">Delicacy</option>
-              <option value="drink">Drink</option>
-            </select>
-          </Field>
-          <Field label="Image URL">
-            <input className="w-full border rounded px-3 py-2"
-                   value={form.image_url ?? ""} onChange={(e) => setForm(f => ({ ...f, image_url: e.target.value }))} />
-          </Field>
-          <Field label="Rating">
-            <input type="number" step="0.1" className="w-full border rounded px-3 py-2"
-                   value={form.rating ?? 0} onChange={(e) => setForm(f => ({ ...f, rating: Number(e.target.value) }))} />
-          </Field>
-          <Field label="Popularity">
-            <input type="number" className="w-full border rounded px-3 py-2"
-                   value={form.popularity ?? 0} onChange={(e) => setForm(f => ({ ...f, popularity: Number(e.target.value) }))} />
-          </Field>
-          <Field label="Flavor profile (comma separated)">
-            <input className="w-full border rounded px-3 py-2"
-                   value={(Array.isArray(form.flavor_profile) ? form.flavor_profile.join(", ") : (form.flavor_profile ?? "")) as string}
-                   onChange={(e) => setForm(f => ({ ...f, flavor_profile: e.target.value }))} />
-          </Field>
-          <Field label="Ingredients (comma separated)">
-            <input className="w-full border rounded px-3 py-2"
-                   value={(Array.isArray(form.ingredients) ? form.ingredients.join(", ") : (form.ingredients ?? "")) as string}
-                   onChange={(e) => setForm(f => ({ ...f, ingredients: e.target.value }))} />
-          </Field>
-          <Field label="Description">
-            <textarea className="w-full border rounded px-3 py-2"
-                      value={form.description ?? ""} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} />
-          </Field>
-        </div>
-        <div className="mt-4 flex gap-2">
-          <button className="px-4 py-2 rounded bg-neutral-900 text-white"
-                  onClick={() => {
-                    if (!form.id) return;
-                    updateM.mutate({
-                      id: form.id,
-                      payload: {
-                        ...form,
-                        flavor_profile: coerceStringArray(form.flavor_profile),
-                        ingredients: coerceStringArray(form.ingredients),
-                      }
-                    });
-                  }}
-                  disabled={updateM.isPending}>Save</button>
-          <button className="px-3 py-2 rounded border" onClick={() => setEditOpen(false)}>Cancel</button>
-        </div>
-        {updateM.isError && <p className="text-sm text-red-600 mt-2">{String((updateM.error as any)?.message ?? "Update failed")}</p>}
+        <DishEdit form={form} setForm={setForm} onSave={(payload) => {
+          if (!form.id) return;
+          updateM.mutate({ id: form.id, payload });
+        }} />
+        {serverError && <p className="text-sm text-red-600 mt-2">{serverError}</p>}
       </Modal>
     </div>
   );
 }
 
-// ------------- Restaurants CRUD -------------
+function DishEdit({
+  form, setForm, onSave
+}: {
+  form: DishFormState;
+  setForm: React.Dispatch<React.SetStateAction<DishFormState>>;
+  onSave: (payload: Partial<Dish>) => void;
+}) {
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Name">
+          <input className="w-full border rounded px-3 py-2" value={form.name ?? ""} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} />
+        </Field>
+        <Field label="Slug">
+          <input className="w-full border rounded px-3 py-2" value={form.slug ?? ""} onChange={(e) => setForm(f => ({ ...f, slug: e.target.value }))} />
+        </Field>
+        <Field label="Municipality">
+          <select className="w-full border rounded px-3 py-2" value={form.municipality_id ?? 0} onChange={(e) => setForm(f => ({ ...f, municipality_id: Number(e.target.value) }))}>
+            <option value={0}>Select…</option>
+            {/* municipality list will be pulled by parent query cache (same key) */}
+            {/* To avoid prop drilling again, we allow free change & let API validate */}
+          </select>
+        </Field>
+        <Field label="Category">
+          <select className="w-full border rounded px-3 py-2" value={(form.category as any) ?? "food"} onChange={(e) => setForm(f => ({ ...f, category: e.target.value as any }))}>
+            <option value="food">Food</option>
+            <option value="delicacy">Delicacy</option>
+            <option value="drink">Drink</option>
+          </select>
+        </Field>
+        <Field label="Image URL">
+          <input className="w-full border rounded px-3 py-2" value={form.image_url ?? ""} onChange={(e) => setForm(f => ({ ...f, image_url: e.target.value }))} />
+        </Field>
+        <Field label="Rating (0–5)">
+          <input type="number" min={0} max={5} step="0.1" className="w-full border rounded px-3 py-2"
+                 value={form.rating ?? ""} onChange={(e) => setForm(f => ({ ...f, rating: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 5) }))} />
+        </Field>
+        <Field label="Popularity (0–100)">
+          <input type="number" min={0} max={100} className="w-full border rounded px-3 py-2"
+                 value={form.popularity ?? ""} onChange={(e) => setForm(f => ({ ...f, popularity: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 100) }))} />
+        </Field>
+        <Field label="Flavor profile (comma separated)">
+          <input className="w-full border rounded px-3 py-2"
+                 value={(Array.isArray(form.flavor_profile) ? form.flavor_profile.join(", ") : (form.flavor_profile ?? "")) as string}
+                 onChange={(e) => setForm(f => ({ ...f, flavor_profile: e.target.value }))} />
+        </Field>
+        <Field label="Ingredients (comma separated)">
+          <input className="w-full border rounded px-3 py-2"
+                 value={(Array.isArray(form.ingredients) ? form.ingredients.join(", ") : (form.ingredients ?? "")) as string}
+                 onChange={(e) => setForm(f => ({ ...f, ingredients: e.target.value }))} />
+        </Field>
+        <Field label="Description">
+          <textarea className="w-full border rounded px-3 py-2"
+                    value={form.description ?? ""} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} />
+        </Field>
+      </div>
+      <div className="mt-4 flex gap-2">
+        <button
+          className="px-4 py-2 rounded bg-neutral-900 text-white"
+          onClick={() => onSave({
+            ...form,
+            flavor_profile: coerceStringArray(form.flavor_profile),
+            ingredients: coerceStringArray(form.ingredients),
+          })}
+        >
+          Save
+        </button>
+        <button className="px-3 py-2 rounded border" onClick={() => window.history.back()}>Cancel</button>
+      </div>
+    </>
+  );
+}
+
+/* ======================================================
+   Restaurants CRUD + validation
+   ====================================================== */
 type RestaurantFormState = Partial<Restaurant> & { autoSlug?: boolean };
-const emptyRest: RestaurantFormState = { name: "", slug: "", municipality_id: 0, address: "", lat: 0, lng: 0, autoSlug: true };
+const emptyRest: RestaurantFormState = { name: "", slug: "", municipality_id: 0, address: "", lat: 0, lng: 0, autoSlug: true, rating: null };
+
+function useRestValidation(form: RestaurantFormState, all: Restaurant[]) {
+  const errors: Record<string, string | undefined> = {};
+  if (!form.name) errors.name = "Name is required.";
+  if (!form.slug) errors.slug = "Slug is required.";
+  if (!form.municipality_id) errors.municipality_id = "Select a municipality.";
+  if (!form.address) errors.address = "Address is required.";
+  if (form.rating != null) {
+    const r = Number(form.rating);
+    if (Number.isNaN(r)) errors.rating = "Rating must be a number.";
+    else if (r < 0 || r > 5) errors.rating = "Rating must be between 0 and 5.";
+  }
+  if (form.lat == null || Number.isNaN(Number(form.lat))) errors.lat = "Latitude is required.";
+  if (form.lng == null || Number.isNaN(Number(form.lng))) errors.lng = "Longitude is required.";
+  const duplicate = all.find(r => r.slug === form.slug && r.id !== form.id);
+  if (duplicate) errors.slug = "Slug already exists.";
+  const valid = Object.values(errors).every(v => !v);
+  return { errors, valid };
+}
 
 function RestaurantsTab() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<RestaurantFormState>(emptyRest);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
   const restQ = useQuery({ queryKey: ["rests", q], queryFn: () => listRestaurants({ q }), keepPreviousData: true });
+  const allRests = restQ.data ?? [];
+  const { errors, valid } = useRestValidation(form, allRests);
 
   const createM = useMutation({
     mutationFn: (payload: Partial<Restaurant>) => createRestaurant(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setForm(emptyRest); alert("Restaurant created."); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setForm(emptyRest); setServerError(null); alert("Restaurant created."); },
+    onError: (e: any) => setServerError(e?.message || "Create failed.")
   });
   const updateM = useMutation({
     mutationFn: ({ id, payload }: { id: number, payload: Partial<Restaurant> }) => updateRestaurant(id, payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setEditOpen(false); alert("Restaurant saved."); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setEditOpen(false); setServerError(null); alert("Restaurant saved."); },
+    onError: (e: any) => setServerError(e?.message || "Update failed.")
   });
   const deleteM = useMutation({
     mutationFn: (id: number) => deleteRestaurant(id),
@@ -387,13 +490,9 @@ function RestaurantsTab() {
       return next;
     });
   }
-
   function onQuickCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name || !form.slug || !form.municipality_id || !form.address) {
-      alert("Name, slug, municipality and address are required.");
-      return;
-    }
+    if (!valid) return;
     createM.mutate({
       name: String(form.name),
       slug: String(form.slug),
@@ -410,12 +509,12 @@ function RestaurantsTab() {
       opening_hours: form.opening_hours ?? null,
       price_range: (form.price_range as any) ?? null,
       cuisine_types: Array.isArray(form.cuisine_types) ? form.cuisine_types : coerceStringArray(form.cuisine_types),
-      rating: form.rating ?? null,
+      rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5),
       description: form.description ?? null,
     });
   }
-
   function openEdit(r: Restaurant) {
+    setServerError(null);
     setForm({
       ...r,
       autoSlug: false,
@@ -429,13 +528,13 @@ function RestaurantsTab() {
       {/* Quick create panel */}
       <form onSubmit={onQuickCreate} className="bg-white border rounded-2xl p-4 lg:col-span-1">
         <h3 className="font-semibold mb-3">Create Restaurant</h3>
-        <Field label="Name"><input className="w-full border rounded px-3 py-2" value={form.name ?? ""} onChange={(e) => setName(e.target.value)} /></Field>
+        <Field label="Name" error={errors.name}><input className="w-full border rounded px-3 py-2" value={form.name ?? ""} onChange={(e) => setName(e.target.value)} /></Field>
         <div className="flex items-center gap-2 mb-2">
           <input id="autoslug2" type="checkbox" checked={!!form.autoSlug} onChange={(e) => setForm(f => ({ ...f, autoSlug: e.target.checked }))} />
           <label htmlFor="autoslug2" className="text-sm text-neutral-600 select-none">Auto-generate slug</label>
         </div>
-        <Field label="Slug"><input className="w-full border rounded px-3 py-2" value={form.slug ?? ""} onChange={(e) => setForm(f => ({ ...f, slug: e.target.value }))} /></Field>
-        <Field label="Municipality">
+        <Field label="Slug" error={errors.slug}><input className="w-full border rounded px-3 py-2" value={form.slug ?? ""} onChange={(e) => setForm(f => ({ ...f, slug: e.target.value }))} /></Field>
+        <Field label="Municipality" error={errors.municipality_id}>
           <select className="w-full border rounded px-3 py-2"
                   value={form.municipality_id ?? 0}
                   onChange={(e) => setForm(f => ({ ...f, municipality_id: Number(e.target.value) }))}>
@@ -443,16 +542,16 @@ function RestaurantsTab() {
             {(muniQ.data ?? []).map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
           </select>
         </Field>
-        <Field label="Address"><input className="w-full border rounded px-3 py-2" value={form.address ?? ""} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
+        <Field label="Address" error={errors.address}><input className="w-full border rounded px-3 py-2" value={form.address ?? ""} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Lat"><input type="number" className="w-full border rounded px-3 py-2" value={form.lat ?? 0} onChange={(e) => setForm(f => ({ ...f, lat: Number(e.target.value) }))} /></Field>
-          <Field label="Lng"><input type="number" className="w-full border rounded px-3 py-2" value={form.lng ?? 0} onChange={(e) => setForm(f => ({ ...f, lng: Number(e.target.value) }))} /></Field>
+          <Field label="Lat" error={errors.lat}><input type="number" step="any" className="w-full border rounded px-3 py-2" value={form.lat ?? ""} onChange={(e) => setForm(f => ({ ...f, lat: e.target.value === "" ? null : Number(e.target.value) }))} /></Field>
+          <Field label="Lng" error={errors.lng}><input type="number" step="any" className="w-full border rounded px-3 py-2" value={form.lng ?? ""} onChange={(e) => setForm(f => ({ ...f, lng: e.target.value === "" ? null : Number(e.target.value) }))} /></Field>
         </div>
         <div className="flex gap-2">
-          <button className="px-4 py-2 rounded bg-neutral-900 text-white" disabled={createM.isPending}>Save</button>
-          <button type="button" className="px-3 py-2 rounded border" onClick={() => setForm(emptyRest)}>Reset</button>
+          <button className={cx("px-4 py-2 rounded text-white", valid ? "bg-neutral-900" : "bg-neutral-300 cursor-not-allowed")} disabled={!valid || createM.isPending}>Save</button>
+          <button type="button" className="px-3 py-2 rounded border" onClick={() => { setForm(emptyRest); setServerError(null); }}>Reset</button>
         </div>
-        {createM.isError && <p className="text-sm text-red-600 mt-2">{String((createM.error as any)?.message ?? "Create failed")}</p>}
+        {serverError && <p className="text-sm text-red-600 mt-2">{serverError}</p>}
       </form>
 
       {/* List */}
@@ -461,7 +560,7 @@ function RestaurantsTab() {
           <input className="border rounded px-3 py-2 w-full" placeholder="Search restaurants…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="grid md:grid-cols-2 gap-3 max-h-[70vh] overflow-auto pr-1">
-          {(restQ.data ?? []).map(r => {
+          {allRests.map(r => {
             const cuisine = coerceStringArray(r.cuisine_types)?.join(", ") ?? "";
             return (
               <div key={r.id} className="bg-white border rounded-xl p-4">
@@ -505,8 +604,8 @@ function RestaurantsTab() {
           </Field>
           <Field label="Image URL"><input className="w-full border rounded px-3 py-2" value={form.image_url ?? ""} onChange={(e) => setForm(f => ({ ...f, image_url: e.target.value }))} /></Field>
           <Field label="Address"><input className="w-full border rounded px-3 py-2" value={form.address ?? ""} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
-          <Field label="Lat"><input type="number" className="w-full border rounded px-3 py-2" value={form.lat ?? 0} onChange={(e) => setForm(f => ({ ...f, lat: Number(e.target.value) }))} /></Field>
-          <Field label="Lng"><input type="number" className="w-full border rounded px-3 py-2" value={form.lng ?? 0} onChange={(e) => setForm(f => ({ ...f, lng: Number(e.target.value) }))} /></Field>
+          <Field label="Lat"><input type="number" step="any" className="w-full border rounded px-3 py-2" value={form.lat ?? ""} onChange={(e) => setForm(f => ({ ...f, lat: e.target.value === "" ? null : Number(e.target.value) }))} /></Field>
+          <Field label="Lng"><input type="number" step="any" className="w-full border rounded px-3 py-2" value={form.lng ?? ""} onChange={(e) => setForm(f => ({ ...f, lng: e.target.value === "" ? null : Number(e.target.value) }))} /></Field>
           <Field label="Phone"><input className="w-full border rounded px-3 py-2" value={form.phone ?? ""} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} /></Field>
           <Field label="Website"><input className="w-full border rounded px-3 py-2" value={form.website ?? ""} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} /></Field>
           <Field label="Facebook"><input className="w-full border rounded px-3 py-2" value={form.facebook ?? ""} onChange={(e) => setForm(f => ({ ...f, facebook: e.target.value }))} /></Field>
@@ -525,34 +624,31 @@ function RestaurantsTab() {
                    value={(Array.isArray(form.cuisine_types) ? form.cuisine_types.join(", ") : (form.cuisine_types ?? "")) as string}
                    onChange={(e) => setForm(f => ({ ...f, cuisine_types: e.target.value }))} />
           </Field>
-          <Field label="Rating">
-            <input type="number" step="0.1" className="w-full border rounded px-3 py-2"
-                   value={form.rating ?? 0} onChange={(e) => setForm(f => ({ ...f, rating: Number(e.target.value) }))} />
+          <Field label="Rating (0–5)">
+            <input type="number" min={0} max={5} step="0.1" className="w-full border rounded px-3 py-2"
+                   value={form.rating ?? ""} onChange={(e) => setForm(f => ({ ...f, rating: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 5) }))} />
           </Field>
           <Field label="Description"><textarea className="w-full border rounded px-3 py-2" value={form.description ?? ""} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} /></Field>
         </div>
         <div className="mt-4 flex gap-2">
           <button className="px-4 py-2 rounded bg-neutral-900 text-white"
-                  onClick={() => {
-                    if (!form.id) return;
+                  onClick={() => { if (!form.id) return;
                     updateM.mutate({
                       id: form.id,
-                      payload: {
-                        ...form,
-                        cuisine_types: coerceStringArray(form.cuisine_types),
-                      }
+                      payload: { ...form, cuisine_types: coerceStringArray(form.cuisine_types) }
                     });
-                  }}
-                  disabled={updateM.isPending}>Save</button>
+                  }}>Save</button>
           <button className="px-3 py-2 rounded border" onClick={() => setEditOpen(false)}>Cancel</button>
         </div>
-        {updateM.isError && <p className="text-sm text-red-600 mt-2">{String((updateM.error as any)?.message ?? "Update failed")}</p>}
+        {serverError && <p className="text-sm text-red-600 mt-2">{serverError}</p>}
       </Modal>
     </div>
   );
 }
 
-// ------------- Curation -------------
+/* ======================================================
+   Curation (unique Top 1–3 with conflict prompts)
+   ====================================================== */
 function CurationTab() {
   const qc = useQueryClient();
   const [qDish, setQDish] = useState("");
@@ -581,7 +677,6 @@ function CurationTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] })
   });
 
-  // enforce unique rank per muni (and per category for dishes)
   async function setDishRank(d: Dish, rank: number | null) {
     const list = (dishesQ.data ?? []).filter(x => !muniId || x.municipality_id === muniId);
     const conflict = rank ? list.find(x => x.panel_rank === rank && x.id !== d.id) : null;
@@ -592,7 +687,6 @@ function CurationTab() {
     }
     await patchDishM.mutateAsync({ id: d.id, payload: { panel_rank: rank, is_signature: rank ? 1 as 1 : 0 as 0 } });
   }
-
   async function setRestRank(r: Restaurant, rank: number | null) {
     const list = (restsQ.data ?? []).filter(x => !muniId || x.municipality_id === muniId);
     const conflict = rank ? list.find(x => x.featured_rank === rank && x.id !== r.id) : null;
@@ -615,7 +709,7 @@ function CurationTab() {
             {(muniQ.data ?? []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
           <select className="border rounded px-2 py-1 text-sm" value={category} onChange={(e) => setCategory(e.target.value as any)}>
-            <option value="all">All categories</option>
+            <option value="all">All</option>
             <option value="food">Food</option>
             <option value="delicacy">Delicacy</option>
             <option value="drink">Drink</option>
@@ -673,7 +767,9 @@ function CurationTab() {
   );
 }
 
-// ------------- Linking -------------
+/* ======================================================
+   Linking (1:N) with clearer indicators + filters
+   ====================================================== */
 function LinkingTab() {
   const [qDish, setQDish] = useState("");
   const [qRest, setQRest] = useState("");
@@ -716,7 +812,7 @@ function LinkingTab() {
         <div className="max-h-[65vh] overflow-auto space-y-2">
           {(dishesQ.data ?? []).map(d => (
             <button key={d.id}
-              className={cx("w-full text-left border rounded-lg p-2", selDish?.id === d.id && "border-neutral-900")}
+              className={cx("w-full text-left border rounded-lg p-2 hover:bg-neutral-50 transition", selDish?.id === d.id && "border-neutral-900 bg-neutral-50")}
               onClick={() => setSelDish(d)}
             >
               <div className="font-medium">{d.name}</div>
@@ -744,7 +840,10 @@ function LinkingTab() {
                 <div key={r.id} className={cx("border rounded-xl p-3", isLinked && "border-neutral-900")}>
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="font-semibold">{r.name}</div>
+                      <div className="font-semibold flex items-center gap-2">
+                        {r.name}
+                        {isLinked && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-900 text-white">Linked</span>}
+                      </div>
                       <div className="text-xs text-neutral-500">{(muniQ.data ?? []).find(m => m.id === (r.municipality_id ?? 0))?.name}</div>
                     </div>
                     <div>
@@ -771,7 +870,9 @@ function LinkingTab() {
   );
 }
 
-// ------------- Main Admin Dashboard with tabs -------------
+/* ======================================================
+   Main Admin Dashboard with tabs
+   ====================================================== */
 export default function AdminDashboard() {
   const [tab, setTab] = useState<"analytics" | "dishes" | "restaurants" | "curation" | "linking">("analytics");
 
