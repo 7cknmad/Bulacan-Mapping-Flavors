@@ -104,3 +104,12 @@
 .panel-open .leaflet-bottom .leaflet-control-attribution {
   display: none;
 }
+@layer utilities {
+  .ring-focus { @apply focus:outline-none focus:ring-2 focus:ring-neutral-400; }
+  .card      { @apply bg-white border rounded-2xl shadow-sm; }
+  .btn       { @apply inline-flex items-center justify-center rounded-xl text-sm px-3 py-1.5 border transition-colors; }
+  .btn-ghost { @apply btn bg-transparent hover:bg-neutral-100; }
+  .btn-dark  { @apply btn bg-neutral-900 text-white hover:bg-neutral-800; }
+  .btn-soft  { @apply btn bg-neutral-100 hover:bg-neutral-200; }
+  .badge     { @apply inline-flex items-center rounded-full text-[11px] px-2 py-0.5 bg-neutral-100; }
+}
