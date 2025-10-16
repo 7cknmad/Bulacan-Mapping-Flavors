@@ -8,8 +8,7 @@ import {
   setDishCuration, setRestaurantCuration,
   getAnalyticsSummary, getPerMunicipalityCounts,
   type Municipality, type Dish, type Restaurant,
-  coerceStringArray, slugify
-} from "../../utils/adminApi";
+  coerceStringArray, slugify} from "../../utils/adminApi";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid
