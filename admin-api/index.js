@@ -60,7 +60,6 @@ app.use(express.json({ limit: '1mb' }));
 
 app.use(cors({
   origin(origin, cb) {
-    // Allow same-origin/non-browser and allowed list
     if (!origin) return cb(null, true);
     if (allowedSet.has('*') || allowedSet.has(origin)) return cb(null, true);
     return cb(new Error(`CORS: Origin not allowed: ${origin}`), false);
