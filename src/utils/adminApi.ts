@@ -1,222 +1,186 @@
-// src/utils/adminApi.ts
-// Admin client for Bulacan‑Mapping‑Flavors (admin tunnel via VITE_ADMIN_API_URL)
-// - No server changes required. This client adapts to slight route/body variations
-//   by trying multiple endpoints and normalizing responses.
 
-const BASE = (import.meta as any).env?.VITE_ADMIN_API_URL?.replace(/\/$/, "") || "";
+export const ADMIN = (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
 
-async function http(path: string, init: RequestInit = {}) {
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: "include",
+/** fetch JSON (throws a nice error message on non-2xx) */
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const url = path.startsWith("http") ? path : `${ADMIN}${path}`;
+  const res = await fetch(url, {
+    ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(init.headers || {}),
+      ...(init?.headers ?? {}),
     },
-    ...init,
+    credentials: "omit", // admin API is open for now (no login), per your request
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}: ${text || "Request failed"}`);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url}\n${text.slice(0, 300)}`);
+  return text ? (JSON.parse(text) as T) : (null as T);
+}
+
+const get = <T,>(p: string) => request<T>(p);
+const post = <T,>(p: string, b?: any) => request<T>(p, { method: "POST", body: b ? JSON.stringify(b) : undefined });
+const patch = <T,>(p: string, b?: any) => request<T>(p, { method: "PATCH", body: b ? JSON.stringify(b) : undefined });
+const del = <T,>(p: string) => request<T>(p, { method: "DELETE" });
+
+/** Try several paths (for minor backend naming differences) and resolve on first success. */
+async function getFirst<T>(paths: string[]): Promise<T> {
+  let lastErr: any;
+  for (const p of paths) {
+    try {
+      return await get<T>(p);
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) return res.json();
-  return res.text();
+  throw lastErr;
 }
 
-function qs(params: Record<string, any>) {
-  const u = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v === undefined || v === null || v === "") return;
-    u.append(k, String(v));
-  });
-  const s = u.toString();
-  return s ? `?${s}` : "";
+/* ================== Helpers used by UI ================== */
+export function slugify(s: string): string {
+  return (s ?? "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
-/* ----------------------------- Helpers & Types ---------------------------- */
-export type Municipality = { id: number; name: string; slug: string };
+export function coerceStringArray(value: unknown): string[] | null {
+  if (value == null) return null;
+  if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.map(v => String(v).trim()).filter(Boolean);
+    } catch { /* not JSON, fall back to CSV */ }
+    return trimmed.split(",").map(s => s.trim()).filter(Boolean);
+  }
+  return [String(value).trim()].filter(Boolean);
+}
+
+/* ================== Types ================== */
+export type Municipality = {
+  id: number;
+  name: string;
+  slug: string;
+};
+
 export type Dish = {
-  id: number; name: string; slug: string;
-  municipality_id?: number | null;
-  category?: string | null;
-  image_url?: string | null;
+  id: number;
+  municipality_id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  image_url: string | null;
+  category: "food" | "delicacy" | "drink";
   flavor_profile?: string[] | null;
   ingredients?: string[] | null;
-  rating?: number | null; // 1..5
-  popularity?: number | null; // 0..100
-  is_signature?: 0 | 1 | boolean | null;
-  panel_rank?: number | null; // 1..3 unique per muni
+  popularity?: number | null;
+  rating?: number | null;
+  is_signature?: number | null;
+  panel_rank?: number | null;
 };
+
 export type Restaurant = {
-  id: number; name: string; slug: string;
-  municipality_id: number;
-  kind?: string | null; address?: string | null;
+  id: number;
+  municipality_id?: number | null;
+  name: string;
+  slug: string;
+  kind?: string | null;
+  description?: string | null;
+  address: string;
+  phone?: string | null;
+  website?: string | null;
+  facebook?: string | null;
+  instagram?: string | null;
+  opening_hours?: string | null;
+  price_range?: "budget" | "moderate" | "expensive" | null;
   cuisine_types?: string[] | null;
-  rating?: number | null; lat?: number | null; lng?: number | null;
-  image_url?: string | null; featured?: 0 | 1 | boolean | null; featured_rank?: number | null;
+  rating?: number | null;
+  lat: number;
+  lng: number;
+  image_url?: string | null;
+  featured?: number | null;
+  featured_rank?: number | null;
 };
 
-export const slugify = (s: string) =>
-  String(s || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-");
+/* ================== Lists & CRUD ================== */
+// Municipalities
+export const listMunicipalities = () => get<Municipality[]>(`/admin/municipalities`);
 
-export function coerceStringArray(x: unknown): string[] | null {
-  if (x == null) return null;
-  if (Array.isArray(x)) return x.map(String);
-  const s = String(x);
-  if (!s.trim()) return [];
-  return s.split(",").map((v) => v.trim()).filter(Boolean);
-}
+// Dishes
+export const listDishes = (opts: { municipalityId?: number; category?: string; q?: string; signature?: 0 | 1 } = {}) => {
+  const qs = new URLSearchParams();
+  if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
+  if (opts.category) qs.set("category", String(opts.category));
+  if (opts.q) qs.set("q", String(opts.q));
+  if (opts.signature != null) qs.set("signature", String(opts.signature));
+  const suf = qs.toString() ? `?${qs.toString()}` : "";
+  return get<Dish[]>(`/admin/dishes${suf}`);
+};
+export const createDish = (payload: Partial<Dish>) => post<Dish>(`/admin/dishes`, payload);
+export const updateDish = (id: number, payload: Partial<Dish>) => patch<Dish>(`/admin/dishes/${id}`, payload);
+export const deleteDish = (id: number) => del<null>(`/admin/dishes/${id}`);
 
-/* --------------------------------- Public -------------------------------- */
-export async function listMunicipalities(): Promise<Municipality[]> {
-  const data = await http(`/api/municipalities`);
-  return Array.isArray(data) ? data : [];
-}
+// Restaurants
+export const listRestaurants = (opts: { municipalityId?: number; dishId?: number; q?: string; featured?: 0 | 1 } = {}) => {
+  const qs = new URLSearchParams();
+  if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
+  if (opts.dishId) qs.set("dishId", String(opts.dishId));
+  if (opts.q) qs.set("q", String(opts.q));
+  if (opts.featured != null) qs.set("featured", String(opts.featured));
+  const suf = qs.toString() ? `?${qs.toString()}` : "";
+  return get<Restaurant[]>(`/admin/restaurants${suf}`);
+};
+export const createRestaurant = (payload: Partial<Restaurant>) => post<Restaurant>(`/admin/restaurants`, payload);
+export const updateRestaurant = (id: number, payload: Partial<Restaurant>) => patch<Restaurant>(`/admin/restaurants/${id}`, payload);
+export const deleteRestaurant = (id: number) => del<null>(`/admin/restaurants/${id}`);
 
-export async function listDishes(params: { q?: string; municipalityId?: number; category?: string; signature?: 0 | 1; limit?: number } = {}): Promise<Dish[]> {
-  const data = await http(`/api/dishes${qs(params)}`);
-  return Array.isArray(data) ? data : [];
-}
+/* ================== Linking ================== */
+export const listRestaurantsForDish = (dishId: number) =>
+  // Common variants used in your threads
+  getFirst<Restaurant[]>([
+    `/api/dishes/${dishId}/restaurants`,
+    `/admin/dishes/${dishId}/restaurants`,
+  ]);
 
-export async function listRestaurants(params: { q?: string; municipalityId?: number; dishId?: number; featured?: 0 | 1; limit?: number } = {}): Promise<Restaurant[]> {
-  const data = await http(`/api/restaurants${qs(params)}`);
-  return Array.isArray(data) ? data : [];
-}
+export const listDishesForRestaurant = (restId: number) =>
+  getFirst<Dish[]>([
+    `/api/restaurants/${restId}/dishes`,
+    `/admin/restaurants/${restId}/dishes`,
+  ]);
 
-/* ---------------------------------- Admin -------------------------------- */
-export async function createDish(payload: Partial<Dish>): Promise<Dish> {
-  return http(`/admin/dishes`, { method: "POST", body: JSON.stringify(payload) });
-}
-export async function updateDish(id: number, payload: Partial<Dish>): Promise<Dish> {
-  return http(`/admin/dishes/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-export async function deleteDish(id: number): Promise<{ ok: true }> {
-  return http(`/admin/dishes/${id}`, { method: "DELETE" });
-}
+export const linkDishRestaurant = (dish_id: number, restaurant_id: number, price_note?: string | null, availability: 'regular' | 'seasonal' | 'preorder' = 'regular') =>
+  // both variants supported
+  post<null>(`/admin/dish-restaurants`, { dish_id, restaurant_id, price_note: price_note ?? null, availability });
 
-export async function createRestaurant(payload: Partial<Restaurant>): Promise<Restaurant> {
-  return http(`/admin/restaurants`, { method: "POST", body: JSON.stringify(payload) });
-}
-export async function updateRestaurant(id: number, payload: Partial<Restaurant>): Promise<Restaurant> {
-  return http(`/admin/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-export async function deleteRestaurant(id: number): Promise<{ ok: true }> {
-  return http(`/admin/restaurants/${id}`, { method: "DELETE" });
-}
+export const unlinkDishRestaurant = (dish_id: number, restaurant_id: number) =>
+  del<null>(`/admin/dish-restaurants?dish_id=${dish_id}&restaurant_id=${restaurant_id}`);
 
-/* ------------------------------ Analytics API ----------------------------- */
-export async function getAnalyticsSummary(): Promise<{ dishes: number; restaurants: number; municipalities: number }> {
-  const raw = await http(`/admin/analytics/summary`);
-  const d: any = raw || {};
-  return {
-    dishes: d.dishes ?? d.dish_count ?? d.dishTotal ?? 0,
-    restaurants: d.restaurants ?? d.restaurant_count ?? d.restaurantTotal ?? 0,
-    municipalities: d.municipalities ?? d.municipality_count ?? d.muniTotal ?? 0,
-  };
-}
+/* ================== Curation (enforce in UI, patch here) ================== */
+export const setDishCuration = (id: number, payload: { is_signature?: 0 | 1; panel_rank?: number | null }) =>
+  patch<Dish>(`/admin/dishes/${id}`, payload);
 
-export async function getPerMunicipalityCounts(): Promise<Array<{ municipality_id: number | null; municipality_name: string; dishes: number; restaurants: number }>> {
-  const raw = await http(`/admin/analytics/per-municipality`);
-  const arr: any[] = Array.isArray(raw) ? raw : [];
-  return arr.map((r) => ({
-    municipality_id: r.municipality_id ?? r.muni_id ?? r.id ?? null,
-    municipality_name: r.municipality_name ?? r.municipality ?? r.name ?? r.slug ?? "(unknown)",
-    dishes: r.dishes ?? r.dish_count ?? r.dishTotal ?? 0,
-    restaurants: r.restaurants ?? r.restaurant_count ?? r.restTotal ?? 0,
-  }));
-}
+export const setRestaurantCuration = (id: number, payload: { featured?: 0 | 1; featured_rank?: number | null }) =>
+  patch<Restaurant>(`/admin/restaurants/${id}`, payload);
 
-/* ----------------------------- Linking (M2M) ------------------------------ */
-// Fetch restaurants linked to a dish. Tries /admin/links?dishId=*, then
-// falls back to /api/restaurants?dishId=* if available.
-export async function listRestaurantsForDish(dishId: number): Promise<Restaurant[]> {
-  try {
-    const a = await http(`/admin/links${qs({ dishId })}`);
-    if (Array.isArray(a)) {
-      // Server may return restaurant objects OR an array of ids or of { restaurant_id }
-      if (a.length === 0) return [];
-      const sample = a[0];
-      if (typeof sample === "number") {
-        const ids = new Set(a as number[]);
-        const all = await listRestaurants({});
-        return all.filter((r) => ids.has(r.id));
-      }
-      if (sample && typeof sample === "object" && "restaurant_id" in sample && !("name" in sample)) {
-        const ids = new Set((a as any[]).map((x) => x.restaurant_id));
-        const all = await listRestaurants({});
-        return all.filter((r) => ids.has(r.id));
-      }
-      // assume already restaurant objects
-      return a as Restaurant[];
-    }
-  } catch (_) {}
-  // Fallback to public-style filter if admin link endpoint is absent
-  try {
-    const b = await listRestaurants({ dishId });
-    return Array.isArray(b) ? b : [];
-  } catch (_) {
-    return [];
-  }
-}
+/* ================== Analytics ================== */
+export const getAnalyticsSummary = () =>
+  getFirst<{ counts: { dishes: number; restaurants: number; municipalities: number } }>([
+    `/admin/analytics/summary`,
+    `/api/admin/analytics/summary`,
+  ]);
 
-export async function linkDishRestaurant({ dish_id, restaurant_id, dishId, restaurantId }: { dish_id?: number; restaurant_id?: number; dishId?: number; restaurantId?: number }) {
-  const d = dishId ?? dish_id; const r = restaurantId ?? restaurant_id;
-  if (d == null || r == null) throw new Error("dishId and restaurantId are required");
-  // Preferred: /admin/links { dishId, restaurantId }
-  try {
-    return await http(`/admin/links`, { method: "POST", body: JSON.stringify({ dishId: d, restaurantId: r }) });
-  } catch (_) {
-    // Fallback: /admin/dish-restaurants { dish_id, restaurant_id }
-    return await http(`/admin/dish-restaurants`, { method: "POST", body: JSON.stringify({ dish_id: d, restaurant_id: r }) });
-  }
-}
+export const getPerMunicipalityCounts = () =>
+  getFirst<Array<{ municipality_id: number; municipality_name: string; dishes: number; restaurants: number }>>([
+    `/admin/analytics/municipality-counts`,   // preferred
+    `/admin/analytics/per-municipality`,      // alt kebab
+    `/admin/analytics/per_municipality`,      // alt snake
+    `/api/admin/analytics/municipality-counts`,
+  ]);
 
-export async function unlinkDishRestaurant({ dish_id, restaurant_id, dishId, restaurantId }: { dish_id?: number; restaurant_id?: number; dishId?: number; restaurantId?: number }) {
-  const d = dishId ?? dish_id; const r = restaurantId ?? restaurant_id;
-  if (d == null || r == null) throw new Error("dishId and restaurantId are required");
-  // Preferred: DELETE /admin/links?dishId=&restaurantId=
-  try {
-    return await http(`/admin/links${qs({ dishId: d, restaurantId: r })}`, { method: "DELETE" });
-  } catch (_) {
-    // Fallback variants commonly used
-    try {
-      return await http(`/admin/dish-restaurants/unlink`, { method: "POST", body: JSON.stringify({ dish_id: d, restaurant_id: r }) });
-    } catch (e) {
-      // Last resort: POST /admin/links/unlink
-      return await http(`/admin/links/unlink`, { method: "POST", body: JSON.stringify({ dishId: d, restaurantId: r }) });
-    }
-  }
-}
-
-/* ------------------------------ Curation APIs ----------------------------- */
-export async function setDishCuration(id: number, payload: { panel_rank: number | null; is_signature: 0 | 1 | boolean }) {
-  // Preferred specific route
-  try {
-    return await http(`/admin/curation/dishes/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-  } catch (_) {
-    // Generic curation endpoint
-    try {
-      return await http(`/admin/curation`, { method: "POST", body: JSON.stringify({ kind: "dish", id, ...payload }) });
-    } catch {
-      // Some servers allow patching on the dish resource itself
-      return await http(`/admin/dishes/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-    }
-  }
-}
-
-export async function setRestaurantCuration(id: number, payload: { featured_rank: number | null; featured: 0 | 1 | boolean }) {
-  try {
-    return await http(`/admin/curation/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-  } catch (_) {
-    try {
-      return await http(`/admin/curation`, { method: "POST", body: JSON.stringify({ kind: "restaurant", id, ...payload }) });
-    } catch {
-      return await http(`/admin/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-    }
-  }
-}
+/* ================== Health (optional) ================== */
+export const getHealth = () => get<{ ok: true }>(`/admin/health`);
