@@ -20,6 +20,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
+  "include": ["src", "_admin_files_just_incase/admin/hooks", "_admin_files_just_incase/admin/adminApi.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
