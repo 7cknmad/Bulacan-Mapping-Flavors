@@ -1,10 +1,14 @@
 // src/utils/adminApi.ts
-// Single client for admin UI. No auth, no cookies. Uses VITE_ADMIN_API_URL.
-export const ADMIN_BASE = (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
+// Split bases: PUBLIC for read-only lists; ADMIN for writes/analytics.
+export const PUBLIC_BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/+$/, "");
+export const ADMIN_BASE  = (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
 
-// Helper: fetch JSON safely
-async function j<T>(method: string, path: string, body?: any): Promise<T> {
-  const url = path.startsWith("http") ? path : `${ADMIN_BASE}${path}`;
+// If your admin server uses a different prefix, change this:
+const ADMIN_PREFIX = "/admin";   // e.g. "/admin"
+const PUBLIC_PREFIX = "/api";    // your public API uses "/api"
+
+// --- tiny fetch helpers
+async function fetchJSON<T>(method: string, url: string, body?: any) {
   const res = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -15,17 +19,15 @@ async function j<T>(method: string, path: string, body?: any): Promise<T> {
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
   return text ? (JSON.parse(text) as T) : (null as any);
 }
-const get = <T>(p: string) => j<T>("GET", p);
-const post = <T>(p: string, b?: any) => j<T>("POST", p, b);
-const patch = <T>(p: string, b?: any) => j<T>("PATCH", p, b);
-const del = <T>(p: string) => j<T>("DELETE", p);
+
+const getPublic = <T>(path: string) => fetchJSON<T>("GET", `${PUBLIC_BASE}${path}`);
+const getAdmin  = <T>(path: string) => fetchJSON<T>("GET", `${ADMIN_BASE}${path}`);
+const postAdmin = <T>(path: string, b?: any) => fetchJSON<T>("POST", `${ADMIN_BASE}${path}`, b);
+const patchAdmin= <T>(path: string, b?: any) => fetchJSON<T>("PATCH", `${ADMIN_BASE}${path}`, b);
+const delAdmin  = <T>(path: string) => fetchJSON<T>("DELETE", `${ADMIN_BASE}${path}`);
 
 // ================= Types (match your DB) =================
-export type Municipality = {
-  id: number;
-  name: string;
-  slug: string;
-};
+export type Municipality = { id: number; name: string; slug: string; };
 
 export type DishCategory = "food" | "delicacy" | "drink";
 
@@ -41,8 +43,8 @@ export type Dish = {
   ingredients?: string[] | string | null;
   popularity?: number | null;
   rating?: number | null;
-  is_signature?: number | null;      // 0/1
-  panel_rank?: number | null;        // 1..3 or null
+  is_signature?: number | null;   // 0/1
+  panel_rank?: number | null;     // 1..3 or null
 };
 
 export type Restaurant = {
@@ -64,14 +66,14 @@ export type Restaurant = {
   lat: number;
   lng: number;
   image_url?: string | null;
-  featured?: number | null;          // 0/1
-  featured_rank?: number | null;     // 1..3 or null
+  featured?: number | null;       // 0/1
+  featured_rank?: number | null;  // 1..3 or null
 };
 
-// ================ Lookups =================
-export const listMunicipalities = () => get<Municipality[]>("/api/municipalities");
+// ================= Read-only lists (PUBLIC API) =================
+export const listMunicipalities = () =>
+  getPublic<Municipality[]>(`${PUBLIC_PREFIX}/municipalities`);
 
-// ================ Public list endpoints (with filters) =================
 export const listDishes = (opts: {
   municipalityId?: number | null;
   category?: string;
@@ -85,7 +87,7 @@ export const listDishes = (opts: {
   if (opts.q) qs.set("q", opts.q);
   if (opts.signature != null) qs.set("signature", String(opts.signature));
   if (opts.limit) qs.set("limit", String(opts.limit));
-  return get<Dish[]>(`/api/dishes${qs.toString() ? `?${qs}` : ""}`);
+  return getPublic<Dish>(`${PUBLIC_PREFIX}/dishes${qs.toString() ? `?${qs}` : ""}` as any) as Promise<Dish[]>;
 };
 
 export const listRestaurants = (opts: {
@@ -101,45 +103,60 @@ export const listRestaurants = (opts: {
   if (opts.q) qs.set("q", opts.q);
   if (opts.featured != null) qs.set("featured", String(opts.featured));
   if (opts.limit) qs.set("limit", String(opts.limit));
-  return get<Restaurant[]>(`/api/restaurants${qs.toString() ? `?${qs}` : ""}`);
+  return getPublic<Restaurant[]>(`${PUBLIC_PREFIX}/restaurants${qs.toString() ? `?${qs}` : ""}`);
 };
 
-// ================ Admin CRUD (same DB) =================
-export const createDish = (payload: Partial<Dish>) => post<Dish>("/api/admin/dishes", payload);
-export const updateDish = (id: number, payload: Partial<Dish>) => patch<Dish>(`/api/admin/dishes/${id}`, payload);
-export const deleteDish = (id: number) => del<void>(`/api/admin/dishes/${id}`);
+// ================= Admin-only (ADMIN API under /admin/*) =================
+// CRUD – dishes
+export const createDish = (payload: Partial<Dish>) =>
+  postAdmin<Dish>(`${ADMIN_PREFIX}/dishes`, payload);
+export const updateDish = (id: number, payload: Partial<Dish>) =>
+  patchAdmin<Dish>(`${ADMIN_PREFIX}/dishes/${id}`, payload);
+export const deleteDish = (id: number) =>
+  delAdmin<void>(`${ADMIN_PREFIX}/dishes/${id}`);
 
-export const createRestaurant = (payload: Partial<Restaurant>) => post<Restaurant>("/api/admin/restaurants", payload);
-export const updateRestaurant = (id: number, payload: Partial<Restaurant>) => patch<Restaurant>(`/api/admin/restaurants/${id}`, payload);
-export const deleteRestaurant = (id: number) => del<void>(`/api/admin/restaurants/${id}`);
+// CRUD – restaurants
+export const createRestaurant = (payload: Partial<Restaurant>) =>
+  postAdmin<Restaurant>(`${ADMIN_PREFIX}/restaurants`, payload);
+export const updateRestaurant = (id: number, payload: Partial<Restaurant>) =>
+  patchAdmin<Restaurant>(`${ADMIN_PREFIX}/restaurants/${id}`, payload);
+export const deleteRestaurant = (id: number) =>
+  delAdmin<void>(`${ADMIN_PREFIX}/restaurants/${id}`);
 
-// ================ Linking =================
-export const listRestaurantsForDish = (dishId: number) => get<Restaurant[]>(`/api/admin/dishes/${dishId}/restaurants`);
-export const listDishesForRestaurant = (restId: number) => get<Dish[]>(`/api/admin/restaurants/${restId}/dishes`);
+// Linking
+export const listRestaurantsForDish = (dishId: number) =>
+  getAdmin<Restaurant[]>(`${ADMIN_PREFIX}/dishes/${dishId}/restaurants`);
+export const listDishesForRestaurant = (restId: number) =>
+  getAdmin<Dish[]>(`${ADMIN_PREFIX}/restaurants/${restId}/dishes`);
 
 export const linkDishRestaurant = (
   dish_id: number,
   restaurant_id: number,
   price_note?: string | null,
   availability: "regular" | "seasonal" | "preorder" = "regular"
-) => post(`/api/admin/dish-restaurants`, { dish_id, restaurant_id, price_note: price_note ?? null, availability });
+) => postAdmin(`${ADMIN_PREFIX}/dish-restaurants`, { dish_id, restaurant_id, price_note: price_note ?? null, availability });
 
 export const unlinkDishRestaurant = (dish_id: number, restaurant_id: number) =>
-  del(`/api/admin/dish-restaurants?dish_id=${dish_id}&restaurant_id=${restaurant_id}`);
+  delAdmin(`${ADMIN_PREFIX}/dish-restaurants?dish_id=${dish_id}&restaurant_id=${restaurant_id}`);
 
-// ================ Curation =================
+// Curation
 export const setDishCuration = (id: number, payload: { is_signature?: 0 | 1; panel_rank?: number | null }) =>
-  patch(`/api/admin/dishes/${id}`, payload);
+  patchAdmin(`${ADMIN_PREFIX}/dishes/${id}`, payload);
 
 export const setRestaurantCuration = (id: number, payload: { featured?: 0 | 1; featured_rank?: number | null }) =>
-  patch(`/api/admin/restaurants/${id}`, payload);
+  patchAdmin(`${ADMIN_PREFIX}/restaurants/${id}`, payload);
 
-// ================ Analytics =================
+// Analytics
 export type MunicipalityCounts = { municipality_id: number; municipality_name: string; dishes: number; restaurants: number };
-export const getPerMunicipalityCounts = () => get<MunicipalityCounts[]>("/api/admin/analytics/per-municipality");
-export const getAnalyticsSummary = () => get<any>("/api/admin/analytics/summary"); // keep flexible
+export const getPerMunicipalityCounts = () =>
+  getAdmin<MunicipalityCounts[]>(`${ADMIN_PREFIX}/analytics/per-municipality`);
+export const getAnalyticsSummary = () =>
+  getAdmin<any>(`${ADMIN_PREFIX}/analytics/summary`);
 
-// Utility: coerce strings->arrays for view safety
+// Optional: health (to hide any “admin disabled” banners)
+export const getAdminHealth = () => getAdmin<{ ok: true }>(`${ADMIN_PREFIX}/health`);
+
+// Utility to coerce array-like string fields safely
 export function coerceStringArray(x: unknown): string[] | null {
   if (x == null) return null;
   if (Array.isArray(x)) return x.map(String);
