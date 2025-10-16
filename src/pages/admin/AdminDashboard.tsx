@@ -12,8 +12,6 @@ import {
   type Municipality, type Dish, type Restaurant,
 } from "../../utils/adminApi";
 
-// If you don't have recharts installed yet:
-// npm i recharts
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell,
 } from "recharts";
@@ -33,7 +31,7 @@ function Section({ title, right, children }: { title: string; right?: React.Reac
 }
 
 function useWriteEnabled() {
-  const { data } = useQuery({ queryKey: ["admin:write-cap"], queryFn: writeCap });
+  const { data } = useQuery({ queryKey: ["admin:write-cap"], queryFn: writeCap, refetchInterval: 10_000 });
   return !!data;
 }
 
@@ -422,7 +420,7 @@ function RestaurantsTab() {
               <MuniSelect value={form.municipality_id ?? null} onChange={(v)=>setForm(f=>({...f, municipality_id: v}))} allowAll={false}/>
             </label>
             <label className="text-sm">Kind
-              <select className="mt-1 w-full border rounded px-2 py-1" value={form.kind ?? "restaurant"} onChange={e=>setForm(f=>({...f, kind: e.target.value}))}>
+              <select className="mt-1 w-full border rounded px-2 py-1" value={form.kind ?? "restaurant"} onChange={e=>setForm(f=>({...f, kind: e.target.value as any}))}>
                 <option>restaurant</option><option>stall</option><option>store</option><option>dealer</option><option>market</option><option>home-based</option>
               </select>
             </label>
