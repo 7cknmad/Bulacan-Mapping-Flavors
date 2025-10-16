@@ -9,6 +9,7 @@ dotenv.config();
 const PORT = Number(process.env.PORT || 3002);
 
 const app = express();
+
 // permissive CORS (no cookies; safe for GH Pages)
 app.use(cors({
   origin: "*",
@@ -17,6 +18,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// ---- DB ----
 const pool = mysql.createPool({
   host:     process.env.DB_HOST     || "127.0.0.1",
   user:     process.env.DB_USER     || "root",
@@ -25,9 +27,48 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
 });
-const q = async (sql, params=[]) => (await pool.query(sql, params))[0];
+const q = async (sql, params = []) => (await pool.query(sql, params))[0];
 
-/* ---------- health ---------- */
+// ---- helpers: safely coerce JSON-ish columns to arrays ----
+function parseMaybeArray(v) {
+  if (v == null || v === "") return null;
+  if (Array.isArray(v)) return v;
+  // try JSON
+  try {
+    const j = JSON.parse(v);
+    if (Array.isArray(j)) return j;
+  } catch {}
+  // try CSV "a,b,c"
+  if (typeof v === "string") {
+    const arr = v.split(",").map(s => s.trim()).filter(Boolean);
+    return arr.length ? arr : null;
+  }
+  return null;
+}
+function normalizeDish(row) {
+  return {
+    ...row,
+    flavor_profile: parseMaybeArray(row.flavor_profile),
+    ingredients: parseMaybeArray(row.ingredients),
+    popularity: row.popularity == null ? null : Number(row.popularity),
+    rating: row.rating == null ? null : Number(row.rating),
+    is_signature: row.is_signature == null ? null : Number(row.is_signature),
+    panel_rank: row.panel_rank == null ? null : Number(row.panel_rank),
+  };
+}
+function normalizeRestaurant(row) {
+  return {
+    ...row,
+    cuisine_types: parseMaybeArray(row.cuisine_types),
+    rating: row.rating == null ? null : Number(row.rating),
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    featured: row.featured == null ? null : Number(row.featured),
+    featured_rank: row.featured_rank == null ? null : Number(row.featured_rank),
+  };
+}
+
+// ---------- health ----------
 app.get("/admin/health", async (req, res) => {
   try {
     await q("SELECT 1");
@@ -37,12 +78,14 @@ app.get("/admin/health", async (req, res) => {
   }
 });
 
-/* ---------- public-style reads (admin UI needs these) ---------- */
+// ---------- public-style reads (admin UI needs these) ----------
 app.get("/api/municipalities", async (req, res) => {
   try {
     const rows = await q(`SELECT id,name,slug FROM municipalities ORDER BY name`);
     res.json(rows);
-  } catch (e) { res.status(500).json({ error:"Failed to fetch municipalities", detail:String(e) }); }
+  } catch (e) {
+    res.status(500).json({ error:"Failed to fetch municipalities", detail:String(e) });
+  }
 });
 
 app.get("/api/dishes", async (req, res) => {
@@ -60,8 +103,10 @@ app.get("/api/dishes", async (req, res) => {
        ORDER BY COALESCE(d.panel_rank,999), d.name
        LIMIT ${lim}`, args
     );
-    res.json(rows);
-  } catch (e) { res.status(500).json({ error:"Failed to fetch dishes", detail:String(e) }); }
+    res.json(rows.map(normalizeDish));
+  } catch (e) {
+    res.status(500).json({ error:"Failed to fetch dishes", detail:String(e) });
+  }
 });
 
 app.get("/api/restaurants", async (req, res) => {
@@ -81,11 +126,13 @@ app.get("/api/restaurants", async (req, res) => {
        ORDER BY COALESCE(r.featured_rank,999), r.name
        LIMIT ${lim}`, args
     );
-    res.json(rows);
-  } catch (e) { res.status(500).json({ error:"Failed to fetch restaurants", detail:String(e) }); }
+    res.json(rows.map(normalizeRestaurant));
+  } catch (e) {
+    res.status(500).json({ error:"Failed to fetch restaurants", detail:String(e) });
+  }
 });
 
-/* ---------- CRUD (KEEP your existing bodies or paste them back) ---------- */
+// ---------- CRUD ----------
 // Dishes
 app.post("/admin/dishes", async (req, res) => {
   try {
@@ -99,8 +146,10 @@ app.post("/admin/dishes", async (req, res) => {
       fields.map(f=>data[f])
     );
     const [row] = await q(`SELECT * FROM dishes WHERE id=?`, [r.insertId]);
-    res.json(row);
-  } catch(e){ res.status(500).json({ error:"Failed to create dish", detail:String(e) }); }
+    res.json(normalizeDish(row));
+  } catch(e){
+    res.status(500).json({ error:"Failed to create dish", detail:String(e) });
+  }
 });
 
 app.patch("/admin/dishes/:id", async (req, res) => {
@@ -113,8 +162,10 @@ app.patch("/admin/dishes/:id", async (req, res) => {
     args.push(id);
     await q(`UPDATE dishes SET ${updates.join(",")} WHERE id=?`, args);
     const [row] = await q(`SELECT * FROM dishes WHERE id=?`, [id]);
-    res.json(row);
-  } catch(e){ res.status(500).json({ error:"Failed to update dish", detail:String(e) }); }
+    res.json(normalizeDish(row));
+  } catch(e){
+    res.status(500).json({ error:"Failed to update dish", detail:String(e) });
+  }
 });
 
 app.delete("/admin/dishes/:id", async (req, res) => {
@@ -123,7 +174,9 @@ app.delete("/admin/dishes/:id", async (req, res) => {
     await q(`DELETE FROM dish_restaurants WHERE dish_id=?`, [id]);
     await q(`DELETE FROM dishes WHERE id=?`, [id]);
     res.json({ ok:true });
-  } catch(e){ res.status(500).json({ error:"Failed to delete dish", detail:String(e) }); }
+  } catch(e){
+    res.status(500).json({ error:"Failed to delete dish", detail:String(e) });
+  }
 });
 
 // Restaurants
@@ -140,8 +193,10 @@ app.post("/admin/restaurants", async (req, res) => {
       fields.map(f=>data[f])
     );
     const [row] = await q(`SELECT * FROM restaurants WHERE id=?`, [r.insertId]);
-    res.json(row);
-  } catch(e){ res.status(500).json({ error:"Failed to create restaurant", detail:String(e) }); }
+    res.json(normalizeRestaurant(row));
+  } catch(e){
+    res.status(500).json({ error:"Failed to create restaurant", detail:String(e) });
+  }
 });
 
 app.patch("/admin/restaurants/:id", async (req, res) => {
@@ -154,8 +209,10 @@ app.patch("/admin/restaurants/:id", async (req, res) => {
     args.push(id);
     await q(`UPDATE restaurants SET ${updates.join(",")} WHERE id=?`, args);
     const [row] = await q(`SELECT * FROM restaurants WHERE id=?`, [id]);
-    res.json(row);
-  } catch(e){ res.status(500).json({ error:"Failed to update restaurant", detail:String(e) }); }
+    res.json(normalizeRestaurant(row));
+  } catch(e){
+    res.status(500).json({ error:"Failed to update restaurant", detail:String(e) });
+  }
 });
 
 app.delete("/admin/restaurants/:id", async (req, res) => {
@@ -164,18 +221,22 @@ app.delete("/admin/restaurants/:id", async (req, res) => {
     await q(`DELETE FROM dish_restaurants WHERE restaurant_id=?`, [id]);
     await q(`DELETE FROM restaurants WHERE id=?`, [id]);
     res.json({ ok:true });
-  } catch(e){ res.status(500).json({ error:"Failed to delete restaurant", detail:String(e) }); }
+  } catch(e){
+    res.status(500).json({ error:"Failed to delete restaurant", detail:String(e) });
+  }
 });
 
-/* ---------- Linking ---------- */
+// ---------- Linking ----------
 app.get("/admin/dishes/:id/restaurants", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const rows = await q(`SELECT r.* FROM restaurants r
                           JOIN dish_restaurants dr ON dr.restaurant_id=r.id
                           WHERE dr.dish_id=? ORDER BY r.name`, [id]);
-    res.json(rows);
-  } catch(e){ res.status(500).json({ error:"Failed to fetch linked restaurants", detail:String(e) }); }
+    res.json(rows.map(normalizeRestaurant));
+  } catch(e){
+    res.status(500).json({ error:"Failed to fetch linked restaurants", detail:String(e) });
+  }
 });
 
 app.get("/admin/restaurants/:id/dishes", async (req, res) => {
@@ -184,8 +245,10 @@ app.get("/admin/restaurants/:id/dishes", async (req, res) => {
     const rows = await q(`SELECT d.* FROM dishes d
                           JOIN dish_restaurants dr ON dr.dish_id=d.id
                           WHERE dr.restaurant_id=? ORDER BY d.name`, [id]);
-    res.json(rows);
-  } catch(e){ res.status(500).json({ error:"Failed to fetch linked dishes", detail:String(e) }); }
+    res.json(rows.map(normalizeDish));
+  } catch(e){
+    res.status(500).json({ error:"Failed to fetch linked dishes", detail:String(e) });
+  }
 });
 
 app.post("/admin/dish-restaurants", async (req, res) => {
@@ -194,7 +257,9 @@ app.post("/admin/dish-restaurants", async (req, res) => {
     await q(`INSERT IGNORE INTO dish_restaurants (dish_id, restaurant_id, price_note, availability)
              VALUES (?,?,?,?)`, [dish_id, restaurant_id, price_note, availability]);
     res.json({ ok:true });
-  } catch(e){ res.status(500).json({ error:"Failed to link", detail:String(e) }); }
+  } catch(e){
+    res.status(500).json({ error:"Failed to link", detail:String(e) });
+  }
 });
 
 app.delete("/admin/dish-restaurants", async (req, res) => {
@@ -202,18 +267,22 @@ app.delete("/admin/dish-restaurants", async (req, res) => {
     const { dish_id, restaurant_id } = req.query;
     await q(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [Number(dish_id), Number(restaurant_id)]);
     res.json({ ok:true });
-  } catch(e){ res.status(500).json({ error:"Failed to unlink", detail:String(e) }); }
+  } catch(e){
+    res.status(500).json({ error:"Failed to unlink", detail:String(e) });
+  }
 });
 
-/* ---------- Curation ---------- */
+// ---------- Curation ----------
 app.patch("/admin/dishes/:id/curation", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { is_signature = null, panel_rank = null } = req.body;
     await q(`UPDATE dishes SET is_signature=?, panel_rank=? WHERE id=?`, [is_signature, panel_rank, id]);
     const [row] = await q(`SELECT * FROM dishes WHERE id=?`, [id]);
-    res.json(row);
-  } catch(e){ res.status(500).json({ error:"Failed to update dish curation", detail:String(e) }); }
+    res.json(normalizeDish(row));
+  } catch(e){
+    res.status(500).json({ error:"Failed to update dish curation", detail:String(e) });
+  }
 });
 
 app.patch("/admin/restaurants/:id/curation", async (req, res) => {
@@ -222,11 +291,13 @@ app.patch("/admin/restaurants/:id/curation", async (req, res) => {
     const { featured = null, featured_rank = null } = req.body;
     await q(`UPDATE restaurants SET featured=?, featured_rank=? WHERE id=?`, [featured, featured_rank, id]);
     const [row] = await q(`SELECT * FROM restaurants WHERE id=?`, [id]);
-    res.json(row);
-  } catch(e){ res.status(500).json({ error:"Failed to update restaurant curation", detail:String(e) }); }
+    res.json(normalizeRestaurant(row));
+  } catch(e){
+    res.status(500).json({ error:"Failed to update restaurant curation", detail:String(e) });
+  }
 });
 
-/* ---------- analytics (renamed to avoid adblock) ---------- */
+// ---------- stats (avoid ad-block words) ----------
 app.get("/admin/stats/summary", async (req, res) => {
   try {
     const [[{ cD }]] = await Promise.all([q(`SELECT COUNT(*) cD FROM dishes`)]);
@@ -242,7 +313,9 @@ app.get("/admin/stats/summary", async (req, res) => {
     let topRestaurants = [];
     try { topRestaurants = await q(`SELECT id,name,featured_rank FROM restaurants WHERE COALESCE(featured,0)=1 ORDER BY COALESCE(featured_rank,999), name LIMIT 10`); } catch {}
     res.json({ counts: { dishes: cD, restaurants: cR }, perMunicipality, topDishes, topRestaurants });
-  } catch (e) { res.status(500).json({ error:"Failed analytics", detail:String(e) }); }
+  } catch (e) {
+    res.status(500).json({ error:"Failed stats", detail:String(e) });
+  }
 });
 
 app.listen(PORT, () => {
