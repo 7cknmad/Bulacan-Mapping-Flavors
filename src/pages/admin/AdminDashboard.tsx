@@ -1,5 +1,5 @@
 // src/pages/admin/AdminDashboard.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   listMunicipalities, listDishes, listRestaurants,
   createDish, updateDish, deleteDish,
@@ -51,15 +51,15 @@ function AnalyticsTab() {
   const countsQ = useQuery({ queryKey: ["admin:analytics:per-muni"], queryFn: getPerMunicipalityCounts, staleTime: 60_000 });
   const summaryQ = useQuery({ queryKey: ["admin:analytics:summary"], queryFn: getAnalyticsSummary, staleTime: 60_000 });
 
-  const data = countsQ.data ?? [];
+  const safe = Array.isArray(countsQ.data) ? countsQ.data : [];
+  const chartData = safe.length ? safe : [{ municipality_name: "No data", dishes: 0, restaurants: 0 }];
   const counts = summaryQ.data?.counts ?? { dishes: 0, restaurants: 0, municipalities: 0 };
   const colors = ["#6366F1", "#22C55E", "#F59E0B", "#EC4899", "#06B6D4", "#F43F5E", "#84CC16"];
 
-  // Always provide a single chart element (never null) to ResponsiveContainer
   const chartEl = useMemo<React.ReactElement>(() => {
     if (chartType === "line") {
       return (
-        <LineChart data={data}>
+        <LineChart data={chartData}>
           <XAxis dataKey="municipality_name" />
           <YAxis />
           <Tooltip />
@@ -74,18 +74,17 @@ function AnalyticsTab() {
         <PieChart>
           <Tooltip />
           <Legend />
-          <Pie data={data} dataKey="dishes" nameKey="municipality_name" outerRadius={90} label>
-            {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+          <Pie data={chartData} dataKey="dishes" nameKey="municipality_name" outerRadius={90} label>
+            {chartData.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
           </Pie>
-          <Pie data={data} dataKey="restaurants" nameKey="municipality_name" innerRadius={100} outerRadius={130}>
-            {data.map((_, i) => <Cell key={i} fill={colors[(i + 3) % colors.length]} />)}
+          <Pie data={chartData} dataKey="restaurants" nameKey="municipality_name" innerRadius={100} outerRadius={130}>
+            {chartData.map((_, i) => <Cell key={i} fill={colors[(i + 3) % colors.length]} />)}
           </Pie>
         </PieChart>
       );
     }
-    // default: bar
     return (
-      <BarChart data={data}>
+      <BarChart data={chartData}>
         <XAxis dataKey="municipality_name" />
         <YAxis />
         <Tooltip />
@@ -94,10 +93,16 @@ function AnalyticsTab() {
         <Bar dataKey="restaurants" fill="#22C55E" name="Restaurants" />
       </BarChart>
     );
-  }, [chartType, data]);
+  }, [chartType, chartData]);
 
   return (
     <div className="space-y-6">
+      {(countsQ.isError || summaryQ.isError) && (
+        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+          Couldn’t load analytics yet. Showing a placeholder chart so the page stays stable.
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <h3 className="text-lg font-semibold">Per Municipality Status</h3>
         <div className="ml-auto flex gap-2">
@@ -135,6 +140,7 @@ function AnalyticsTab() {
     </div>
   );
 }
+
 // ------------- Dishes CRUD -------------
 type DishFormState = Partial<Dish> & { autoSlug?: boolean };
 const emptyDish: DishFormState = { name: "", slug: "", category: "food", municipality_id: 0, autoSlug: true };
@@ -151,17 +157,17 @@ function DishesTab() {
   // create
   const createM = useMutation({
     mutationFn: (payload: Partial<Dish>) => createDish(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setForm(emptyDish); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setForm(emptyDish); alert("Dish created."); }
   });
   // update
   const updateM = useMutation({
     mutationFn: ({ id, payload }: { id: number, payload: Partial<Dish> }) => updateDish(id, payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setEditOpen(false); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setEditOpen(false); alert("Dish saved."); }
   });
   // delete
   const deleteM = useMutation({
     mutationFn: (id: number) => deleteDish(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] })
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); alert("Dish deleted."); }
   });
 
   function setName(name: string) {
@@ -348,7 +354,7 @@ function DishesTab() {
   );
 }
 
-// ------------- Restaurants CRUD (mirrors dish UI) -------------
+// ------------- Restaurants CRUD -------------
 type RestaurantFormState = Partial<Restaurant> & { autoSlug?: boolean };
 const emptyRest: RestaurantFormState = { name: "", slug: "", municipality_id: 0, address: "", lat: 0, lng: 0, autoSlug: true };
 
@@ -363,15 +369,15 @@ function RestaurantsTab() {
 
   const createM = useMutation({
     mutationFn: (payload: Partial<Restaurant>) => createRestaurant(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setForm(emptyRest); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setForm(emptyRest); alert("Restaurant created."); }
   });
   const updateM = useMutation({
     mutationFn: ({ id, payload }: { id: number, payload: Partial<Restaurant> }) => updateRestaurant(id, payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setEditOpen(false); }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); setEditOpen(false); alert("Restaurant saved."); }
   });
   const deleteM = useMutation({
     mutationFn: (id: number) => deleteRestaurant(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] })
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["rests"] }); alert("Restaurant deleted."); }
   });
 
   function setName(name: string) {
@@ -697,7 +703,6 @@ function LinkingTab() {
 
   const restaurants = useMemo(() => {
     const all = restsQ.data ?? [];
-    // bring linked to top
     const linked = all.filter(r => linkedIds.has(r.id));
     const unlinked = all.filter(r => !linkedIds.has(r.id));
     return [...linked, ...unlinked];
