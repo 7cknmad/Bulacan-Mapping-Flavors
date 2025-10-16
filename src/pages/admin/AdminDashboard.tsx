@@ -766,39 +766,51 @@ function LinkingTab() {
 
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
   const dishesQ = useQuery({ queryKey: ["dishes", qDish], queryFn: () => listDishes({ q: qDish }) });
-  const restsQ = useQuery({ queryKey: ["rests", qRest, filterMuni], queryFn: () => listRestaurants({ q: qRest, municipalityId: filterMuni ?? undefined }) });
+  const restsQ = useQuery({
+    queryKey: ["rests", qRest, filterMuni],
+    queryFn: () => listRestaurants({ q: qRest, municipalityId: filterMuni ?? undefined }),
+  });
 
+  // IMPORTANT: use your adminApi’s listRestaurantsForDish (which tries /admin/links first)
   const linkedQ = useQuery({
     queryKey: ["linked-rests", selDish?.id],
     queryFn: () => (selDish ? listRestaurantsForDish(selDish.id) : Promise.resolve([])),
     enabled: !!selDish,
   });
 
-  type LinkArgs = {
-  dishId?: number; restaurantId?: number;
-  dish_id?: number; restaurant_id?: number;
-};
+  // Mutations – send snake_case so your /admin/dish-restaurants fallback accepts it
+  type LinkArgs = { dish_id: number; restaurant_id: number };
 
   const linkM = useMutation({
-  mutationFn: (args: LinkArgs) => linkDishRestaurant(args),
-  onSuccess: () => { linkedQ.refetch(); toast("Linked"); },
-  onError: (e: any) => toast(e?.message ?? "Link failed"),
-});
+    mutationFn: ({ dish_id, restaurant_id }: LinkArgs) =>
+      linkDishRestaurant({ dish_id, restaurant_id }),
+    onSuccess: () => {
+      linkedQ.refetch();
+      toast("Linked");
+    },
+    onError: (e: any) => toast(e?.message ?? "Link failed"),
+  });
 
-const unlinkM = useMutation({
-  mutationFn: (args: LinkArgs) => unlinkDishRestaurant(args),
-  onSuccess: () => { linkedQ.refetch(); toast("Unlinked"); },
-  onError: (e: any) => toast(e?.message ?? "Unlink failed"),
-});
+  const unlinkM = useMutation({
+    mutationFn: ({ dish_id, restaurant_id }: LinkArgs) =>
+      unlinkDishRestaurant({ dish_id, restaurant_id }),
+    onSuccess: () => {
+      linkedQ.refetch();
+      toast("Unlinked");
+    },
+    onError: (e: any) => toast(e?.message ?? "Unlink failed"),
+  });
 
   const linkedIds = new Set((linkedQ.data ?? []).map((r: any) => r.id ?? r.restaurant_id ?? r));
-  const restaurantsRaw = (restsQ.data ?? []);
+  const restaurantsRaw = restsQ.data ?? [];
   const restaurants = React.useMemo(() => {
     const linked = new Set(linkedIds);
     const arr = [...restaurantsRaw];
-    arr.sort((a:any,b:any)=>{
-      const A = linked.has(a.id)?0:1; const B = linked.has(b.id)?0:1;
-      if (A!==B) return A-B; return String(a.name).localeCompare(String(b.name));
+    arr.sort((a: any, b: any) => {
+      const A = linked.has(a.id) ? 0 : 1;
+      const B = linked.has(b.id) ? 0 : 1;
+      if (A !== B) return A - B;
+      return String(a.name).localeCompare(String(b.name));
     });
     return arr;
   }, [restaurantsRaw, linkedIds]);
@@ -809,15 +821,35 @@ const unlinkM = useMutation({
         {/* Pick a dish */}
         <div className="bg-white border rounded-2xl p-4">
           <div className="flex items-center gap-2 mb-2">
-            <input className="border rounded px-3 py-2 w-full" placeholder="Search dishes…" value={qDish} onChange={(e) => setQDish(e.target.value)} />
-            <select className="border rounded px-2 py-1 text-sm" value={filterMuni ?? 0} onChange={(e) => setFilterMuni(Number(e.target.value) || null)}>
+            <input
+              className="border rounded px-3 py-2 w-full"
+              placeholder="Search dishes…"
+              value={qDish}
+              onChange={(e) => setQDish(e.target.value)}
+            />
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={filterMuni ?? 0}
+              onChange={(e) => setFilterMuni(Number(e.target.value) || null)}
+            >
               <option value={0}>All muni</option>
-              {(muniQ.data ?? []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              {(muniQ.data ?? []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
             </select>
           </div>
           <div className="max-h-[60vh] overflow-auto space-y-2">
-            {(dishesQ.data ?? []).map(d => (
-              <button key={d.id} className={cx("w-full text-left px-3 py-2 rounded-xl border", selDish?.id === d.id ? "bg-neutral-900 text-white" : "bg-white")} onClick={() => setSelDish(d)}>
+            {(dishesQ.data ?? []).map((d) => (
+              <button
+                key={d.id}
+                className={cx(
+                  "w-full text-left px-3 py-2 rounded-xl border",
+                  selDish?.id === d.id ? "bg-neutral-900 text-white" : "bg-white"
+                )}
+                onClick={() => setSelDish(d)}
+              >
                 <div className="font-medium">{d.name}</div>
                 <div className="text-xs opacity-70">{d.slug}</div>
               </button>
@@ -831,13 +863,24 @@ const unlinkM = useMutation({
           {selDish && (
             <>
               <div className="flex items-center gap-2 mb-2">
-                <input className="border rounded px-3 py-2 w-full" placeholder="Search restaurants…" value={qRest} onChange={(e) => setQRest(e.target.value)} />
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  placeholder="Search restaurants…"
+                  value={qRest}
+                  onChange={(e) => setQRest(e.target.value)}
+                />
               </div>
               <div className="max-h-[60vh] overflow-auto space-y-2">
-                {restaurants.map(r => {
+                {restaurants.map((r) => {
                   const isLinked = linkedIds.has(r.id);
                   return (
-                    <div key={r.id} className={cx("border rounded-xl p-3 transition", isLinked ? "border-neutral-900 bg-neutral-50" : "hover:bg-neutral-50") }>
+                    <div
+                      key={r.id}
+                      className={cx(
+                        "border rounded-xl p-3 transition",
+                        isLinked ? "border-neutral-900 bg-neutral-50" : "hover:bg-neutral-50"
+                      )}
+                    >
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-medium">{r.name}</div>
@@ -845,15 +888,34 @@ const unlinkM = useMutation({
                         </div>
                         <div className="flex gap-2">
                           {!isLinked ? (
-                            <button onClick={() => linkM.mutate({ dishId: selDish!.id, restaurantId: r.id })} disabled={linkM.isPending}>
+                            <button
+                              onClick={() =>
+                                linkM.mutate({ dish_id: selDish!.id, restaurant_id: r.id })
+                              }
+                              disabled={linkM.isPending}
+                            >
                               Link
                             </button>
                           ) : (
-                            <button className="text-xs px-2 py-1 rounded border text-red-600" onClick={async () => { if (await confirm("Unlink?")) selDish && unlinkM.mutate({ dishId: selDish.id, restaurantId: r.id }); }}>Unlink</button>
+                            <button
+                              className="text-xs px-2 py-1 rounded border text-red-600"
+                              onClick={async () => {
+                                if (await confirm("Unlink?")) {
+                                  unlinkM.mutate({ dish_id: selDish.id, restaurant_id: r.id });
+                                }
+                              }}
+                              disabled={unlinkM.isPending}
+                            >
+                              Unlink
+                            </button>
                           )}
                         </div>
                       </div>
-                      {isLinked && <div className="mt-1 inline-block text-[11px] px-1.5 py-0.5 rounded-full bg-neutral-900 text-white">Linked</div>}
+                      {isLinked && (
+                        <div className="mt-1 inline-block text-[11px] px-1.5 py-0.5 rounded-full bg-neutral-900 text-white">
+                          Linked
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -865,7 +927,6 @@ const unlinkM = useMutation({
     </div>
   );
 }
-
 /* ======================================================
    Main Admin Dashboard Shell
    ====================================================== */
