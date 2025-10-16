@@ -3,8 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminAuth,
-  listMunicipalities,
-  type Municipality,
   // dishes
   listDishes,
   createDish,
@@ -33,7 +31,8 @@ function useStickyMuniId() {
   const key = "admin:lastMuniId";
   const [muniId, setMuniId] = useState<number | null>(() => {
     const raw = localStorage.getItem(key);
-    return raw ? Number(raw) : null;
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) ? n : null;
   });
   useEffect(() => {
     if (muniId == null) localStorage.removeItem(key);
@@ -43,28 +42,26 @@ function useStickyMuniId() {
 }
 
 const toArray = (val: unknown): string[] => {
-  if (Array.isArray(val)) return val as string[];
+  if (Array.isArray(val)) return (val as unknown[]).map(String).filter(Boolean);
   if (val == null) return [];
   if (typeof val === "string") {
-    // try JSON first
-    try {
-      const parsed = JSON.parse(val);
-      if (Array.isArray(parsed)) return parsed.filter(Boolean);
-    } catch {}
-    // then comma-split fallback
-    return val
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const s = val.trim();
+    // Try JSON first if it looks like JSON
+    if ((s.startsWith("[") && s.endsWith("]")) || (s.startsWith('"') && s.endsWith('"'))) {
+      try {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+      } catch {/* fall through */}
+    }
+    // Comma separated fallback
+    return s.split(",").map((x) => x.trim()).filter(Boolean);
   }
-  return [];
+  // Anything else → stringify
+  return [String(val)].filter(Boolean);
 };
 
 const slugify = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)+/g, "");
+  s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
 
 /* --------------------------------- main -------------------------------- */
 
@@ -75,7 +72,6 @@ export default function AdminDashboard() {
   const meQ = useQuery({ queryKey: ["admin:me"], queryFn: adminAuth.me, staleTime: 60_000 });
 
   const tryLogout = async () => {
-    // Your adminApi may not expose logout; this keeps it safe.
     try {
       await (adminAuth as any).logout?.();
     } catch {}
@@ -223,9 +219,7 @@ function SmallBars({ data }: { data: { label: string; value: number }[] }) {
 }
 function RatingBubbles({ rows }: { rows: { id: number; name: string; rating: number | null }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.rating ?? 0));
-  const W = 600,
-    H = 120,
-    pad = 16;
+  const W = 600, H = 120, pad = 16;
   return (
     <div className="overflow-auto">
       <svg width={W} height={H} className="min-w-[600px]">
@@ -537,9 +531,7 @@ function EditDishCard({
             className="border rounded px-3 py-2"
             value={toArray(editing?.flavor_profile).join(", ")}
             onChange={(e) =>
-              setEditing((prev) =>
-                prev ? { ...prev, flavor_profile: toArray(e.target.value) } : prev
-              )
+              setEditing((prev) => (prev ? { ...prev, flavor_profile: toArray(e.target.value) } : prev))
             }
           />
         </div>
@@ -603,13 +595,14 @@ function RestaurantsPanel() {
 
   const [q, setQ] = useState("");
   const [autoSlug, setAutoSlug] = useState(true);
-  const [editing, setEditing] = useState<Partial<ReturnType<typeof normalizeRestaurant>> | null>(null);
+  const [editing, setEditing] = useState<Partial<any> | null>(null);
 
   const listQ = useQuery({
     queryKey: ["admin:restaurants", muniId, q],
     queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined, q }),
     staleTime: 15_000,
-    select: (rows) => (rows ?? []).map(normalizeRestaurant),
+    select: (rows) =>
+      (rows ?? []).map((r: any) => ({ ...r, cuisine_types: toArray(r?.cuisine_types) })),
   });
 
   const createM = useMutation({
@@ -651,7 +644,8 @@ function RestaurantsPanel() {
       lng: 0,
     });
   };
-  const startEdit = (row: any) => setEditing(normalizeRestaurant(row));
+  const startEdit = (row: any) =>
+    setEditing({ ...row, cuisine_types: toArray(row?.cuisine_types) });
 
   useEffect(() => {
     if (autoSlug && editing?.name) {
@@ -763,13 +757,6 @@ function RestaurantsPanel() {
       </div>
     </main>
   );
-}
-
-function normalizeRestaurant(row: any) {
-  return {
-    ...row,
-    cuisine_types: toArray(row?.cuisine_types),
-  };
 }
 
 function EditRestaurantCard({
@@ -984,10 +971,7 @@ function CurationPanel() {
   const setDish = useMutation({
     mutationFn: ({ id, is_signature, panel_rank }: { id: number; is_signature: 0 | 1; panel_rank: number | null }) =>
       setDishCuration(id, { is_signature, panel_rank }),
-    onSuccess: () => {
-      // soft refresh list so you see ranks update immediately
-      dishesQ.refetch();
-    },
+    onSuccess: () => dishesQ.refetch(),
   });
 
   const setResto = useMutation({
@@ -1069,7 +1053,9 @@ function CurateList<T extends { id: number; name: string }>({
           return (
             <li key={item.id} className="p-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="w-7 text-center font-mono rounded bg-neutral-100">{r ?? "–"}</span>
+                <span className={`w-7 text-center font-mono rounded ${r ? "bg-primary-100 text-primary-700" : "bg-neutral-100"}`}>
+                  {r ?? "–"}
+                </span>
                 <span>{item.name}</span>
               </div>
               <div className="flex items-center gap-2">
@@ -1116,7 +1102,6 @@ function LinkingPanel() {
     enabled: muniId !== null,
   });
 
-  // Load linked restaurant IDs — try admin route first, fallback to public filter by dishId (if your API supports it)
   const linkedIdsQ = useQuery({
     queryKey: ["link:ids", selectedDish?.id],
     enabled: !!selectedDish?.id,
@@ -1124,7 +1109,6 @@ function LinkingPanel() {
       if (!selectedDish?.id) return [] as number[];
       try {
         const rows: any[] = await listRestaurantsForDish(selectedDish.id);
-        // Accept either {id:number} or full restaurant rows
         return rows.map((r: any) => (typeof r.id === "number" ? r.id : r.restaurant_id)).filter(Boolean);
       } catch {
         const rows = await listRestaurants({ dishId: selectedDish.id });
@@ -1221,7 +1205,11 @@ function LinkingPanel() {
                             linkM.mutate({ dish_id: selectedDish.id!, restaurant_id: r.id, add: e.target.checked })
                           }
                         />
-                        {checked ? <Check size={16} className="text-primary-600" /> : <LinkIcon size={16} className="text-neutral-400" />}
+                        {checked ? (
+                          <Check size={16} className="text-primary-600" />
+                        ) : (
+                          <LinkIcon size={16} className="text-neutral-400" />
+                        )}
                       </label>
                     </li>
                   );
