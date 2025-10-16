@@ -2,7 +2,7 @@
 // NOTE: purely visual/interactive upgrades; data flow & API calls unchanged.
 
 import React, { useMemo, useState } from "react";
-import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "../ui";
+import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "../admin/ui";
 import {
   listMunicipalities, listDishes, listRestaurants,
   createDish, updateDish, deleteDish,
