@@ -6,11 +6,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-app.use(cors({
-  origin: '*',                // allow anyone (safe since we only expose GET)
-  methods: ['GET'],           // main site only does reads
-  allowedHeaders: ['Content-Type']
-}));
+
 /* ---------------------------
    CORS (credentialed) setup
    --------------------------- */
@@ -50,7 +46,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
+// Express 5: avoid "/api/*" string — use a regex
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
