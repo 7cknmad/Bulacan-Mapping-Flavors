@@ -8,7 +8,9 @@ import Layout from "./components/layout/Layout";
 import PageTransition from "./components/common/PageTransition";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import ScrollToTop from "./components/common/ScrollToTop";
-
+import AdminLogin from "./pages/admin/AdminLogin";
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import ProtectedRoute from "./components/admin/ProtectedRoute";
 import HomePage from "./pages/HomePage";
 import MapExplorer from "./pages/MapExplorer";
 import DishesPage from "./pages/DishesPage";
@@ -16,9 +18,6 @@ import DishDetails from "./pages/DishDetails";
 import RestaurantList from "./pages/RestaurantList";
 import RestaurantDetails from "./pages/RestaurantDetails";
 
-import AdminLogin from "./pages/admin/AdminLogin";
-import AdminDashboard from "./pages/admin/AdminDashboard";
-import ProtectedRoute from "./components/admin/ProtectedRoute";
 
 const queryClient = new QueryClient();
 

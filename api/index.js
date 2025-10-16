@@ -17,8 +17,22 @@ const DEFAULT_ALLOWED = [
 ];
 // allow comma-separated origins via env
 const extra = (process.env.ALLOW_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-const allowedOrigins = new Set([...DEFAULT_ALLOWED, ...extra]);
+const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "https://7cknmad.github.io",
+]);
 
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true);                  // Postman/curl
+      cb(null, allowedOrigins.has(origin));                // true/false
+    },
+    credentials: true,                                     // <— MUST be true for cookies
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.has(origin)) {

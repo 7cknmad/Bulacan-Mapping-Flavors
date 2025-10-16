@@ -1,18 +1,86 @@
 // src/pages/admin/AdminDashboard.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AdminAPI, AdminAuth, type Dish, type Restaurant } from "../../utils/adminApi";
-import { API as PUBLIC_API } from "../../utils/api";
-import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
-import { Check, LogOut, PlusCircle, Save, Search, Trash2, Link as LinkIcon } from "lucide-react";
-import { useAdminMuniPref } from "../../hooks/useAdminPrefs";
+import {
+  adminAuth,
+  listMunicipalities,
+  type Municipality,
+  // dishes
+  listDishes,
+  createDish,
+  updateDish,
+  deleteDish,
+  setDishCuration,
+  type Dish,
+  // restaurants
+  listRestaurants,
+  createRestaurant,
+  updateRestaurant,
+  deleteRestaurant,
+  setRestaurantCuration,
+  // linking
+  listRestaurantsForDish,
+  linkDishRestaurant,
+  unlinkDishRestaurant,
+} from "../../utils/adminApi";
 
-/** Tabs present */
+import MunicipalitySelect from "../../components/admin/MunicipalitySelect";
+import { Check, Link as LinkIcon, LogOut, PlusCircle, Save, Search, Trash2 } from "lucide-react";
+
+/* ------------------------------- helpers ------------------------------- */
+
+function useStickyMuniId() {
+  const key = "admin:lastMuniId";
+  const [muniId, setMuniId] = useState<number | null>(() => {
+    const raw = localStorage.getItem(key);
+    return raw ? Number(raw) : null;
+  });
+  useEffect(() => {
+    if (muniId == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(muniId));
+  }, [muniId]);
+  return { muniId, setMuniId };
+}
+
+const toArray = (val: unknown): string[] => {
+  if (Array.isArray(val)) return val as string[];
+  if (val == null) return [];
+  if (typeof val === "string") {
+    // try JSON first
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+    } catch {}
+    // then comma-split fallback
+    return val
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const slugify = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
+
+/* --------------------------------- main -------------------------------- */
+
 type TabKey = "analytics" | "dishes" | "restaurants" | "curation" | "linking";
 
 export default function AdminDashboard() {
   const [active, setActive] = useState<TabKey>("analytics");
-  const meQ = useQuery({ queryKey: ["admin:me"], queryFn: AdminAuth.me, staleTime: 60_000 });
+  const meQ = useQuery({ queryKey: ["admin:me"], queryFn: adminAuth.me, staleTime: 60_000 });
+
+  const tryLogout = async () => {
+    // Your adminApi may not expose logout; this keeps it safe.
+    try {
+      await (adminAuth as any).logout?.();
+    } catch {}
+    location.hash = "#/admin/login";
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -25,7 +93,7 @@ export default function AdminDashboard() {
           </div>
           <button
             className="inline-flex items-center gap-2 px-3 py-2 rounded border hover:bg-neutral-50"
-            onClick={async () => { await AdminAuth.logout(); location.hash = "#/admin/login"; }}
+            onClick={tryLogout}
             title="Log out"
           >
             <LogOut size={16} /> Logout
@@ -36,13 +104,17 @@ export default function AdminDashboard() {
       {/* Tabs */}
       <div className="border-b mb-4 sticky top-0 bg-white z-10">
         <nav className="-mb-px flex gap-6">
-          {(["analytics","dishes","restaurants","curation","linking"] as TabKey[]).map(k => (
+          {(["analytics", "dishes", "restaurants", "curation", "linking"] as TabKey[]).map((k) => (
             <button
               key={k}
-              className={`pb-2 border-b-2 ${active===k ? "border-primary-600 text-primary-700" : "border-transparent text-neutral-600 hover:text-neutral-800"}`}
+              className={`pb-2 border-b-2 ${
+                active === k
+                  ? "border-primary-600 text-primary-700"
+                  : "border-transparent text-neutral-600 hover:text-neutral-800"
+              }`}
               onClick={() => setActive(k)}
             >
-              {k[0].toUpperCase()+k.slice(1)}
+              {k[0].toUpperCase() + k.slice(1)}
             </button>
           ))}
         </nav>
@@ -57,45 +129,39 @@ export default function AdminDashboard() {
   );
 }
 
-/* =============== Analytics =============== */
+/* =============================== Analytics ============================== */
 
 function AnalyticsPanel() {
-  const { muniId, setMuniId } = useAdminMuniPref();
+  const { muniId, setMuniId } = useStickyMuniId();
 
-  // Load lists to compute charts client-side (no analytics API needed)
   const dishesQ = useQuery({
     queryKey: ["analytics:dishes", muniId],
-    queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined }),
+    queryFn: () => listDishes({ municipalityId: muniId ?? undefined }),
   });
   const restosQ = useQuery({
     queryKey: ["analytics:restos", muniId],
-    queryFn: () => AdminAPI.getRestaurants({ municipalityId: muniId ?? undefined }),
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined }),
   });
 
   const catCounts = useMemo(() => {
     const d = dishesQ.data ?? [];
     return {
-      food: d.filter(x => x.category === "food").length,
-      delicacy: d.filter(x => x.category === "delicacy").length,
-      drink: d.filter(x => x.category === "drink").length,
+      food: d.filter((x) => x.category === "food").length,
+      delicacy: d.filter((x) => x.category === "delicacy").length,
+      drink: d.filter((x) => x.category === "drink").length,
     };
   }, [dishesQ.data]);
 
   const topRestos = useMemo(() => {
     const r = restosQ.data ?? [];
-    return [...r].sort((a,b) => (b.rating ?? 0) - (a.rating ?? 0)).slice(0, 10);
+    return [...r].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0)).slice(0, 10);
   }, [restosQ.data]);
 
   return (
     <main className="space-y-6">
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium">Municipality</label>
-        <MunicipalitySelect
-          value={muniId}
-          onChange={setMuniId}
-          placeholder="All municipalities"
-          persistKey="admin:lastMuniId"
-        />
+        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="All municipalities" />
       </div>
 
       <div className="grid sm:grid-cols-3 gap-4">
@@ -104,28 +170,30 @@ function AnalyticsPanel() {
         <StatCard label="Scope" value={muniId ? `Municipality #${muniId}` : "All"} />
       </div>
 
-      {/* Category bars */}
       <section className="rounded border p-4">
         <div className="font-medium mb-2">Dishes by Category</div>
-        <SmallBars data={[
-          { label: "Food", value: catCounts.food },
-          { label: "Delicacy", value: catCounts.delicacy },
-          { label: "Drink", value: catCounts.drink },
-        ]} />
+        <SmallBars
+          data={[
+            { label: "Food", value: catCounts.food },
+            { label: "Delicacy", value: catCounts.delicacy },
+            { label: "Drink", value: catCounts.drink },
+          ]}
+        />
       </section>
 
-      {/* Top restaurants bubbles */}
       <section className="rounded border p-4">
         <div className="font-medium mb-2">Top Restaurants (by rating)</div>
-        {(topRestos.length === 0)
-          ? <div className="text-sm text-neutral-500">No data.</div>
-          : <RatingBubbles rows={topRestos} />}
+        {topRestos.length === 0 ? (
+          <div className="text-sm text-neutral-500">No data.</div>
+        ) : (
+          <RatingBubbles rows={topRestos} />
+        )}
       </section>
     </main>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number|string }) {
+function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-lg border bg-white p-4">
       <div className="text-sm text-neutral-500">{label}</div>
@@ -134,10 +202,10 @@ function StatCard({ label, value }: { label: string; value: number|string }) {
   );
 }
 function SmallBars({ data }: { data: { label: string; value: number }[] }) {
-  const max = Math.max(1, ...data.map(d => d.value));
+  const max = Math.max(1, ...data.map((d) => d.value));
   return (
     <div className="space-y-2">
-      {data.map(d => (
+      {data.map((d) => (
         <div key={d.label} className="flex items-center gap-2">
           <div className="w-24 text-sm">{d.label}</div>
           <div className="flex-1 h-3 bg-neutral-100 rounded">
@@ -153,22 +221,27 @@ function SmallBars({ data }: { data: { label: string; value: number }[] }) {
     </div>
   );
 }
-function RatingBubbles({ rows }: { rows: { id:number; name:string; rating:number|null }[] }) {
-  const max = Math.max(1, ...rows.map(r => r.rating ?? 0));
-  const W = 600, H = 120;
-  const pad = 16;
+function RatingBubbles({ rows }: { rows: { id: number; name: string; rating: number | null }[] }) {
+  const max = Math.max(1, ...rows.map((r) => r.rating ?? 0));
+  const W = 600,
+    H = 120,
+    pad = 16;
   return (
     <div className="overflow-auto">
       <svg width={W} height={H} className="min-w-[600px]">
         {rows.map((r, idx) => {
-          const x = pad + (idx * ((W - pad*2) / Math.max(1, rows.length-1)));
+          const x = pad + (idx * (W - pad * 2)) / Math.max(1, rows.length - 1);
           const val = r.rating ?? 0;
           const radius = 8 + (val / max) * 22;
           return (
-            <g key={r.id} transform={`translate(${x},${H/2})`} >
+            <g key={r.id} transform={`translate(${x},${H / 2})`}>
               <circle r={radius} className="fill-primary-500 opacity-80" />
-              <text textAnchor="middle" y={radius + 14} className="text-[10px] fill-neutral-700">{r.name}</text>
-              <text textAnchor="middle" y={4} className="text-[10px] fill-white font-semibold">{val.toFixed(1)}</text>
+              <text textAnchor="middle" y={radius + 14} className="text-[10px] fill-neutral-700">
+                {r.name}
+              </text>
+              <text textAnchor="middle" y={4} className="text-[10px] fill-white font-semibold">
+                {val.toFixed(1)}
+              </text>
             </g>
           );
         })}
@@ -177,33 +250,41 @@ function RatingBubbles({ rows }: { rows: { id:number; name:string; rating:number
   );
 }
 
-/* =============== Dishes (CRUD + scrollable) =============== */
+/* ============================ Dishes (CRUD) ============================ */
 
 function DishesPanel() {
   const qc = useQueryClient();
-  const { muniId, setMuniId } = useAdminMuniPref();
-
+  const { muniId, setMuniId } = useStickyMuniId();
   const [q, setQ] = useState("");
   const [autoSlug, setAutoSlug] = useState(true);
   const [editing, setEditing] = useState<Partial<Dish> | null>(null);
 
   const listQ = useQuery({
     queryKey: ["admin:dishes", muniId, q],
-    queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined, q }),
+    queryFn: () => listDishes({ municipalityId: muniId ?? undefined, q }),
     staleTime: 15_000,
   });
 
   const createM = useMutation({
-    mutationFn: (payload: any) => AdminAPI.createDish(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin:dishes"] }); setEditing(null); },
+    mutationFn: (payload: any) => createDish(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin:dishes"] });
+      setEditing(null);
+    },
   });
   const updateM = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: any }) => AdminAPI.updateDish(id, payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin:dishes"] }); setEditing(null); },
+    mutationFn: ({ id, payload }: { id: number; payload: any }) => updateDish(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin:dishes"] });
+      setEditing(null);
+    },
   });
   const deleteM = useMutation({
-    mutationFn: (id: number) => AdminAPI.deleteDish(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin:dishes"] }); if (editing?.id === id) setEditing(null); },
+    mutationFn: (id: number) => deleteDish(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin:dishes"] });
+      if (editing?.id === id) setEditing(null);
+    },
   });
 
   const startCreate = () => {
@@ -221,12 +302,16 @@ function DishesPanel() {
       rating: 0,
     });
   };
-  const startEdit = (row: Dish) => setEditing({ ...row });
+  const startEdit = (row: Dish) =>
+    setEditing({
+      ...row,
+      flavor_profile: toArray(row.flavor_profile),
+      ingredients: toArray(row.ingredients),
+    });
 
   useEffect(() => {
     if (autoSlug && editing?.name) {
-      const s = editing.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
-      setEditing(prev => prev ? { ...prev, slug: s } : prev);
+      setEditing((prev) => (prev ? { ...prev, slug: slugify(prev.name || "") } : prev));
     }
   }, [editing?.name, autoSlug]);
 
@@ -238,8 +323,8 @@ function DishesPanel() {
     }
     const payload = {
       ...editing,
-      flavor_profile: editing.flavor_profile ?? [],
-      ingredients: editing.ingredients ?? [],
+      flavor_profile: toArray(editing.flavor_profile),
+      ingredients: toArray(editing.ingredients),
     };
     if (editing.id && editing.id > 0) {
       await updateM.mutateAsync({ id: editing.id, payload });
@@ -271,15 +356,12 @@ function DishesPanel() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
-            <MunicipalitySelect
-              value={muniId}
-              onChange={setMuniId}
-              placeholder="Filter municipality…"
-              persistKey="admin:lastMuniId"
-            />
+            <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Filter municipality…" />
           </div>
-          <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
-            onClick={startCreate}>
+          <button
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
+            onClick={startCreate}
+          >
             <PlusCircle size={16} /> New Dish
           </button>
         </div>
@@ -312,7 +394,7 @@ function DishesPanel() {
                         </button>
                       </td>
                       <td className="p-2">{d.category}</td>
-                      <td className="p-2">{(d.flavor_profile ?? []).join(", ")}</td>
+                      <td className="p-2">{toArray(d.flavor_profile).join(", ") || "—"}</td>
                       <td className="p-2 text-right">{d.rating ?? "-"}</td>
                       <td className="p-2 text-right">
                         <button className="text-red-600 hover:text-red-700" onClick={() => remove(d.id)}>
@@ -343,7 +425,12 @@ function DishesPanel() {
 }
 
 function EditDishCard({
-  editing, setEditing, autoSlug, setAutoSlug, onSave, saving
+  editing,
+  setEditing,
+  autoSlug,
+  setAutoSlug,
+  onSave,
+  saving,
 }: {
   editing: Partial<Dish> | null;
   setEditing: (v: Partial<Dish> | null) => void;
@@ -362,34 +449,43 @@ function EditDishCard({
       </div>
 
       <div className="grid gap-3">
-        <label className="text-sm font-medium">Municipality <span className="text-red-600">*</span></label>
+        <label className="text-sm font-medium">
+          Municipality <span className="text-red-600">*</span>
+        </label>
         <MunicipalitySelect
           value={editing?.municipality_id ?? null}
-          onChange={(id) => setEditing(prev => prev ? { ...prev, municipality_id: id ?? 0 } : prev)}
+          onChange={(id) => setEditing((prev) => (prev ? { ...prev, municipality_id: id ?? 0 } : prev))}
           allowAll={false}
           placeholder="Choose municipality…"
-          persistKey="admin:lastMuniId"
         />
 
         <div className="grid gap-1">
-          <label className="text-sm font-medium">Name <span className="text-red-600">*</span></label>
-          <input className="border rounded px-3 py-2"
+          <label className="text-sm font-medium">
+            Name <span className="text-red-600">*</span>
+          </label>
+          <input
+            className="border rounded px-3 py-2"
             value={editing?.name ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, name: e.target.value } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+          />
         </div>
 
         <div className="grid gap-1">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium">Slug <span className="text-red-600">*</span></label>
+            <label className="text-sm font-medium">
+              Slug <span className="text-red-600">*</span>
+            </label>
             <label className="flex items-center gap-2 text-xs">
               <input type="checkbox" checked={autoSlug} onChange={(e) => setAutoSlug(e.target.checked)} />
               Auto
             </label>
           </div>
-          <input className="border rounded px-3 py-2"
+          <input
+            className="border rounded px-3 py-2"
             value={editing?.slug ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, slug: e.target.value } : prev)}
-            disabled={autoSlug} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, slug: e.target.value } : prev))}
+            disabled={autoSlug}
+          />
         </div>
 
         <div className="grid gap-1">
@@ -397,7 +493,9 @@ function EditDishCard({
           <select
             className="border rounded px-3 py-2"
             value={editing?.category ?? "food"}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, category: e.target.value as Dish["category"] } : prev)}
+            onChange={(e) =>
+              setEditing((prev) => (prev ? { ...prev, category: e.target.value as Dish["category"] } : prev))
+            }
           >
             <option value="food">Food</option>
             <option value="delicacy">Delicacy</option>
@@ -407,59 +505,88 @@ function EditDishCard({
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Image URL</label>
-          <input className="border rounded px-3 py-2"
+          <input
+            className="border rounded px-3 py-2"
             placeholder="https://…"
             value={editing?.image_url ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, image_url: e.target.value } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, image_url: e.target.value } : prev))}
+          />
           {editing?.image_url ? (
             <img
               src={editing.image_url}
               alt="preview"
               className="h-20 w-20 rounded object-cover border"
-              onError={(e) => (e.currentTarget.style.display = "none")}
+              onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
             />
           ) : null}
         </div>
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Description</label>
-          <textarea className="border rounded px-3 py-2" rows={3}
+          <textarea
+            className="border rounded px-3 py-2"
+            rows={3}
             value={editing?.description ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, description: e.target.value } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, description: e.target.value } : prev))}
+          />
         </div>
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Flavor profile (comma-separated)</label>
-          <input className="border rounded px-3 py-2"
-            value={(editing?.flavor_profile ?? []).join(", ")}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, flavor_profile: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
+          <input
+            className="border rounded px-3 py-2"
+            value={toArray(editing?.flavor_profile).join(", ")}
+            onChange={(e) =>
+              setEditing((prev) =>
+                prev ? { ...prev, flavor_profile: toArray(e.target.value) } : prev
+              )
+            }
+          />
         </div>
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Ingredients (comma-separated)</label>
-          <input className="border rounded px-3 py-2"
-            value={(editing?.ingredients ?? []).join(", ")}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, ingredients: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
+          <input
+            className="border rounded px-3 py-2"
+            value={toArray(editing?.ingredients).join(", ")}
+            onChange={(e) =>
+              setEditing((prev) => (prev ? { ...prev, ingredients: toArray(e.target.value) } : prev))
+            }
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-sm font-medium">Popularity</label>
-            <input type="number" className="border rounded px-3 py-2 w-full"
+            <input
+              type="number"
+              className="border rounded px-3 py-2 w-full"
               value={editing?.popularity ?? 0}
-              onChange={(e) => setEditing(prev => prev ? { ...prev, popularity: Number(e.target.value) } : prev)} />
+              onChange={(e) =>
+                setEditing((prev) => (prev ? { ...prev, popularity: Number(e.target.value) } : prev))
+              }
+            />
           </div>
           <div>
             <label className="text-sm font-medium">Rating</label>
-            <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
+            <input
+              type="number"
+              step="0.1"
+              className="border rounded px-3 py-2 w-full"
               value={editing?.rating ?? 0}
-              onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
+              onChange={(e) =>
+                setEditing((prev) => (prev ? { ...prev, rating: Number(e.target.value) } : prev))
+              }
+            />
           </div>
         </div>
 
         <div className="flex items-center justify-end gap-2 pt-2">
-          <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
-            onClick={onSave} disabled={saving}>
+          <button
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
+            onClick={onSave}
+            disabled={saving}
+          >
             <Save size={16} /> Save
           </button>
         </div>
@@ -468,33 +595,43 @@ function EditDishCard({
   );
 }
 
-/* =============== Restaurants (CRUD + scrollable) =============== */
+/* ========================= Restaurants (CRUD) ========================== */
 
 function RestaurantsPanel() {
   const qc = useQueryClient();
-  const { muniId, setMuniId } = useAdminMuniPref();
+  const { muniId, setMuniId } = useStickyMuniId();
 
   const [q, setQ] = useState("");
   const [autoSlug, setAutoSlug] = useState(true);
-  const [editing, setEditing] = useState<Partial<Restaurant> | null>(null);
+  const [editing, setEditing] = useState<Partial<ReturnType<typeof normalizeRestaurant>> | null>(null);
 
   const listQ = useQuery({
     queryKey: ["admin:restaurants", muniId, q],
-    queryFn: () => AdminAPI.getRestaurants({ municipalityId: muniId ?? undefined, q }),
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined, q }),
     staleTime: 15_000,
+    select: (rows) => (rows ?? []).map(normalizeRestaurant),
   });
 
   const createM = useMutation({
-    mutationFn: (payload: any) => AdminAPI.createRestaurant(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin:restaurants"] }); setEditing(null); },
+    mutationFn: (payload: any) => createRestaurant(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin:restaurants"] });
+      setEditing(null);
+    },
   });
   const updateM = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: any }) => AdminAPI.updateRestaurant(id, payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin:restaurants"] }); setEditing(null); },
+    mutationFn: ({ id, payload }: { id: number; payload: any }) => updateRestaurant(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin:restaurants"] });
+      setEditing(null);
+    },
   });
   const deleteM = useMutation({
-    mutationFn: (id: number) => AdminAPI.deleteRestaurant(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin:restaurants"] }); if (editing?.id === id) setEditing(null); },
+    mutationFn: (id: number) => deleteRestaurant(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin:restaurants"] });
+      if ((editing as any)?.id === id) setEditing(null);
+    },
   });
 
   const startCreate = () => {
@@ -514,12 +651,11 @@ function RestaurantsPanel() {
       lng: 0,
     });
   };
-  const startEdit = (row: Restaurant) => setEditing({ ...row });
+  const startEdit = (row: any) => setEditing(normalizeRestaurant(row));
 
   useEffect(() => {
     if (autoSlug && editing?.name) {
-      const s = editing.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
-      setEditing(prev => prev ? { ...prev, slug: s } : prev);
+      setEditing((prev: any) => (prev ? { ...prev, slug: slugify(prev.name || "") } : prev));
     }
   }, [editing?.name, autoSlug]);
 
@@ -529,9 +665,9 @@ function RestaurantsPanel() {
       alert("Municipality, Name, Slug and Address are required.");
       return;
     }
-    const payload = { ...editing, cuisine_types: editing.cuisine_types ?? [] };
+    const payload = { ...editing, cuisine_types: toArray(editing.cuisine_types) };
     if (editing.id && editing.id > 0) {
-      await updateM.mutateAsync({ id: editing.id, payload });
+      await updateM.mutateAsync({ id: editing.id as number, payload });
     } else {
       await createM.mutateAsync(payload as any);
     }
@@ -561,21 +697,18 @@ function RestaurantsPanel() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
-            <MunicipalitySelect
-              value={muniId}
-              onChange={setMuniId}
-              placeholder="Filter municipality…"
-              persistKey="admin:lastMuniId"
-            />
+            <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Filter municipality…" />
           </div>
-          <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
-            onClick={startCreate}>
+          <button
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
+            onClick={startCreate}
+          >
             <PlusCircle size={16} /> New Restaurant
           </button>
         </div>
 
         <div className="border rounded overflow-hidden">
-          <div className="max-h=[520px] md:max-h-[520px] overflow-auto">
+          <div className="max-h-[520px] overflow-auto">
             {listQ.isLoading ? (
               <div className="p-4 text-sm text-neutral-500">Loading…</div>
             ) : listQ.error ? (
@@ -594,7 +727,7 @@ function RestaurantsPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {listQ.data!.map((r) => (
+                  {listQ.data!.map((r: any) => (
                     <tr key={r.id} className="border-t hover:bg-neutral-50">
                       <td className="p-2">
                         <button className="text-primary-700 hover:underline" onClick={() => startEdit(r)}>
@@ -602,7 +735,7 @@ function RestaurantsPanel() {
                         </button>
                       </td>
                       <td className="p-2">{r.kind}</td>
-                      <td className="p-2">{(r.cuisine_types ?? []).join(", ")}</td>
+                      <td className="p-2">{toArray(r.cuisine_types).join(", ") || "—"}</td>
                       <td className="p-2 text-right">{r.rating ?? "-"}</td>
                       <td className="p-2 text-right">
                         <button className="text-red-600 hover:text-red-700" onClick={() => remove(r.id)}>
@@ -620,8 +753,8 @@ function RestaurantsPanel() {
 
       <div className="lg:col-span-2">
         <EditRestaurantCard
-          editing={editing}
-          setEditing={setEditing}
+          editing={editing as any}
+          setEditing={setEditing as any}
           autoSlug={autoSlug}
           setAutoSlug={setAutoSlug}
           onSave={save}
@@ -632,11 +765,23 @@ function RestaurantsPanel() {
   );
 }
 
+function normalizeRestaurant(row: any) {
+  return {
+    ...row,
+    cuisine_types: toArray(row?.cuisine_types),
+  };
+}
+
 function EditRestaurantCard({
-  editing, setEditing, autoSlug, setAutoSlug, onSave, saving
+  editing,
+  setEditing,
+  autoSlug,
+  setAutoSlug,
+  onSave,
+  saving,
 }: {
-  editing: Partial<Restaurant> | null;
-  setEditing: (v: Partial<Restaurant> | null) => void;
+  editing: Partial<any> | null;
+  setEditing: (v: Partial<any> | null) => void;
   autoSlug: boolean;
   setAutoSlug: (v: boolean) => void;
   onSave: () => void;
@@ -652,34 +797,43 @@ function EditRestaurantCard({
       </div>
 
       <div className="grid gap-3">
-        <label className="text-sm font-medium">Municipality <span className="text-red-600">*</span></label>
+        <label className="text-sm font-medium">
+          Municipality <span className="text-red-600">*</span>
+        </label>
         <MunicipalitySelect
           value={editing?.municipality_id ?? null}
-          onChange={(id) => setEditing(prev => prev ? { ...prev, municipality_id: id ?? 0 } : prev)}
+          onChange={(id) => setEditing((prev) => (prev ? { ...prev, municipality_id: id ?? 0 } : prev))}
           allowAll={false}
           placeholder="Choose municipality…"
-          persistKey="admin:lastMuniId"
         />
 
         <div className="grid gap-1">
-          <label className="text-sm font-medium">Name <span className="text-red-600">*</span></label>
-          <input className="border rounded px-3 py-2"
+          <label className="text-sm font-medium">
+            Name <span className="text-red-600">*</span>
+          </label>
+          <input
+            className="border rounded px-3 py-2"
             value={editing?.name ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, name: e.target.value } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+          />
         </div>
 
         <div className="grid gap-1">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium">Slug <span className="text-red-600">*</span></label>
+            <label className="text-sm font-medium">
+              Slug <span className="text-red-600">*</span>
+            </label>
             <label className="flex items-center gap-2 text-xs">
               <input type="checkbox" checked={autoSlug} onChange={(e) => setAutoSlug(e.target.checked)} />
               Auto
             </label>
           </div>
-          <input className="border rounded px-3 py-2"
+          <input
+            className="border rounded px-3 py-2"
             value={editing?.slug ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, slug: e.target.value } : prev)}
-            disabled={autoSlug} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, slug: e.target.value } : prev))}
+            disabled={autoSlug}
+          />
         </div>
 
         <div className="grid gap-1">
@@ -687,7 +841,9 @@ function EditRestaurantCard({
           <select
             className="border rounded px-3 py-2"
             value={editing?.kind ?? "restaurant"}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, kind: e.target.value as Restaurant["kind"] } : prev)}
+            onChange={(e) =>
+              setEditing((prev) => (prev ? { ...prev, kind: e.target.value as any } : prev))
+            }
           >
             <option value="restaurant">Restaurant</option>
             <option value="stall">Stall</option>
@@ -700,54 +856,73 @@ function EditRestaurantCard({
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Image URL</label>
-          <input className="border rounded px-3 py-2"
+          <input
+            className="border rounded px-3 py-2"
             placeholder="https://…"
             value={editing?.image_url ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, image_url: e.target.value } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, image_url: e.target.value } : prev))}
+          />
           {editing?.image_url ? (
             <img
               src={editing.image_url}
               alt="preview"
               className="h-20 w-20 rounded object-cover border"
-              onError={(e) => (e.currentTarget.style.display = "none")}
+              onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
             />
           ) : null}
         </div>
 
         <div className="grid gap-1">
-          <label className="text-sm font-medium">Address <span className="text-red-600">*</span></label>
-          <input className="border rounded px-3 py-2"
+          <label className="text-sm font-medium">
+            Address <span className="text-red-600">*</span>
+          </label>
+          <input
+            className="border rounded px-3 py-2"
             value={editing?.address ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, address: e.target.value } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, address: e.target.value } : prev))}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-sm font-medium">Latitude</label>
-            <input type="number" className="border rounded px-3 py-2 w-full"
+            <input
+              type="number"
+              className="border rounded px-3 py-2 w-full"
               value={editing?.lat ?? 0}
-              onChange={(e) => setEditing(prev => prev ? { ...prev, lat: Number(e.target.value) } : prev)} />
+              onChange={(e) => setEditing((prev) => (prev ? { ...prev, lat: Number(e.target.value) } : prev))}
+            />
           </div>
           <div>
             <label className="text-sm font-medium">Longitude</label>
-            <input type="number" className="border rounded px-3 py-2 w-full"
+            <input
+              type="number"
+              className="border rounded px-3 py-2 w-full"
               value={editing?.lng ?? 0}
-              onChange={(e) => setEditing(prev => prev ? { ...prev, lng: Number(e.target.value) } : prev)} />
+              onChange={(e) => setEditing((prev) => (prev ? { ...prev, lng: Number(e.target.value) } : prev))}
+            />
           </div>
         </div>
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Description</label>
-          <textarea className="border rounded px-3 py-2" rows={3}
+          <textarea
+            className="border rounded px-3 py-2"
+            rows={3}
             value={editing?.description ?? ""}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, description: e.target.value } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, description: e.target.value } : prev))}
+          />
         </div>
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Cuisine types (comma-separated)</label>
-          <input className="border rounded px-3 py-2"
-            value={(editing?.cuisine_types ?? []).join(", ")}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, cuisine_types: e.target.value.split(",").map(s => s.trim()).filter(Boolean) } : prev)} />
+          <input
+            className="border rounded px-3 py-2"
+            value={toArray(editing?.cuisine_types).join(", ")}
+            onChange={(e) =>
+              setEditing((prev) => (prev ? { ...prev, cuisine_types: toArray(e.target.value) } : prev))
+            }
+          />
         </div>
 
         <div className="grid gap-1">
@@ -755,7 +930,9 @@ function EditRestaurantCard({
           <select
             className="border rounded px-3 py-2"
             value={editing?.price_range ?? "moderate"}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, price_range: e.target.value as Restaurant["price_range"] } : prev)}
+            onChange={(e) =>
+              setEditing((prev) => (prev ? { ...prev, price_range: e.target.value as any } : prev))
+            }
           >
             <option value="budget">Budget</option>
             <option value="moderate">Moderate</option>
@@ -765,14 +942,21 @@ function EditRestaurantCard({
 
         <div className="grid gap-1">
           <label className="text-sm font-medium">Rating</label>
-          <input type="number" step="0.1" className="border rounded px-3 py-2 w-full"
+          <input
+            type="number"
+            step="0.1"
+            className="border rounded px-3 py-2 w-full"
             value={editing?.rating ?? 0}
-            onChange={(e) => setEditing(prev => prev ? { ...prev, rating: Number(e.target.value) } : prev)} />
+            onChange={(e) => setEditing((prev) => (prev ? { ...prev, rating: Number(e.target.value) } : prev))}
+          />
         </div>
 
         <div className="flex items-center justify-end gap-2 pt-2">
-          <button className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
-            onClick={onSave} disabled={saving}>
+          <button
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-primary-600 text-white hover:bg-primary-700"
+            onClick={onSave}
+            disabled={saving}
+          >
             <Save size={16} /> Save
           </button>
         </div>
@@ -781,52 +965,54 @@ function EditRestaurantCard({
   );
 }
 
-/* =============== Curation =============== */
+/* ================================ Curation =============================== */
 
 function CurationPanel() {
-  const { muniId, setMuniId } = useAdminMuniPref();
+  const { muniId, setMuniId } = useStickyMuniId();
 
   const dishesQ = useQuery({
     queryKey: ["curation:dishes", muniId],
-    queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined }),
+    queryFn: () => listDishes({ municipalityId: muniId ?? undefined }),
     enabled: muniId !== null,
   });
   const restQ = useQuery({
     queryKey: ["curation:restaurants", muniId],
-    queryFn: () => AdminAPI.getRestaurants({ municipalityId: muniId ?? undefined }),
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined }),
     enabled: muniId !== null,
   });
 
-  // Mutations: ensure your backend updates featured/featured_rank & signature/signature_rank respectively
-  const setFeat = useMutation({
-    mutationFn: ({ id, featured, rank }: { id: number; featured: 0|1; rank: number|null }) =>
-      AdminAPI.setDishFeatured(id, featured, rank),
+  const setDish = useMutation({
+    mutationFn: ({ id, is_signature, panel_rank }: { id: number; is_signature: 0 | 1; panel_rank: number | null }) =>
+      setDishCuration(id, { is_signature, panel_rank }),
     onSuccess: () => {
-      // Refresh lists used by Map/MunicipalityCard if you keep them in react-query elsewhere
-    }
+      // soft refresh list so you see ranks update immediately
+      dishesQ.refetch();
+    },
   });
 
-  const setSig = useMutation({
-    mutationFn: ({ id, signature, rank }: { id: number; signature: 0|1; rank: number|null }) =>
-      AdminAPI.setRestaurantSignature(id, signature, rank),
+  const setResto = useMutation({
+    mutationFn: ({
+      id,
+      featured,
+      featured_rank,
+    }: {
+      id: number;
+      featured: 0 | 1;
+      featured_rank: number | null;
+    }) => setRestaurantCuration(id, { featured, featured_rank }),
+    onSuccess: () => restQ.refetch(),
   });
 
   const dishes = dishesQ.data ?? [];
-  const foods = dishes.filter(d => d.category === "food");
-  const delicacies = dishes.filter(d => d.category === "delicacy");
+  const foods = dishes.filter((d) => d.category === "food");
+  const delicacies = dishes.filter((d) => d.category === "delicacy");
   const restaurants = restQ.data ?? [];
 
   return (
     <main className="space-y-6">
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium">Municipality</label>
-        <MunicipalitySelect
-          value={muniId}
-          onChange={setMuniId}
-          placeholder="Choose municipality…"
-          allowAll={false}
-          persistKey="admin:lastMuniId"
-        />
+        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Choose municipality…" allowAll={false} />
       </div>
 
       {muniId === null ? (
@@ -837,14 +1023,14 @@ function CurationPanel() {
             <CurateList
               title="Top 3 Foods"
               items={foods}
-              getRank={(d) => d.featured_rank ?? null}
-              setRank={(d, rank) => setFeat.mutate({ id: d.id, featured: rank ? 1 : 0, rank })}
+              rank={(d: any) => d.panel_rank ?? null}
+              setRank={(d: any, n: number | null) => setDish.mutate({ id: d.id, is_signature: n ? 1 : 0, panel_rank: n })}
             />
             <CurateList
               title="Top 3 Delicacies"
               items={delicacies}
-              getRank={(d) => d.featured_rank ?? null}
-              setRank={(d, rank) => setFeat.mutate({ id: d.id, featured: rank ? 1 : 0, rank })}
+              rank={(d: any) => d.panel_rank ?? null}
+              setRank={(d: any, n: number | null) => setDish.mutate({ id: d.id, is_signature: n ? 1 : 0, panel_rank: n })}
             />
           </section>
 
@@ -852,8 +1038,8 @@ function CurationPanel() {
             <CurateList
               title="Top 3 Restaurants"
               items={restaurants}
-              getRank={(r: any) => r.signature_rank ?? null}
-              setRank={(r: any, rank: number | null) => setSig.mutate({ id: r.id, signature: rank ? 1 : 0, rank })}
+              rank={(r: any) => r.featured_rank ?? null}
+              setRank={(r: any, n: number | null) => setResto.mutate({ id: r.id, featured: n ? 1 : 0, featured_rank: n })}
             />
           </section>
         </>
@@ -862,28 +1048,37 @@ function CurationPanel() {
   );
 }
 
-function CurateList<T extends { id: number; name: string }>(
-  { title, items, getRank, setRank }:
-  { title: string; items: T[]; getRank: (x: T) => number | null; setRank: (x: T, rank: number | null) => void }
-) {
-  const sorted = [...items].sort((a, b) => (getRank(a) ?? 99) - (getRank(b) ?? 99));
+function CurateList<T extends { id: number; name: string }>({
+  title,
+  items,
+  rank,
+  setRank,
+}: {
+  title: string;
+  items: T[];
+  rank: (x: T) => number | null;
+  setRank: (x: T, n: number | null) => void;
+}) {
+  const sorted = [...items].sort((a, b) => (rank(a) ?? 99) - (rank(b) ?? 99));
   return (
     <div className="border rounded">
       <div className="px-3 py-2 border-b font-medium">{title}</div>
       <ul className="max-h-[360px] overflow-auto divide-y">
-        {sorted.map(item => {
-          const rank = getRank(item);
+        {sorted.map((item) => {
+          const r = rank(item);
           return (
             <li key={item.id} className="p-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="w-6 text-center font-mono">{rank ?? "-"}</span>
+                <span className="w-7 text-center font-mono rounded bg-neutral-100">{r ?? "–"}</span>
                 <span>{item.name}</span>
               </div>
               <div className="flex items-center gap-2">
-                {[1,2,3].map(n => (
+                {[1, 2, 3].map((n) => (
                   <button
                     key={n}
-                    className={`px-2 py-1 rounded border text-sm ${rank===n ? "bg-primary-600 text-white border-primary-600" : "hover:bg-neutral-50"}`}
+                    className={`px-2 py-1 rounded border text-sm ${
+                      r === n ? "bg-primary-600 text-white border-primary-600" : "hover:bg-neutral-50"
+                    }`}
                     onClick={() => setRank(item, n)}
                   >
                     #{n}
@@ -902,46 +1097,52 @@ function CurateList<T extends { id: number; name: string }>(
   );
 }
 
-/* =============== Linking (uses public fallback for linked IDs) =============== */
+/* ================================ Linking =============================== */
 
 function LinkingPanel() {
-  const { muniId, setMuniId } = useAdminMuniPref();
+  const { muniId, setMuniId } = useStickyMuniId();
   const [qDish, setQDish] = useState("");
   const [qResto, setQResto] = useState("");
   const [selectedDish, setSelectedDish] = useState<Dish | null>(null);
 
   const dishesQ = useQuery({
     queryKey: ["link:dishes", muniId, qDish],
-    queryFn: () => AdminAPI.getDishes({ municipalityId: muniId ?? undefined, q: qDish || undefined }),
+    queryFn: () => listDishes({ municipalityId: muniId ?? undefined, q: qDish || undefined }),
     enabled: muniId !== null,
   });
   const restosQ = useQuery({
     queryKey: ["link:restaurants", muniId, qResto],
-    queryFn: () => AdminAPI.getRestaurants({ municipalityId: muniId ?? undefined, q: qResto || undefined }),
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined, q: qResto || undefined }),
     enabled: muniId !== null,
   });
 
+  // Load linked restaurant IDs — try admin route first, fallback to public filter by dishId (if your API supports it)
   const linkedIdsQ = useQuery({
-    queryKey: ["link:linkedIds", selectedDish?.id],
+    queryKey: ["link:ids", selectedDish?.id],
     enabled: !!selectedDish?.id,
     queryFn: async () => {
-      if (!selectedDish?.id) return [];
-      // Try admin endpoint first (if your backend has it). If 404, fallback to public route /api/restaurants/by-dish/:dishId
+      if (!selectedDish?.id) return [] as number[];
       try {
-        const ids = await AdminAPI.getLinkedRestaurantIds(selectedDish.id);
-        return ids;
+        const rows: any[] = await listRestaurantsForDish(selectedDish.id);
+        // Accept either {id:number} or full restaurant rows
+        return rows.map((r: any) => (typeof r.id === "number" ? r.id : r.restaurant_id)).filter(Boolean);
       } catch {
-        const res = await fetch(`${PUBLIC_API}/api/restaurants/by-dish/${selectedDish.id}`);
-        if (!res.ok) return [];
-        const rows: { id: number }[] = await res.json();
-        return rows.map(r => r.id);
+        const rows = await listRestaurants({ dishId: selectedDish.id });
+        return (rows ?? []).map((r: any) => r.id);
       }
     },
   });
 
   const linkM = useMutation({
-    mutationFn: ({ dish_id, restaurant_id, add }: { dish_id: number; restaurant_id: number; add: boolean }) =>
-      add ? AdminAPI.linkDishRestaurant(dish_id, restaurant_id) : AdminAPI.unlinkDishRestaurant(dish_id, restaurant_id),
+    mutationFn: ({
+      dish_id,
+      restaurant_id,
+      add,
+    }: {
+      dish_id: number;
+      restaurant_id: number;
+      add: boolean;
+    }) => (add ? linkDishRestaurant(dish_id, restaurant_id) : unlinkDishRestaurant(dish_id, restaurant_id)),
     onSuccess: () => linkedIdsQ.refetch(),
   });
 
@@ -951,13 +1152,7 @@ function LinkingPanel() {
     <main className="space-y-6">
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium">Municipality</label>
-        <MunicipalitySelect
-          value={muniId}
-          onChange={setMuniId}
-          placeholder="Choose municipality…"
-          allowAll={false}
-          persistKey="admin:lastMuniId"
-        />
+        <MunicipalitySelect value={muniId} onChange={setMuniId} placeholder="Choose municipality…" allowAll={false} />
       </div>
 
       {muniId === null ? (
@@ -976,9 +1171,14 @@ function LinkingPanel() {
               />
             </div>
             <ul className="max-h-[420px] overflow-auto divide-y">
-              {(dishesQ.data ?? []).map(d => (
-                <li key={d.id} className={`p-2 cursor-pointer ${selectedDish?.id === d.id ? "bg-primary-50" : "hover:bg-neutral-50"}`}
-                  onClick={() => setSelectedDish(d)}>
+              {(dishesQ.data ?? []).map((d) => (
+                <li
+                  key={d.id}
+                  className={`p-2 cursor-pointer ${
+                    selectedDish?.id === d.id ? "bg-primary-50" : "hover:bg-neutral-50"
+                  }`}
+                  onClick={() => setSelectedDish(d)}
+                >
                   <div className="font-medium">{d.name}</div>
                   <div className="text-xs text-neutral-500">{d.category}</div>
                 </li>
@@ -1003,19 +1203,23 @@ function LinkingPanel() {
               <div className="p-3 text-sm text-neutral-500">Select a dish to manage links.</div>
             ) : (
               <ul className="max-h-[420px] overflow-auto divide-y">
-                {(restosQ.data ?? []).map(r => {
+                {(restosQ.data ?? []).map((r: any) => {
                   const checked = linkedSet.has(r.id);
                   return (
                     <li key={r.id} className="p-2 flex items-center justify-between">
                       <div>
                         <div className="font-medium">{r.name}</div>
-                        <div className="text-xs text-neutral-500">{r.kind} • {(r.cuisine_types ?? []).join(", ")}</div>
+                        <div className="text-xs text-neutral-500">
+                          {r.kind} • {toArray(r.cuisine_types).join(", ") || "—"}
+                        </div>
                       </div>
                       <label className="inline-flex items-center gap-2">
                         <input
                           type="checkbox"
                           checked={checked}
-                          onChange={(e) => linkM.mutate({ dish_id: selectedDish.id!, restaurant_id: r.id, add: e.target.checked })}
+                          onChange={(e) =>
+                            linkM.mutate({ dish_id: selectedDish.id!, restaurant_id: r.id, add: e.target.checked })
+                          }
                         />
                         {checked ? <Check size={16} className="text-primary-600" /> : <LinkIcon size={16} className="text-neutral-400" />}
                       </label>
