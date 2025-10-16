@@ -643,7 +643,9 @@ function LinkingTab() {
                           {!isLinked ? (
                             <button onClick={() => linkM.mutate({ dish_id: selDish!.id, restaurant_id: r.id })} disabled={linkM.isPending} className="px-3 py-1.5 rounded border">Link</button>
                           ) : (
-                            <button className="px-3 py-1.5 rounded border text-red-600" onClick={async () => { if (await useConfirm()("Unlink?")) unlinkM.mutate({ dish_id: selDish!.id, restaurant_id: r.id }); }} disabled={unlinkM.isPending}>Unlink</button>
+                            <button className="px-3 py-1.5 rounded border text-red-600" onClick={() => selDish && unlinkM.mutate({ dish_id: selDish.id, restaurant_id: r.id })}>
+                          Unlink
+                        </button>
                           )}
                         </div>
                       </div>
