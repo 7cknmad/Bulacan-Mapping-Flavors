@@ -1,6 +1,3 @@
-// src/utils/adminApi.ts
-// Admin-only API client that talks to your admin API server (separate from the public API).
-// It also includes a couple of helpers (slugify, coerceStringArray) used by the UI.
 
 export const ADMIN = (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
 
@@ -112,7 +109,7 @@ export type Restaurant = {
 
 /* ================== Lists & CRUD ================== */
 // Municipalities
-export const listMunicipalities = () => get<Municipality[]>(`/api/municipalities`);
+export const listMunicipalities = () => get<Municipality[]>(`/admin/municipalities`);
 
 // Dishes
 export const listDishes = (opts: { municipalityId?: number; category?: string; q?: string; signature?: 0 | 1 } = {}) => {
@@ -122,11 +119,11 @@ export const listDishes = (opts: { municipalityId?: number; category?: string; q
   if (opts.q) qs.set("q", String(opts.q));
   if (opts.signature != null) qs.set("signature", String(opts.signature));
   const suf = qs.toString() ? `?${qs.toString()}` : "";
-  return get<Dish[]>(`/api/dishes${suf}`);
+  return get<Dish[]>(`/admin/dishes${suf}`);
 };
-export const createDish = (payload: Partial<Dish>) => post<Dish>(`/api/dishes`, payload);
-export const updateDish = (id: number, payload: Partial<Dish>) => patch<Dish>(`/api/dishes/${id}`, payload);
-export const deleteDish = (id: number) => del<null>(`/api/dishes/${id}`);
+export const createDish = (payload: Partial<Dish>) => post<Dish>(`/admin/dishes`, payload);
+export const updateDish = (id: number, payload: Partial<Dish>) => patch<Dish>(`/admin/dishes/${id}`, payload);
+export const deleteDish = (id: number) => del<null>(`/admin/dishes/${id}`);
 
 // Restaurants
 export const listRestaurants = (opts: { municipalityId?: number; dishId?: number; q?: string; featured?: 0 | 1 } = {}) => {
@@ -136,11 +133,11 @@ export const listRestaurants = (opts: { municipalityId?: number; dishId?: number
   if (opts.q) qs.set("q", String(opts.q));
   if (opts.featured != null) qs.set("featured", String(opts.featured));
   const suf = qs.toString() ? `?${qs.toString()}` : "";
-  return get<Restaurant[]>(`/api/restaurants${suf}`);
+  return get<Restaurant[]>(`/admin/restaurants${suf}`);
 };
-export const createRestaurant = (payload: Partial<Restaurant>) => post<Restaurant>(`/api/restaurants`, payload);
-export const updateRestaurant = (id: number, payload: Partial<Restaurant>) => patch<Restaurant>(`/api/restaurants/${id}`, payload);
-export const deleteRestaurant = (id: number) => del<null>(`/api/restaurants/${id}`);
+export const createRestaurant = (payload: Partial<Restaurant>) => post<Restaurant>(`/admin/restaurants`, payload);
+export const updateRestaurant = (id: number, payload: Partial<Restaurant>) => patch<Restaurant>(`/admin/restaurants/${id}`, payload);
+export const deleteRestaurant = (id: number) => del<null>(`/admin/restaurants/${id}`);
 
 /* ================== Linking ================== */
 export const listRestaurantsForDish = (dishId: number) =>
@@ -165,10 +162,10 @@ export const unlinkDishRestaurant = (dish_id: number, restaurant_id: number) =>
 
 /* ================== Curation (enforce in UI, patch here) ================== */
 export const setDishCuration = (id: number, payload: { is_signature?: 0 | 1; panel_rank?: number | null }) =>
-  patch<Dish>(`/api/dishes/${id}`, payload);
+  patch<Dish>(`/admin/dishes/${id}`, payload);
 
 export const setRestaurantCuration = (id: number, payload: { featured?: 0 | 1; featured_rank?: number | null }) =>
-  patch<Restaurant>(`/api/restaurants/${id}`, payload);
+  patch<Restaurant>(`/admin/restaurants/${id}`, payload);
 
 /* ================== Analytics ================== */
 export const getAnalyticsSummary = () =>
