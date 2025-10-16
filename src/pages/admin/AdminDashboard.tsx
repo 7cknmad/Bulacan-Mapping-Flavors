@@ -120,11 +120,11 @@ function AnalyticsTab() {
 
   const [type, setType] = useState<"bar" | "line" | "pie">("bar");
   const [stacked, setStacked] = useState(false);
-
+  const counts = summaryQ.data?.counts ?? { dishes: 0, restaurants: 0, municipalities: 0 };
   const cards = [
-    { label: "Dishes", value: summaryQ.data?.dishes ?? 0 },
-    { label: "Restaurants", value: summaryQ.data?.restaurants ?? 0 },
-    { label: "Municipalities", value: summaryQ.data?.municipalities ?? 0 },
+    { label: "Dishes", value: counts.dishes },
+    { label: "Restaurants", value: counts.restaurants },
+    { label: "Municipalities", value: counts.municipalities },
   ];
 
   const rows = (perMuniQ.data ?? []).map((r) => ({
@@ -573,14 +573,17 @@ function LinkingTab() {
     queryFn: () => (selDish ? listRestaurantsForDish(selDish.id) : Promise.resolve([])),
   });
 
+    type LinkArgs = { dish_id: number; restaurant_id: number };
   
   const linkM = useMutation({
-    mutationFn: ({ dish_id, restaurant_id }: { dish_id: number; restaurant_id: number }) => linkDishRestaurant(dish_id, restaurant_id),
-    onSuccess: () => linkedQ.refetch()
+    mutationFn: ({ dish_id, restaurant_id }: LinkArgs) => linkDishRestaurant(dish_id, restaurant_id),
+    onSuccess: () => { linkedQ.refetch(); toast("Linked"); },
+    onError: (e: any) => toast(e?.message ?? "Link failed"),
   });
   const unlinkM = useMutation({
-    mutationFn: ({ dish_id, restaurant_id }: { dish_id: number; restaurant_id: number }) => unlinkDishRestaurant(dish_id, restaurant_id),
-    onSuccess: () => linkedQ.refetch()
+    mutationFn: ({ dish_id, restaurant_id }: LinkArgs) => unlinkDishRestaurant(dish_id, restaurant_id),
+    onSuccess: () => { linkedQ.refetch(); toast("Unlinked"); },
+    onError: (e: any) => toast(e?.message ?? "Unlink failed"),
   });
 
   const linkedIds = new Set((linkedQ.data ?? []).map((r: any) => r.id ?? r.restaurant_id ?? r));
