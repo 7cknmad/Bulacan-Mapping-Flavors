@@ -1,63 +1,34 @@
-// src/pages/admin/AdminLogin.tsx
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminAuth } from "../../utils/adminApi";
+
 export default function AdminLogin() {
   const nav = useNavigate();
-  const loc = useLocation() as any;
-
+  const loc = useLocation();
+  const qc = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      await adminAuth.login(email, password);
-      const to = loc?.state?.from?.pathname ?? "/admin";
+  const m = useMutation({
+    mutationFn: () => adminAuth.login(email, password),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['admin:me'] });
+      const to = (loc.state as any)?.from?.pathname || "/admin";
       nav(to, { replace: true });
-    } catch (e: any) {
-      setErr(e?.message || "Login failed");
-    } finally {
-      setBusy(false);
     }
-  }
+  });
 
   return (
-    <main className="max-w-md mx-auto p-6">
-      <h1 className="text-2xl font-semibold mb-4">Admin Dashboard — Login</h1>
-      <form onSubmit={onSubmit} className="space-y-4">
-        {err && <div className="p-3 text-sm bg-red-50 border border-red-200 text-red-700 rounded">{err}</div>}
-        <div>
-          <label className="block text-sm mb-1">Email</label>
-          <input
-            className="w-full border rounded px-3 py-2"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="admin@bulacan.local"
-            required
-            autoFocus
-          />
-        </div>
-        <div>
-          <label className="block text-sm mb-1">Password</label>
-          <input
-            className="w-full border rounded px-3 py-2"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            required
-          />
-        </div>
-        <button className="btn btn-primary px-4 py-2" disabled={busy} type="submit">
-          {busy ? "Signing in…" : "Sign in"}
+    <main className="container mx-auto max-w-md py-12">
+      <h1 className="text-2xl font-semibold mb-6">Admin Login</h1>
+      <div className="space-y-3 bg-white p-6 rounded shadow">
+        <input className="input input-bordered w-full" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} />
+        <input className="input input-bordered w-full" placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} />
+        <button className="btn btn-primary w-full" disabled={m.isPending} onClick={()=>m.mutate()}>
+          {m.isPending ? 'Signing in…' : 'Sign in'}
         </button>
-      </form>
+        {m.isError && <div className="text-red-600 text-sm">Login failed.</div>}
+      </div>
     </main>
   );
 }
