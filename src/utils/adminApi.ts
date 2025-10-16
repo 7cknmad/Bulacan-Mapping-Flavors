@@ -1,15 +1,14 @@
 // src/utils/adminApi.ts
-export const ADMIN_API =
-  (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
+export const ADMIN_API = (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
 
-// generic fetch (no auth)
+// generic fetch
 async function req<T = any>(method: string, path: string, body?: any): Promise<T> {
   const url = path.startsWith("http") ? path : `${ADMIN_API}${path}`;
   const res = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
-    credentials: "omit",
+    credentials: "omit", // no cookies while we develop without login
   });
   const txt = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status} ${txt || ""}`);
@@ -19,6 +18,9 @@ const get = <T=any>(p:string)=>req<T>("GET",p);
 const post=<T=any>(p:string,b?:any)=>req<T>("POST",p,b);
 const patch=<T=any>(p:string,b?:any)=>req<T>("PATCH",p,b);
 const del =<T=any>(p:string)=>req<T>("DELETE",p);
+
+/* Health to auto-hide any “admin disabled” banner */
+export const adminHealth = () => get<{ok:true}>(`/admin/health`).then(()=>true).catch(()=>false);
 
 export type Municipality = { id:number; name:string; slug:string };
 export type Dish = {
@@ -83,14 +85,11 @@ export const unlinkDishRestaurant = (dish_id:number, restaurant_id:number) =>
 // Curation
 export const setDishCuration = (id:number, payload: { is_signature:0|1|null; panel_rank:number|null }) =>
   patch<Dish>(`/admin/dishes/${id}/curation`, payload);
-
 export const setRestaurantCuration = (id:number, payload: { featured:0|1|null; featured_rank:number|null }) =>
   patch<Restaurant>(`/admin/restaurants/${id}/curation`, payload);
 
-// Analytics
-export const getAnalyticsSummary = () => get<{
-  counts: { dishes:number; restaurants:number };
-  perMunicipality: Array<{ slug:string; dishes:number; restaurants:number }>;
-  topDishes: Array<{ id:number; name:string; panel_rank:number|null }>;
-  topRestaurants: Array<{ id:number; name:string; featured_rank:number|null }>;
-}>(`/admin/analytics/summary`);
+// Analytics (renamed to avoid adblock)
+export const getAnalyticsSummary = () =>
+  get<{ counts:{dishes:number; restaurants:number}, perMunicipality:Array<{slug:string; dishes:number; restaurants:number}>, topDishes:any[], topRestaurants:any[] }>(
+    `/admin/stats/summary`
+  );
