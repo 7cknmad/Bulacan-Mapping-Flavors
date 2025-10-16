@@ -84,7 +84,7 @@ const pool = mysql.createPool({
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASS || '',
-  database: process.env.DB_NAME || 'bulacan',
+  database: process.env.DB_NAME || 'bulacan_flavors',
   connectionLimit: 10,
   namedPlaceholders: true,
   timezone: 'Z',
