@@ -774,8 +774,22 @@ function LinkingTab() {
     enabled: !!selDish,
   });
 
-  const linkM = useMutation({ mutationFn: ({ dish_id, restaurant_id }: { dish_id: number; restaurant_id: number }) => linkDishRestaurant({ dish_id, restaurant_id }), onSuccess: () => { linkedQ.refetch(); toast("Linked"); } });
-  const unlinkM = useMutation({ mutationFn: ({ dish_id, restaurant_id }: { dish_id: number; restaurant_id: number }) => unlinkDishRestaurant({ dish_id, restaurant_id }), onSuccess: () => { linkedQ.refetch(); toast("Unlinked"); } });
+  type LinkArgs = {
+  dishId?: number; restaurantId?: number;
+  dish_id?: number; restaurant_id?: number;
+};
+
+  const linkM = useMutation({
+  mutationFn: (args: LinkArgs) => linkDishRestaurant(args),
+  onSuccess: () => { linkedQ.refetch(); toast("Linked"); },
+  onError: (e: any) => toast(e?.message ?? "Link failed"),
+});
+
+const unlinkM = useMutation({
+  mutationFn: (args: LinkArgs) => unlinkDishRestaurant(args),
+  onSuccess: () => { linkedQ.refetch(); toast("Unlinked"); },
+  onError: (e: any) => toast(e?.message ?? "Unlink failed"),
+});
 
   const linkedIds = new Set((linkedQ.data ?? []).map((r: any) => r.id ?? r.restaurant_id ?? r));
   const restaurantsRaw = (restsQ.data ?? []);
@@ -831,9 +845,11 @@ function LinkingTab() {
                         </div>
                         <div className="flex gap-2">
                           {!isLinked ? (
-                            <button className="text-xs px-2 py-1 rounded border" onClick={() => selDish && linkM.mutate({ dish_id: selDish.id, restaurant_id: r.id })}>Link</button>
+                            <button onClick={() => linkM.mutate({ dishId: selDish!.id, restaurantId: r.id })} disabled={linkM.isPending}>
+                              Link
+                            </button>
                           ) : (
-                            <button className="text-xs px-2 py-1 rounded border text-red-600" onClick={async () => { if (await confirm("Unlink?")) selDish && unlinkM.mutate({ dish_id: selDish.id, restaurant_id: r.id }); }}>Unlink</button>
+                            <button className="text-xs px-2 py-1 rounded border text-red-600" onClick={async () => { if (await confirm("Unlink?")) selDish && unlinkM.mutate({ dishId: selDish.id, restaurantId: r.id }); }}>Unlink</button>
                           )}
                         </div>
                       </div>
