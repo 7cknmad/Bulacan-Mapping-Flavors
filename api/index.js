@@ -9,60 +9,77 @@ dotenv.config();
 
 const app = express();
 app.set('trust proxy', 1);
-
-// === CORS (GitHub Pages + Cloudflare tunnel) ===
 const DEFAULT_ALLOWED = [
   'http://localhost:5173',
-  'https://7cknmad.github.io',
-];
-// allow comma-separated origins via env
-const extra = (process.env.ALLOW_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-const allowedOrigins = [
-  'http://localhost:5173',
   'http://localhost:5174',
-  'https://7cknmad.github.io',                 // your Pages domain
+  'https://7cknmad.github.io',          
 ];
+const rawOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(/[,\s]+/).filter(Boolean);
+const allowedSet = new Set(rawOrigins.map(o => o.toLowerCase()));
+const extra = (process.env.ALLOW_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const allowedOrigins = new Set([...DEFAULT_ALLOWED, ...extra]);
+const corsOptions = {
+  origin: (origin, cb) => {
+    // Allow non-browser tools (no Origin header) like curl/Postman
+    if (!origin) return cb(null, true);
 
+    const o = origin.toLowerCase();
+    if (allowedSet.has('*') || allowedSet.has(o)) return cb(null, true);
+
+    // Also allow by scheme+host (ignoring path)
+    try {
+      const u = new URL(o);
+      const base = `${u.protocol}//${u.host}`;
+      if (allowedSet.has(base)) return cb(null, true);
+    } catch {
+      /* ignore parse errors */
+    }
+
+    cb(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  credentials: true, // allow cookies
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+// Apply CORS for all routes + preflight (Express 5: use "*")
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+// --------------------------------------------------------------------------
+
+// Body parsing (keep as you had)
+app.use(express.json());
 app.use(cors({
   origin(origin, cb) {
-    // allow non-browser tools (e.g. curl) and allowed origins
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, origin ?? true);
-    return cb(new Error(`CORS: ${origin} not allowed`));
+    // allow same-origin / curl-like (no Origin) and any whitelisted origin
+    if (!origin || allowedOrigins.has(origin)) return cb(null, origin ?? true);
+    return cb(new Error(`CORS blocked: ${origin}`));
   },
-  credentials: true, // << allow cookies
+  credentials: true, // allow cookies
 }));
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && allowedOrigins.has(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Vary', 'Origin');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  }
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
 
 app.use(express.json());
 app.use(cookieParser());
 
-// === Admin cookie settings ===
-const isProd = process.env.NODE_ENV === 'production'; // set to 'production' for tunnel + GHPages
+// ---------- ADMIN COOKIE POLICY ----------
+const isProd = process.env.NODE_ENV === 'production'; // set to production for Tunnel + GH Pages
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@bulacan.local';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 
-// Always set cross-site cookie when not on localhost
+// cookie settings: cross-site when prod (GH Pages)
 const cookieOpts = {
   httpOnly: true,
-  sameSite: isProd ? 'None' : 'Lax', // for cross-site (gh pages) set NODE_ENV=production
-  secure: isProd,                    // required for SameSite=None
+  sameSite: isProd ? 'None' : 'Lax',
+  secure: isProd,               // required by browsers when SameSite=None
   path: '/',
-  maxAge: 7 * 24 * 3600 * 1000,
+  maxAge: 7 * 24 * 3600 * 1000, // 7 days
 };
 
+// simple HMAC token (keep your existing approach if you prefer)
 function makeToken(email) {
   const ts = Date.now().toString();
   const sig = crypto.createHmac('sha256', JWT_SECRET).update(email + '|' + ts).digest('hex');
@@ -80,7 +97,7 @@ function verifyToken(raw) {
   }
 }
 
-// === DB ===
+// ---------- DB ----------
 const cfg = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
@@ -129,7 +146,7 @@ async function loadSchemaInfo() {
 const hasR = (col) => schema.restaurants.has(col);
 const hasD = (col) => schema.dishes.has(col);
 
-// === Public ===
+// ---------- PUBLIC ----------
 app.get('/api/health', async (_req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
@@ -215,6 +232,7 @@ app.get('/api/restaurants', async (req, res) => {
     if (hasR('image_url')) select.push('r.image_url');
     if (hasR('featured')) select.push('r.featured');
     if (hasR('featured_rank')) select.push('r.featured_rank');
+
     const sql = `
       SELECT ${select.join(',')}
       FROM restaurants r
@@ -232,45 +250,29 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
-// === Admin auth ===
+// ---------- ADMIN AUTH ----------
 app.post('/api/admin/auth/login', async (req, res) => {
   const { email, password } = req.body ?? {};
-  // TODO: validate against DB
-  const ok = email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD;
+  const ok = email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-
-  // create a signed token or session id; for demo, a simple string
-  const token = 'session-'+Date.now();
-
-  // Cookie MUST be SameSite=None and Secure for cross-site (GitHub Pages) requests
-  res.cookie('admin_sess', token, {
-    httpOnly: true,
-    sameSite: 'none',
-    secure: true,     // required when site is HTTPS (GitHub Pages)
-    path: '/',
-    maxAge: 7 * 24 * 3600 * 1000, // 7 days
-  });
+  const token = makeToken(email);
+  res.cookie('admin_sess', token, cookieOpts);
   res.json({ user: { id: 1, email } });
 });
 
 app.get('/api/admin/auth/me', (req, res) => {
   const token = req.cookies?.admin_sess;
-  if (!token) return res.status(401).json({ user: null });
-  // TODO: verify token, fetch user
-  res.json({ user: { id: 1, email: process.env.ADMIN_EMAIL } });
+  const v = token && verifyToken(token);
+  if (!v) return res.status(401).json({ user: null });
+  res.json({ user: { id: 1, email: v.email } });
 });
 
 app.post('/api/admin/auth/logout', (req, res) => {
-  res.clearCookie('admin_sess', {
-    httpOnly: true,
-    sameSite: 'none',
-    secure: true,
-    path: '/',
-  });
+  res.clearCookie('admin_sess', { ...cookieOpts, maxAge: undefined });
   res.json({ ok: true });
 });
 
-// === Admin CRUD (create/update/delete guarded for optional columns) ===
+// ---------- ADMIN CRUD ----------
 app.post('/api/admin/dishes', async (req, res) => {
   try {
     const {
@@ -456,7 +458,7 @@ app.delete('/api/admin/restaurants/:id', async (req, res) => {
   }
 });
 
-// Linking
+// ---------- LINKING ----------
 app.get('/api/admin/dishes/:dishId/restaurants', async (req, res) => {
   try {
     const dishId = Number(req.params.dishId);
@@ -522,7 +524,7 @@ app.delete('/api/admin/dish-restaurants', async (req, res) => {
   }
 });
 
-// Analytics
+// ---------- ANALYTICS ----------
 app.get('/api/admin/analytics/summary', async (_req, res) => {
   try {
     const [[{ c: muniCount }]] = await pool.query('SELECT COUNT(*) c FROM municipalities');
