@@ -4,10 +4,10 @@ export const PUBLIC_BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:30
 export const ADMIN_BASE  = (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
 
 // If your admin server uses a different prefix, change this:
-const ADMIN_PREFIX = "/admin";   // e.g. "/admin"
-const PUBLIC_PREFIX = "/api";    // your public API uses "/api"
+const ADMIN_PREFIX = "/admin";   // admin API prefix
+const PUBLIC_PREFIX = "/api";    // public API prefix
 
-// --- tiny fetch helpers
+// --- tiny fetch helpers (no cookies for now)
 async function fetchJSON<T>(method: string, url: string, body?: any) {
   const res = await fetch(url, {
     method,
@@ -19,16 +19,14 @@ async function fetchJSON<T>(method: string, url: string, body?: any) {
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
   return text ? (JSON.parse(text) as T) : (null as any);
 }
-
 const getPublic = <T>(path: string) => fetchJSON<T>("GET", `${PUBLIC_BASE}${path}`);
 const getAdmin  = <T>(path: string) => fetchJSON<T>("GET", `${ADMIN_BASE}${path}`);
 const postAdmin = <T>(path: string, b?: any) => fetchJSON<T>("POST", `${ADMIN_BASE}${path}`, b);
 const patchAdmin= <T>(path: string, b?: any) => fetchJSON<T>("PATCH", `${ADMIN_BASE}${path}`, b);
 const delAdmin  = <T>(path: string) => fetchJSON<T>("DELETE", `${ADMIN_BASE}${path}`);
 
-// ================= Types (match your DB) =================
-export type Municipality = { id: number; name: string; slug: string; };
-
+// ================= Types =================
+export type Municipality = { id: number; name: string; slug: string };
 export type DishCategory = "food" | "delicacy" | "drink";
 
 export type Dish = {
@@ -87,7 +85,7 @@ export const listDishes = (opts: {
   if (opts.q) qs.set("q", opts.q);
   if (opts.signature != null) qs.set("signature", String(opts.signature));
   if (opts.limit) qs.set("limit", String(opts.limit));
-  return getPublic<Dish>(`${PUBLIC_PREFIX}/dishes${qs.toString() ? `?${qs}` : ""}` as any) as Promise<Dish[]>;
+  return getPublic<Dish[]>(`${PUBLIC_PREFIX}/dishes${qs.toString() ? `?${qs}` : ""}`);
 };
 
 export const listRestaurants = (opts: {
@@ -139,28 +137,62 @@ export const linkDishRestaurant = (
 export const unlinkDishRestaurant = (dish_id: number, restaurant_id: number) =>
   delAdmin(`${ADMIN_PREFIX}/dish-restaurants?dish_id=${dish_id}&restaurant_id=${restaurant_id}`);
 
-// Curation
+// Curation (enforce in UI; API just patches flags)
 export const setDishCuration = (id: number, payload: { is_signature?: 0 | 1; panel_rank?: number | null }) =>
   patchAdmin(`${ADMIN_PREFIX}/dishes/${id}`, payload);
 
 export const setRestaurantCuration = (id: number, payload: { featured?: 0 | 1; featured_rank?: number | null }) =>
   patchAdmin(`${ADMIN_PREFIX}/restaurants/${id}`, payload);
 
-// Analytics
+// ---------- Analytics with endpoint fallback ----------
 export type MunicipalityCounts = { municipality_id: number; municipality_name: string; dishes: number; restaurants: number };
+
+async function tryGet<T>(paths: string[]): Promise<T> {
+  let lastErr: any;
+  for (const p of paths) {
+    try {
+      return await getAdmin<T>(p);
+    } catch (e: any) {
+      lastErr = e;
+      // only swallow 404; surface other errors immediately
+      if (!String(e?.message ?? "").includes("HTTP 404")) throw e;
+    }
+  }
+  throw lastErr ?? new Error("No analytics endpoint found.");
+}
+
 export const getPerMunicipalityCounts = () =>
-  getAdmin<MunicipalityCounts[]>(`${ADMIN_PREFIX}/analytics/per-municipality`);
+  tryGet<MunicipalityCounts[]>([
+    `${ADMIN_PREFIX}/analytics/per-municipality`,
+    `${ADMIN_PREFIX}/analytics/municipality-counts`,
+    `${ADMIN_PREFIX}/analytics/per_municipality`,
+  ]);
+
 export const getAnalyticsSummary = () =>
-  getAdmin<any>(`${ADMIN_PREFIX}/analytics/summary`);
+  tryGet<any>([
+    `${ADMIN_PREFIX}/analytics/summary`,
+    `${ADMIN_PREFIX}/analytics/overview`,
+  ]);
 
-// Optional: health (to hide any “admin disabled” banners)
-export const getAdminHealth = () => getAdmin<{ ok: true }>(`${ADMIN_PREFIX}/health`);
+// Optional: health
+export const getAdminHealth = () =>
+  getAdmin<{ ok: true }>(`${ADMIN_PREFIX}/health`);
 
-// Utility to coerce array-like string fields safely
+// Utilities
 export function coerceStringArray(x: unknown): string[] | null {
   if (x == null) return null;
   if (Array.isArray(x)) return x.map(String);
   const s = String(x).trim();
   if (!s) return null;
   return s.split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+// small, dependency-free slugify
+export function slugify(s: string): string {
+  return s
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
 }
