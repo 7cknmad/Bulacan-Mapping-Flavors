@@ -8,11 +8,12 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "mysql2": "^3.15.1",
-    "cookie-parser": "^1.4.6"
+    "express-session": "^1.18.2",
+    "mysql2": "^3.15.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

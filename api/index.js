@@ -1,397 +1,551 @@
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import session from 'express-session';
-import bcrypt from 'bcryptjs';
+import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
 
 dotenv.config();
 
-const PORT = process.env.PORT || 3001;
-const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'admin_session';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'change_me';
-
-// DB
-const pool = mysql.createPool({
-  host: process.env.DB_HOST, user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
-  connectionLimit: 10, timezone: 'Z'
-});
-
-async function q(sql, params = []) {
-  const [rows] = await pool.query(sql, params);
-  return rows;
-}
-
-// CORS
-const rawOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(/[,\s]+/).filter(Boolean);
-const allowedSet = new Set(rawOrigins.map(o => o.toLowerCase()));
-
-const corsOptions = {
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
-    const o = origin.toLowerCase();
-    if (allowedSet.has('*') || allowedSet.has(o)) return cb(null, true);
-    try {
-      const u = new URL(o);
-      const base = `${u.protocol}//${u.host}`;
-      if (allowedSet.has(base)) return cb(null, true);
-    } catch {}
-    cb(new Error(`Not allowed by CORS: ${origin}`));
-  },
-  credentials: true,
-  methods: ['GET','POST','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-};
+/* ===================== Setup ===================== */
 
 const app = express();
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
-app.use(express.json());
+const PORT = process.env.PORT || 3001;
 
-// Session (cookie)
+const rawOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const allowedOrigins = new Set(rawOrigins);
+const allowAnyInDev = allowedOrigins.size === 0 && process.env.NODE_ENV !== 'production';
+
+app.use(cors({
+  origin(origin, cb) {
+    // Allow tools/curl (no Origin), allow dev-any if configured, otherwise whitelist
+    if (!origin) return cb(null, true);
+    if (allowAnyInDev) return cb(null, true);
+    if (allowedOrigins.has(origin)) return cb(null, true);
+    return cb(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  credentials: true,
+}));
+
+app.use(express.json());
+app.set('trust proxy', 1);
+
+const isProd = process.env.NODE_ENV === 'production';
+const secureCookie = isProd;
+const sameSiteMode = isProd ? 'none' : 'lax';
+
 app.use(session({
-  name: SESSION_COOKIE_NAME,
-  secret: SESSION_SECRET,
+  name: 'bmf.sid',
+  secret: process.env.SESSION_SECRET || 'dev-secret',
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    sameSite: 'none',   // Required for cross-site (GitHub Pages -> Tunnel)
-    secure: true        // Required on HTTPS (Cloudflare tunnel is HTTPS)
-  }
+    secure: secureCookie,
+    sameSite: sameSiteMode,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  },
 }));
 
-// Helpers
-function requireAdmin(req, res, next) {
+/* ===================== DB ===================== */
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || '127.0.0.1',
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASS || '',
+  database: process.env.DB_NAME || 'bulacan',
+  connectionLimit: 10,
+  namedPlaceholders: true,
+  timezone: 'Z',
+});
+
+async function q(sql, params) {
+  const [rows] = await pool.query(sql, params);
+  return rows;
+}
+
+/* ===================== Helpers ===================== */
+
+function parseIntOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parse0or1(v) {
+  if (v === undefined) return null;
+  if (v === '0' || v === 0) return 0;
+  if (v === '1' || v === 1) return 1;
+  return null;
+}
+
+const arr = (x) => Array.isArray(x) ? x
+  : (x == null || x === '') ? null
+  : (typeof x === 'string'
+      ? (() => { try { const j = JSON.parse(x); return Array.isArray(j) ? j : null; } catch { return null; } })()
+      : null);
+
+function coerceDish(row) {
+  return {
+    id: row.id,
+    municipality_id: row.municipality_id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description ?? null,
+    image_url: row.image_url ?? null,
+    category: row.category,
+    flavor_profile: arr(row.flavor_profile),
+    ingredients: arr(row.ingredients),
+    popularity: row.popularity ?? null,
+    rating: row.rating ?? null,
+    is_signature: row.is_signature ?? null,
+    panel_rank: row.panel_rank ?? null,
+  };
+}
+
+function coerceRestaurant(row) {
+  return {
+    id: row.id,
+    municipality_id: row.municipality_id ?? null,
+    name: row.name,
+    slug: row.slug,
+    kind: row.kind ?? null,
+    description: row.description ?? null,
+    address: row.address,
+    phone: row.phone ?? null,
+    website: row.website ?? null,
+    facebook: row.facebook ?? null,
+    instagram: row.instagram ?? null,
+    opening_hours: row.opening_hours ?? null,
+    price_range: row.price_range ?? null,
+    cuisine_types: arr(row.cuisine_types),
+    rating: row.rating ?? null,
+    lat: row.lat,
+    lng: row.lng,
+    image_url: row.image_url ?? null,
+    featured: row.featured ?? null,
+    featured_rank: row.featured_rank ?? null,
+  };
+}
+
+function requireAuth(req, res, next) {
   if (req.session?.admin) return next();
   res.status(401).json({ error: 'Unauthorized' });
 }
 
-// Health
-app.get('/api/health', (req, res) => res.json({ ok: true }));
+/* ===================== Public ===================== */
 
-/* ===================== Public endpoints ===================== */
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, now: new Date().toISOString() });
+});
 
-// Municipalities
 app.get('/api/municipalities', async (req, res) => {
-  const rows = await q(`SELECT id, name, slug, description, province, lat, lng, image_url FROM municipalities ORDER BY name`);
-  res.json(rows);
+  try {
+    const rows = await q(
+      `SELECT id, name, slug, description, province, lat, lng, image_url
+       FROM municipalities ORDER BY name`
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch municipalities', detail: String(e?.message || e) });
+  }
 });
 
-// Dishes (public list with filters)
 app.get('/api/dishes', async (req, res) => {
-  const { municipalityId, category, q: search, signature, limit } = req.query;
-  const where = [];
-  const params = [];
+  try {
+    const muniId = parseIntOrNull(req.query.municipalityId);
+    const category = (req.query.category || '').toString().trim();
+    const qStr = (req.query.q || '').toString().trim();
+    const signature = parse0or1(req.query.signature);
+    const limit = parseIntOrNull(req.query.limit) || 100;
 
-  if (municipalityId) { where.push(`d.municipality_id = ?`); params.push(Number(municipalityId)); }
-  if (category)       { where.push(`d.category = ?`); params.push(String(category)); }
-  if (signature != null) { where.push(`d.is_signature = ?`); params.push(Number(signature)); }
-  if (search)         { where.push(`(d.name LIKE ? OR d.slug LIKE ?)`); params.push(`%${search}%`, `%${search}%`); }
+    const where = [];
+    const params = {};
+    if (muniId) { where.push('d.municipality_id = :muniId'); params.muniId = muniId; }
+    if (category) { where.push('d.category = :category'); params.category = category; }
+    if (qStr) { where.push('(d.name LIKE :q OR d.slug LIKE :q)'); params.q = `%${qStr}%`; }
+    if (signature !== null) { where.push('IFNULL(d.is_signature,0) = :sig'); params.sig = signature; }
 
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const lim = limit ? `LIMIT ${Number(limit)}` : '';
-
-  // sort: if signature mode, show rank order first
-  const orderSql = signature != null && Number(signature) === 1
-    ? `ORDER BY (d.panel_rank IS NULL), d.panel_rank ASC, d.rating DESC`
-    : `ORDER BY d.rating DESC, d.popularity DESC, d.name ASC`;
-
-  const rows = await q(`
-    SELECT d.*, m.name AS municipality_name
-    FROM dishes d
-    JOIN municipalities m ON m.id = d.municipality_id
-    ${whereSql}
-    ${orderSql}
-    ${lim}
-  `, params);
-
-  // Normalize JSON fields
-  for (const r of rows) {
-    try { if (r.flavor_profile && typeof r.flavor_profile === 'string') r.flavor_profile = JSON.parse(r.flavor_profile); } catch {}
-    try { if (r.ingredients && typeof r.ingredients === 'string') r.ingredients = JSON.parse(r.ingredients); } catch {}
+    const rows = await q(
+      `SELECT d.*
+       FROM dishes d
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY
+         CASE WHEN d.panel_rank IS NULL THEN 999 ELSE d.panel_rank END ASC,
+         IFNULL(d.rating, 0) DESC,
+         d.name ASC
+       LIMIT :limit`, { ...params, limit }
+    );
+    res.json(rows.map(coerceDish));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch dishes', detail: String(e?.message || e) });
   }
-
-  res.json(rows);
 });
 
-// Restaurants (public list with filters; supports dishId for “who serves this dish”)
 app.get('/api/restaurants', async (req, res) => {
-  const { municipalityId, dishId, q: search, featured, limit } = req.query;
+  try {
+    const muniId = parseIntOrNull(req.query.municipalityId);
+    const dishId = parseIntOrNull(req.query.dishId);
+    const qStr = (req.query.q || '').toString().trim();
+    const featured = parse0or1(req.query.featured);
+    const limit = parseIntOrNull(req.query.limit) || 100;
 
-  const where = [];
-  const params = [];
+    const where = [];
+    const params = {};
+    let join = '';
 
-  if (municipalityId) { where.push(`r.municipality_id = ?`); params.push(Number(municipalityId)); }
-  if (featured != null) { where.push(`r.featured = ?`); params.push(Number(featured)); }
-  if (search) { where.push(`(r.name LIKE ? OR r.slug LIKE ?)`); params.push(`%${search}%`, `%${search}%`); }
+    if (dishId) {
+      join = 'INNER JOIN dish_restaurant dr ON dr.restaurant_id = r.id AND dr.dish_id = :dishId';
+      params.dishId = dishId;
+    }
+    if (muniId) { where.push('r.municipality_id = :muniId'); params.muniId = muniId; }
+    if (qStr) { where.push('(r.name LIKE :q OR r.slug LIKE :q OR r.address LIKE :q)'); params.q = `%${qStr}%`; }
+    if (featured !== null) { where.push('IFNULL(r.featured,0) = :feat'); params.feat = featured; }
 
-  let join = '';
-  if (dishId) {
-    join = `JOIN dish_restaurants dr ON dr.restaurant_id = r.id`;
-    where.push(`dr.dish_id = ?`); params.push(Number(dishId));
+    const rows = await q(
+      `SELECT r.*
+       FROM restaurants r
+       ${join}
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY
+         CASE WHEN r.featured_rank IS NULL THEN 999 ELSE r.featured_rank END ASC,
+         IFNULL(r.rating, 0) DESC,
+         r.name ASC
+       LIMIT :limit`, { ...params, limit }
+    );
+    res.json(rows.map(coerceRestaurant));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch restaurants', detail: String(e?.message || e) });
   }
-
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const lim = limit ? `LIMIT ${Number(limit)}` : '';
-
-  const orderSql = featured != null && Number(featured) === 1
-    ? `ORDER BY (r.featured_rank IS NULL), r.featured_rank ASC, r.rating DESC`
-    : `ORDER BY r.rating DESC, r.name ASC`;
-
-  const rows = await q(`
-    SELECT DISTINCT r.*
-    FROM restaurants r
-    ${join}
-    ${whereSql}
-    ${orderSql}
-    ${lim}
-  `, params);
-
-  for (const r of rows) {
-    try { if (r.cuisine_types && typeof r.cuisine_types === 'string') r.cuisine_types = JSON.parse(r.cuisine_types); } catch {}
-  }
-
-  res.json(rows);
 });
 
 /* ===================== Admin Auth ===================== */
 
-app.get('/api/admin/auth/me', (req, res) => {
-  if (!req.session?.admin) return res.status(401).json({ error: 'Unauthorized' });
-  res.json({ id: req.session.admin.id, email: req.session.admin.email });
-});
+async function findAdminByUsername(username) {
+  try {
+    const rows = await q('SELECT id, username, password_hash FROM admins WHERE username = :u LIMIT 1', { u: username });
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function envAdminOK(u, p) {
+  const EU = process.env.ADMIN_USER;
+  const EP = process.env.ADMIN_PASS;
+  if (!EU || !EP) return false;
+  return u === EU && p === EP;
+}
 
 app.post('/api/admin/auth/login', async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  const rows = await q(`SELECT id, email, password_hash FROM admin_users WHERE email = ?`, [email]);
-  if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'Missing username/password' });
 
-  const user = rows[0];
-  const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    let ok = false;
+    const dbAdmin = await findAdminByUsername(username);
+    if (dbAdmin) {
+      // Plain compare for now (you can switch to bcrypt)
+      ok = password === dbAdmin.password_hash;
+    } else {
+      ok = envAdminOK(username, password);
+    }
 
-  req.session.admin = { id: user.id, email: user.email };
-  res.json({ ok: true });
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    req.session.admin = { username };
+    res.json({ ok: true, admin: { username } });
+  } catch (e) {
+    res.status(500).json({ error: 'Login failed', detail: String(e?.message || e) });
+  }
+});
+
+app.get('/api/admin/auth/me', (req, res) => {
+  if (!req.session?.admin) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ ok: true, admin: req.session.admin });
 });
 
 app.post('/api/admin/auth/logout', (req, res) => {
-  req.session?.destroy(() => res.json({ ok: true }));
-});
-
-/* ===================== Admin: CRUD ===================== */
-app.get('/api/admin/dishes', requireAdmin, async (req, res) => {
-  const { municipalityId, q: search } = req.query;
-  const where = [];
-  const params = [];
-  if (municipalityId) { where.push(`d.municipality_id = ?`); params.push(Number(municipalityId)); }
-  if (search) { where.push(`(d.name LIKE ? OR d.slug LIKE ?)`); params.push(`%${search}%`,`%${search}%`); }
-  const sql = `
-    SELECT d.*, m.name AS municipality_name
-    FROM dishes d
-    JOIN municipalities m ON m.id = d.municipality_id
-    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY d.updated_at DESC, d.id DESC
-    LIMIT 500
-  `;
-  const rows = await q(sql, params);
-  for (const r of rows) {
-    try { if (r.flavor_profile && typeof r.flavor_profile === 'string') r.flavor_profile = JSON.parse(r.flavor_profile); } catch {}
-    try { if (r.ingredients && typeof r.ingredients === 'string') r.ingredients = JSON.parse(r.ingredients); } catch {}
-  }
-  res.json(rows);
-});
-
-app.post('/api/admin/dishes', requireAdmin, async (req, res) => {
-  const p = req.body || {};
-  const flavor = Array.isArray(p.flavor_profile) ? JSON.stringify(p.flavor_profile) : null;
-  const ingred = Array.isArray(p.ingredients) ? JSON.stringify(p.ingredients) : null;
-  const r = await q(`
-    INSERT INTO dishes
-      (municipality_id, name, slug, description, image_url, category, flavor_profile, ingredients, popularity, rating, is_signature, panel_rank)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-  `, [
-    p.municipality_id, p.name, p.slug, p.description ?? null, p.image_url ?? null, p.category ?? 'food',
-    flavor, ingred, p.popularity ?? null, p.rating ?? null, p.is_signature ? 1 : 0, p.panel_rank ?? null
-  ]);
-  res.json({ id: r.insertId });
-});
-
-app.patch('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const p = req.body || {};
-  // if curation rank set to 1..3, make sure no duplicate rank in same municipality
-  if (p.panel_rank != null && p.panel_rank >= 1 && p.panel_rank <= 3 && (p.is_signature == null || p.is_signature === 1)) {
-    const [{ municipality_id }] = await q(`SELECT municipality_id FROM dishes WHERE id = ?`, [id]);
-    await q(`UPDATE dishes SET panel_rank = NULL WHERE municipality_id = ? AND panel_rank = ? AND id <> ?`, [municipality_id, p.panel_rank, id]);
-    if (p.is_signature == null) p.is_signature = 1;
-  }
-  const fields = [];
-  const params = [];
-  for (const k of ['municipality_id','name','slug','description','image_url','category','popularity','rating','is_signature','panel_rank']) {
-    if (p[k] !== undefined) { fields.push(`${k} = ?`); params.push(p[k]); }
-  }
-  if (p.flavor_profile !== undefined) { fields.push(`flavor_profile = ?`); params.push(Array.isArray(p.flavor_profile) ? JSON.stringify(p.flavor_profile) : null); }
-  if (p.ingredients !== undefined)    { fields.push(`ingredients = ?`);    params.push(Array.isArray(p.ingredients) ? JSON.stringify(p.ingredients) : null); }
-  if (!fields.length) return res.json({ ok: true });
-  params.push(id);
-  await q(`UPDATE dishes SET ${fields.join(', ')} WHERE id = ?`, params);
+  req.session?.destroy?.(() => {});
   res.json({ ok: true });
 });
 
-app.delete('/api/admin/dishes/:id', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  await q(`DELETE FROM dishes WHERE id = ?`, [id]);
-  res.json({ ok: true });
-});
+/* ===================== Admin CRUD ===================== */
 
-// Restaurants CRUD
-app.get('/api/admin/restaurants', requireAdmin, async (req, res) => {
-  const { municipalityId, q: search } = req.query;
-  const where = [];
-  const params = [];
-  if (municipalityId) { where.push(`r.municipality_id = ?`); params.push(Number(municipalityId)); }
-  if (search) { where.push(`(r.name LIKE ? OR r.slug LIKE ?)`); params.push(`%${search}%`,`%${search}%`); }
-  const rows = await q(`
-    SELECT r.*, m.name AS municipality_name
-    FROM restaurants r
-    JOIN municipalities m ON m.id = r.municipality_id
-    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY r.updated_at DESC, r.id DESC
-    LIMIT 500
-  `, params);
-  for (const r of rows) {
-    try { if (r.cuisine_types && typeof r.cuisine_types === 'string') r.cuisine_types = JSON.parse(r.cuisine_types); } catch {}
+app.post('/api/admin/dishes', requireAuth, async (req, res) => {
+  try {
+    const p = req.body || {};
+    const result = await q(
+      `INSERT INTO dishes
+        (municipality_id, name, slug, description, image_url, category,
+         flavor_profile, ingredients, popularity, rating, is_signature, panel_rank)
+       VALUES
+        (:municipality_id, :name, :slug, :description, :image_url, :category,
+         :flavor_profile, :ingredients, :popularity, :rating, :is_signature, :panel_rank)`,
+      {
+        municipality_id: p.municipality_id,
+        name: p.name,
+        slug: p.slug,
+        description: p.description ?? null,
+        image_url: p.image_url ?? null,
+        category: p.category,
+        flavor_profile: p.flavor_profile ? JSON.stringify(p.flavor_profile) : null,
+        ingredients: p.ingredients ? JSON.stringify(p.ingredients) : null,
+        popularity: p.popularity ?? null,
+        rating: p.rating ?? null,
+        is_signature: p.is_signature ?? null,
+        panel_rank: p.panel_rank ?? null,
+      }
+    );
+    res.json({ ok: true, id: result.insertId });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create dish', detail: String(e?.message || e) });
   }
-  res.json(rows);
 });
 
-app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
-  const p = req.body || {};
-  const cuisines = Array.isArray(p.cuisine_types) ? JSON.stringify(p.cuisine_types) : null;
-  const r = await q(`
-    INSERT INTO restaurants
-      (municipality_id, name, slug, kind, description, address, phone, website, facebook, instagram, opening_hours, price_range, cuisine_types, rating, lat, lng, image_url, featured, featured_rank)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `, [
-    p.municipality_id, p.name, p.slug, p.kind ?? 'restaurant', p.description ?? null, p.address ?? '',
-    p.phone ?? null, p.website ?? null, p.facebook ?? null, p.instagram ?? null,
-    p.opening_hours ?? null, p.price_range ?? 'budget',
-    cuisines, p.rating ?? null, p.lat, p.lng, p.image_url ?? null, p.featured ? 1 : 0, p.featured_rank ?? null
-  ]);
-  res.json({ id: r.insertId });
-});
+app.patch('/api/admin/dishes/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const p = req.body || {};
 
-app.patch('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const p = req.body || {};
-  if (p.featured_rank != null && p.featured_rank >=1 && p.featured_rank <=3 && (p.featured == null || p.featured === 1)) {
-    const [{ municipality_id }] = await q(`SELECT municipality_id FROM restaurants WHERE id = ?`, [id]);
-    await q(`UPDATE restaurants SET featured_rank = NULL WHERE municipality_id = ? AND featured_rank = ? AND id <> ?`, [municipality_id, p.featured_rank, id]);
-    if (p.featured == null) p.featured = 1;
+    // Build dynamic update
+    const fields = [];
+    const params = { id };
+    const assign = (col, key, transform = (v)=>v) => {
+      if (p[key] !== undefined) {
+        fields.push(`${col} = :${key}`);
+        params[key] = transform(p[key]);
+      }
+    };
+
+    assign('municipality_id','municipality_id');
+    assign('name','name');
+    assign('slug','slug');
+    assign('description','description');
+    assign('image_url','image_url');
+    assign('category','category');
+    assign('flavor_profile','flavor_profile', (v)=> v ? JSON.stringify(v) : null);
+    assign('ingredients','ingredients', (v)=> v ? JSON.stringify(v) : null);
+    assign('popularity','popularity');
+    assign('rating','rating');
+    assign('is_signature','is_signature');
+    assign('panel_rank','panel_rank');
+
+    if (!fields.length) return res.json({ ok: true }); // nothing to update
+
+    await q(`UPDATE dishes SET ${fields.join(', ')} WHERE id = :id`, params);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update dish', detail: String(e?.message || e) });
   }
-  const fields = [];
-  const params = [];
-  for (const k of ['municipality_id','name','slug','kind','description','address','phone','website','facebook','instagram','opening_hours','price_range','rating','lat','lng','image_url','featured','featured_rank']) {
-    if (p[k] !== undefined) { fields.push(`${k} = ?`); params.push(p[k]); }
-  }
-  if (p.cuisine_types !== undefined) { fields.push(`cuisine_types = ?`); params.push(Array.isArray(p.cuisine_types) ? JSON.stringify(p.cuisine_types) : null); }
-  if (!fields.length) return res.json({ ok: true });
-  params.push(id);
-  await q(`UPDATE restaurants SET ${fields.join(', ')} WHERE id = ?`, params);
-  res.json({ ok: true });
 });
 
-app.delete('/api/admin/restaurants/:id', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  await q(`DELETE FROM restaurants WHERE id = ?`, [id]);
-  res.json({ ok: true });
+app.delete('/api/admin/dishes/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await q('DELETE FROM dish_restaurant WHERE dish_id = :id', { id });
+    await q('DELETE FROM dishes WHERE id = :id', { id });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete dish', detail: String(e?.message || e) });
+  }
+});
+
+app.post('/api/admin/restaurants', requireAuth, async (req, res) => {
+  try {
+    const p = req.body || {};
+    const result = await q(
+      `INSERT INTO restaurants
+       (municipality_id, name, slug, kind, description, address, phone, website,
+        facebook, instagram, opening_hours, price_range, cuisine_types, rating,
+        lat, lng, image_url, featured, featured_rank)
+       VALUES
+       (:municipality_id, :name, :slug, :kind, :description, :address, :phone, :website,
+        :facebook, :instagram, :opening_hours, :price_range, :cuisine_types, :rating,
+        :lat, :lng, :image_url, :featured, :featured_rank)`,
+      {
+        municipality_id: p.municipality_id ?? null,
+        name: p.name,
+        slug: p.slug,
+        kind: p.kind ?? null,
+        description: p.description ?? null,
+        address: p.address,
+        phone: p.phone ?? null,
+        website: p.website ?? null,
+        facebook: p.facebook ?? null,
+        instagram: p.instagram ?? null,
+        opening_hours: p.opening_hours ?? null,
+        price_range: p.price_range ?? null,
+        cuisine_types: p.cuisine_types ? JSON.stringify(p.cuisine_types) : null,
+        rating: p.rating ?? null,
+        lat: p.lat,
+        lng: p.lng,
+        image_url: p.image_url ?? null,
+        featured: p.featured ?? null,
+        featured_rank: p.featured_rank ?? null,
+      }
+    );
+    res.json({ ok: true, id: result.insertId });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create restaurant', detail: String(e?.message || e) });
+  }
+});
+
+app.patch('/api/admin/restaurants/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const p = req.body || {};
+
+    const fields = [];
+    const params = { id };
+    const assign = (col, key, transform = (v)=>v) => {
+      if (p[key] !== undefined) {
+        fields.push(`${col} = :${key}`);
+        params[key] = transform(p[key]);
+      }
+    };
+
+    assign('municipality_id','municipality_id');
+    assign('name','name');
+    assign('slug','slug');
+    assign('kind','kind');
+    assign('description','description');
+    assign('address','address');
+    assign('phone','phone');
+    assign('website','website');
+    assign('facebook','facebook');
+    assign('instagram','instagram');
+    assign('opening_hours','opening_hours');
+    assign('price_range','price_range');
+    assign('cuisine_types','cuisine_types', (v)=> v ? JSON.stringify(v) : null);
+    assign('rating','rating');
+    assign('lat','lat');
+    assign('lng','lng');
+    assign('image_url','image_url');
+    assign('featured','featured');
+    assign('featured_rank','featured_rank');
+
+    if (!fields.length) return res.json({ ok: true });
+
+    await q(`UPDATE restaurants SET ${fields.join(', ')} WHERE id = :id`, params);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update restaurant', detail: String(e?.message || e) });
+  }
+});
+
+app.delete('/api/admin/restaurants/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await q('DELETE FROM dish_restaurant WHERE restaurant_id = :id', { id });
+    await q('DELETE FROM restaurants WHERE id = :id', { id });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete restaurant', detail: String(e?.message || e) });
+  }
 });
 
 /* ===================== Linking ===================== */
-app.get('/api/admin/dishes/:id/restaurants', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const rows = await q(`
-    SELECT r.*
-    FROM dish_restaurants dr
-    JOIN restaurants r ON r.id = dr.restaurant_id
-    WHERE dr.dish_id = ?
-    ORDER BY r.name ASC
-  `, [id]);
-  res.json(rows);
-});
-app.get('/api/admin/restaurants/:id/dishes', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const rows = await q(`
-    SELECT d.*
-    FROM dish_restaurants dr
-    JOIN dishes d ON d.id = dr.dish_id
-    WHERE dr.restaurant_id = ?
-    ORDER BY d.name ASC
-  `, [id]);
-  res.json(rows);
-});
 
-app.post('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
-  const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body || {};
-  await q(`INSERT IGNORE INTO dish_restaurants (dish_id, restaurant_id, price_note, availability) VALUES (?,?,?,?)`,
-    [dish_id, restaurant_id, price_note, availability]);
-  res.json({ ok: true });
-});
-
-app.delete('/api/admin/dish-restaurants', requireAdmin, async (req, res) => {
-  const { dish_id, restaurant_id } = req.query;
-  await q(`DELETE FROM dish_restaurants WHERE dish_id = ? AND restaurant_id = ?`, [Number(dish_id), Number(restaurant_id)]);
-  res.json({ ok: true });
-});
-
-/* ===================== Curation (Top-3) ===================== */
-app.patch('/api/admin/dishes/:id/curation', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const { is_signature, panel_rank } = req.body || {};
-  const [{ municipality_id }] = await q(`SELECT municipality_id FROM dishes WHERE id = ?`, [id]);
-  if (panel_rank != null && panel_rank >=1 && panel_rank <=3) {
-    await q(`UPDATE dishes SET panel_rank = NULL WHERE municipality_id = ? AND panel_rank = ? AND id <> ?`, [municipality_id, panel_rank, id]);
+app.get('/api/admin/dishes/:id/restaurants', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const rows = await q(
+      `SELECT r.*, dr.price_note, dr.availability
+       FROM dish_restaurant dr
+       INNER JOIN restaurants r ON r.id = dr.restaurant_id
+       WHERE dr.dish_id = :id
+       ORDER BY r.name ASC`, { id }
+    );
+    res.json(rows.map(coerceRestaurant).map(r => ({
+      ...r,
+      link: { price_note: rows.find(x => x.id === r.id)?.price_note ?? null,
+              availability: rows.find(x => x.id === r.id)?.availability ?? 'regular' }
+    })));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch linked restaurants', detail: String(e?.message || e) });
   }
-  await q(`UPDATE dishes SET is_signature = ?, panel_rank = ? WHERE id = ?`, [is_signature ? 1 : 0, panel_rank ?? null, id]);
-  res.json({ ok: true });
 });
 
-app.patch('/api/admin/restaurants/:id/curation', requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const { featured, featured_rank } = req.body || {};
-  const [{ municipality_id }] = await q(`SELECT municipality_id FROM restaurants WHERE id = ?`, [id]);
-  if (featured_rank != null && featured_rank >=1 && featured_rank <=3) {
-    await q(`UPDATE restaurants SET featured_rank = NULL WHERE municipality_id = ? AND featured_rank = ? AND id <> ?`, [municipality_id, featured_rank, id]);
+app.get('/api/admin/restaurants/:id/dishes', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const rows = await q(
+      `SELECT d.*, dr.price_note, dr.availability
+       FROM dish_restaurant dr
+       INNER JOIN dishes d ON d.id = dr.dish_id
+       WHERE dr.restaurant_id = :id
+       ORDER BY d.name ASC`, { id }
+    );
+    res.json(rows.map(coerceDish).map(d => ({
+      ...d,
+      link: { price_note: rows.find(x => x.id === d.id)?.price_note ?? null,
+              availability: rows.find(x => x.id === d.id)?.availability ?? 'regular' }
+    })));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch linked dishes', detail: String(e?.message || e) });
   }
-  await q(`UPDATE restaurants SET featured = ?, featured_rank = ? WHERE id = ?`, [featured ? 1 : 0, featured_rank ?? null, id]);
-  res.json({ ok: true });
+});
+
+app.post('/api/admin/dish-restaurants', requireAuth, async (req, res) => {
+  try {
+    const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body || {};
+    if (!dish_id || !restaurant_id) return res.status(400).json({ error: 'Missing dish_id/restaurant_id' });
+    await q(
+      `INSERT INTO dish_restaurant (dish_id, restaurant_id, price_note, availability)
+       VALUES (:dish_id, :restaurant_id, :price_note, :availability)
+       ON DUPLICATE KEY UPDATE price_note = VALUES(price_note), availability = VALUES(availability)`,
+      { dish_id, restaurant_id, price_note, availability }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to link dish & restaurant', detail: String(e?.message || e) });
+  }
+});
+
+app.delete('/api/admin/dish-restaurants', requireAuth, async (req, res) => {
+  try {
+    const dish_id = parseIntOrNull(req.query.dish_id);
+    const restaurant_id = parseIntOrNull(req.query.restaurant_id);
+    if (!dish_id || !restaurant_id) return res.status(400).json({ error: 'Missing dish_id/restaurant_id' });
+    await q(`DELETE FROM dish_restaurant WHERE dish_id = :dish_id AND restaurant_id = :restaurant_id`, { dish_id, restaurant_id });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to unlink dish & restaurant', detail: String(e?.message || e) });
+  }
 });
 
 /* ===================== Analytics ===================== */
-app.get('/api/admin/analytics/summary', requireAdmin, async (req, res) => {
-  const [dishCounts, restaurantCounts, topDishes, topRestaurants] = await Promise.all([
-    q(`SELECT m.id, m.name, COUNT(d.id) AS dish_count
-       FROM municipalities m LEFT JOIN dishes d ON d.municipality_id = m.id
-       GROUP BY m.id ORDER BY m.name`),
-    q(`SELECT m.id, m.name, COUNT(r.id) AS restaurant_count
-       FROM municipalities m LEFT JOIN restaurants r ON r.municipality_id = m.id
-       GROUP BY m.id ORDER BY m.name`),
-    q(`SELECT d.*, m.name AS municipality_name FROM dishes d
-       JOIN municipalities m ON m.id = d.municipality_id
-       WHERE d.is_signature = 1 AND d.panel_rank IS NOT NULL
-       ORDER BY m.name, d.panel_rank`),
-    q(`SELECT r.*, m.name AS municipality_name FROM restaurants r
-       JOIN municipalities m ON m.id = r.municipality_id
-       WHERE r.featured = 1 AND r.featured_rank IS NOT NULL
-       ORDER BY m.name, r.featured_rank`)
-  ]);
-  res.json({ dishCounts, restaurantCounts, topDishes, topRestaurants });
+
+app.get('/api/admin/analytics/summary', requireAuth, async (req, res) => {
+  try {
+    const [dishCounts, featuredRests, linkCounts] = await Promise.all([
+      q(`SELECT m.id AS municipality_id, m.name AS municipality_name, d.category, COUNT(*) AS total
+         FROM dishes d
+         INNER JOIN municipalities m ON m.id = d.municipality_id
+         GROUP BY m.id, d.category`),
+      q(`SELECT m.id AS municipality_id, m.name AS municipality_name, COUNT(*) AS featured_total
+         FROM restaurants r
+         INNER JOIN municipalities m ON m.id = r.municipality_id
+         WHERE IFNULL(r.featured,0) = 1
+         GROUP BY m.id`),
+      q(`SELECT d.id AS dish_id, d.name AS dish_name, COUNT(dr.restaurant_id) AS restaurants_linked
+         FROM dishes d
+         LEFT JOIN dish_restaurant dr ON dr.dish_id = d.id
+         GROUP BY d.id
+         ORDER BY restaurants_linked DESC
+         LIMIT 10`)
+    ]);
+    res.json({ dishCounts, featuredRests, linkCounts });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed analytics', detail: String(e?.message || e) });
+  }
 });
 
+/* ===================== Start ===================== */
+
 app.listen(PORT, () => {
-  console.log(`API running on :${PORT}`);
+  console.log(`[api] listening on :${PORT}`);
 });
