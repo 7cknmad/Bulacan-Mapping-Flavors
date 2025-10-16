@@ -3,291 +3,231 @@ import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
 
-/* ------------------------- Env & DB ------------------------- */
-const PORT = Number(process.env.PORT ?? 3002);
-const DB_HOST = process.env.DB_HOST ?? '127.0.0.1';
-const DB_USER = process.env.DB_USER ?? 'root';          // if you don’t use a user, root/"" is common locally
-const DB_PASSWORD = process.env.DB_PASSWORD ?? '';      // blank password supported
-const DB_NAME = process.env.DB_NAME ?? 'bulacan_flavors';
+const {
+  PORT = 3002,
+  DB_HOST = '127.0.0.1',
+  DB_USER = 'root',
+  DB_PASSWORD = '',
+  DB_NAME = 'bulacan_flavors',
+  ALLOWED_ORIGINS = 'http://localhost:5174,https://7cknmad.github.io',
+} = process.env;
 
-// Admin app origins (no credentials used → simple CORS)
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173,https://7cknmad.github.io')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-const allowedSet = new Set(ALLOWED_ORIGINS);
+const allowed = new Set(
+  ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
+);
 
-const pool = mysql.createPool({
-  host: DB_HOST, user: DB_USER, password: DB_PASSWORD, database: DB_NAME,
-  waitForConnections: true, connectionLimit: 10, namedPlaceholders: true
-});
-
-/* ---- Introspect columns so we never write a non-existent column ---- */
-const tableCols = new Map(); // table -> Set(columns)
-async function getCols(table) {
-  if (tableCols.has(table)) return tableCols.get(table);
-  const [rows] = await pool.query(`SHOW COLUMNS FROM \`${table}\``);
-  const set = new Set(rows.map(r => r.Field));
-  tableCols.set(table, set);
-  return set;
-}
-function onlyKnown(table, obj, colsSet) {
-  const out = {};
-  for (const [k, v] of Object.entries(obj ?? {})) {
-    if (colsSet.has(k)) out[k] = v;
-  }
-  return out;
-}
-
-// Normalize array-like fields to JSON strings (DB often stores as text)
-// skip if value is null/undefined
-function toDbJSON(val) {
-  if (val == null) return val;
-  if (Array.isArray(val)) return JSON.stringify(val);
-  // accept already-json string; otherwise split CSV
-  if (typeof val === 'string') {
-    const t = val.trim();
-    if (!t) return null;
-    try { const parsed = JSON.parse(t); if (Array.isArray(parsed)) return JSON.stringify(parsed); } catch {}
-    return JSON.stringify(t.split(',').map(s => s.trim()).filter(Boolean));
-  }
-  return JSON.stringify([String(val)]);
-}
-
-/* ------------------------- App & CORS ------------------------- */
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json());
 
+// CORS (no cookies; front-end should use credentials:'omit')
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    if (allowedSet.has('*') || allowedSet.has(origin)) return cb(null, true);
-    return cb(new Error(`CORS: Origin not allowed: ${origin}`), false);
-  }
-  // We do NOT use credentials here on purpose.
+    if (!origin) return cb(null, true);               // curl / server-to-server
+    if (allowed.has(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS: ' + origin));
+  },
+  methods: ['GET','POST','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: false
 }));
 
-/* ------------------------- Health ------------------------- */
-app.get('/admin/health', (req, res) => {
-  res.json({ ok: true, service: 'admin-api' });
+// DB pool
+const pool = mysql.createPool({
+  host: DB_HOST, user: DB_USER, password: DB_PASSWORD, database: DB_NAME,
+  waitForConnections: true, connectionLimit: 10, namedPlaceholders: true,
 });
 
-/* ------------------------- Analytics ------------------------- */
-app.get('/admin/analytics/summary', async (req, res) => {
+app.get('/api/admin/health', (req, res) => {
+  res.json({ ok: true, service: 'admin-api', time: new Date().toISOString() });
+});
+
+/* ---------- Minimal writes you can expand later ----------
+   NOTE: These SQLs assume columns you already have.
+   If some columns differ in your schema, tweak the SET lists accordingly.
+*/
+
+// Create Dish
+app.post('/api/admin/dishes', async (req, res) => {
   try {
-    const [[{ cDishes }]] = await pool.query('SELECT COUNT(*) AS cDishes FROM dishes');
-    const [[{ cRestaurants }]] = await pool.query('SELECT COUNT(*) AS cRestaurants FROM restaurants');
+    const {
+      municipality_id, name, slug, description = null, image_url = null,
+      category = 'food', flavor_profile = null, ingredients = null,
+      rating = null, popularity = null, is_signature = null, panel_rank = null,
+    } = req.body;
 
-    const [perMunicipality] = await pool.query(`
-      SELECT m.id, m.name, m.slug,
-        (SELECT COUNT(*) FROM dishes d WHERE d.municipality_id=m.id) AS dishes,
-        (SELECT COUNT(*) FROM restaurants r WHERE r.municipality_id=m.id) AS restaurants
-      FROM municipalities m
-      ORDER BY m.slug ASC
-    `);
-
-    const [topDishes] = await pool.query(`
-      SELECT id, name, panel_rank
-      FROM dishes
-      WHERE is_signature=1
-      ORDER BY (panel_rank IS NULL), panel_rank ASC
-      LIMIT 5
-    `);
-
-    const [topRestaurants] = await pool.query(`
-      SELECT id, name, featured_rank
-      FROM restaurants
-      WHERE featured=1
-      ORDER BY (featured_rank IS NULL), featured_rank ASC
-      LIMIT 5
-    `);
-
-    res.json({
-      counts: { dishes: cDishes, restaurants: cRestaurants },
-      perMunicipality,
-      topDishes,
-      topRestaurants
+    const sql = `
+      INSERT INTO dishes
+      (municipality_id, name, slug, description, image_url, category,
+       flavor_profile, ingredients, rating, popularity, is_signature, panel_rank)
+      VALUES (:municipality_id, :name, :slug, :description, :image_url, :category,
+              :flavor_profile, :ingredients, :rating, :popularity, :is_signature, :panel_rank)
+    `;
+    await pool.execute(sql, {
+      municipality_id, name, slug, description, image_url, category,
+      flavor_profile: flavor_profile ? JSON.stringify(flavor_profile) : null,
+      ingredients: ingredients ? JSON.stringify(ingredients) : null,
+      rating, popularity, is_signature, panel_rank,
     });
-  } catch (e) {
-    res.status(500).json({ error: 'analytics_failed', detail: String(e) });
-  }
-});
-
-/* ------------------------- Dishes CRUD ------------------------- */
-// CREATE
-app.post('/admin/dishes', async (req, res) => {
-  try {
-    const cols = await getCols('dishes');
-    // normalize array fields if present
-    const body = { ...req.body };
-    if ('flavor_profile' in body) body.flavor_profile = toDbJSON(body.flavor_profile);
-    if ('ingredients' in body) body.ingredients = toDbJSON(body.ingredients);
-
-    const row = onlyKnown('dishes', body, cols);
-    if (!Object.keys(row).length) return res.status(400).json({ error: 'no_valid_fields' });
-
-    const keys = Object.keys(row);
-    const placeholders = keys.map(k => `:${k}`).join(', ');
-    await pool.query(`INSERT INTO dishes (${keys.map(k => `\`${k}\``).join(', ')}) VALUES (${placeholders})`, row);
-    const [[{ id }]] = await pool.query('SELECT LAST_INSERT_ID() AS id');
-    res.json({ id });
-  } catch (e) {
-    res.status(500).json({ error: 'create_dish_failed', detail: String(e) });
-  }
-});
-
-// UPDATE
-app.patch('/admin/dishes/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const cols = await getCols('dishes');
-    const body = { ...req.body };
-    if ('flavor_profile' in body) body.flavor_profile = toDbJSON(body.flavor_profile);
-    if ('ingredients' in body) body.ingredients = toDbJSON(body.ingredients);
-    const row = onlyKnown('dishes', body, cols);
-    if (!Object.keys(row).length) return res.json({ ok: true, updated: 0 });
-
-    const setSql = Object.keys(row).map(k => `\`${k}\`=:${k}`).join(', ');
-    await pool.query(`UPDATE dishes SET ${setSql} WHERE id=:id`, { ...row, id });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'update_dish_failed', detail: String(e) });
+    console.error('createDish error', e);
+    res.status(500).json({ error: 'Failed to create dish', detail: String(e?.message || e) });
   }
 });
 
-// DELETE
-app.delete('/admin/dishes/:id', async (req, res) => {
+// Update Dish
+app.patch('/api/admin/dishes/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    await pool.query('DELETE FROM dish_restaurants WHERE dish_id=?', [id]);
-    await pool.query('DELETE FROM dishes WHERE id=?', [id]);
+    const up = { ...req.body };
+    if ('flavor_profile' in up && Array.isArray(up.flavor_profile)) {
+      up.flavor_profile = JSON.stringify(up.flavor_profile);
+    }
+    if ('ingredients' in up && Array.isArray(up.ingredients)) {
+      up.ingredients = JSON.stringify(up.ingredients);
+    }
+
+    const fields = Object.keys(up)
+      .filter(k => up[k] !== undefined)
+      .map(k => `${k} = :${k}`);
+    if (fields.length === 0) return res.json({ ok: true });
+
+    const sql = `UPDATE dishes SET ${fields.join(', ')} WHERE id = :id`;
+    await pool.execute(sql, { id, ...up });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'delete_dish_failed', detail: String(e) });
+    console.error('updateDish error', e);
+    res.status(500).json({ error: 'Failed to update dish', detail: String(e?.message || e) });
   }
 });
 
-/* ------------------------- Restaurants CRUD ------------------------- */
-// CREATE
-app.post('/admin/restaurants', async (req, res) => {
-  try {
-    const cols = await getCols('restaurants');
-    const body = { ...req.body };
-    if ('cuisine_types' in body) body.cuisine_types = toDbJSON(body.cuisine_types);
-    const row = onlyKnown('restaurants', body, cols);
-    if (!Object.keys(row).length) return res.status(400).json({ error: 'no_valid_fields' });
-
-    const keys = Object.keys(row);
-    const placeholders = keys.map(k => `:${k}`).join(', ');
-    await pool.query(`INSERT INTO restaurants (${keys.map(k => `\`${k}\``).join(', ')}) VALUES (${placeholders})`, row);
-    const [[{ id }]] = await pool.query('SELECT LAST_INSERT_ID() AS id');
-    res.json({ id });
-  } catch (e) {
-    res.status(500).json({ error: 'create_restaurant_failed', detail: String(e) });
-  }
-});
-
-// UPDATE
-app.patch('/admin/restaurants/:id', async (req, res) => {
+// Delete Dish
+app.delete('/api/admin/dishes/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const cols = await getCols('restaurants');
-    const body = { ...req.body };
-    if ('cuisine_types' in body) body.cuisine_types = toDbJSON(body.cuisine_types);
-    const row = onlyKnown('restaurants', body, cols);
-    if (!Object.keys(row).length) return res.json({ ok: true, updated: 0 });
-
-    const setSql = Object.keys(row).map(k => `\`${k}\`=:${k}`).join(', ');
-    await pool.query(`UPDATE restaurants SET ${setSql} WHERE id=:id`, { ...row, id });
+    await pool.execute(`DELETE FROM dish_restaurants WHERE dish_id = :id`, { id });
+    await pool.execute(`DELETE FROM dishes WHERE id = :id`, { id });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'update_restaurant_failed', detail: String(e) });
+    console.error('deleteDish error', e);
+    res.status(500).json({ error: 'Failed to delete dish', detail: String(e?.message || e) });
   }
 });
 
-// DELETE
-app.delete('/admin/restaurants/:id', async (req, res) => {
+// Create Restaurant
+app.post('/api/admin/restaurants', async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    await pool.query('DELETE FROM dish_restaurants WHERE restaurant_id=?', [id]);
-    await pool.query('DELETE FROM restaurants WHERE id=?', [id]);
+    const {
+      municipality_id = null, name, slug, kind = 'restaurant',
+      description = null, address = '', phone = null, website = null,
+      facebook = null, instagram = null, opening_hours = null,
+      price_range = null, cuisine_types = null, rating = null,
+      lat, lng, image_url = null
+    } = req.body;
+
+    const sql = `
+      INSERT INTO restaurants
+      (municipality_id, name, slug, kind, description, address, phone, website,
+       facebook, instagram, opening_hours, price_range, cuisine_types, rating,
+       lat, lng, image_url)
+      VALUES
+      (:municipality_id, :name, :slug, :kind, :description, :address, :phone, :website,
+       :facebook, :instagram, :opening_hours, :price_range, :cuisine_types, :rating,
+       :lat, :lng, :image_url)
+    `;
+    await pool.execute(sql, {
+      municipality_id, name, slug, kind, description, address, phone, website,
+      facebook, instagram, opening_hours, price_range,
+      cuisine_types: cuisine_types ? JSON.stringify(cuisine_types) : null,
+      rating, lat, lng, image_url
+    });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'delete_restaurant_failed', detail: String(e) });
+    console.error('createRestaurant error', e);
+    res.status(500).json({ error: 'Failed to create restaurant', detail: String(e?.message || e) });
   }
 });
 
-/* ------------------------- Linking (dish ↔ restaurants) ------------------------- */
-// LIST restaurants linked to a dish
-app.get('/admin/dishes/:id/restaurants', async (req, res) => {
+// Update Restaurant
+app.patch('/api/admin/restaurants/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const [rows] = await pool.query(`
-      SELECT r.*
-      FROM dish_restaurants dr
-      JOIN restaurants r ON r.id=dr.restaurant_id
-      WHERE dr.dish_id=?`, [id]);
-    res.json(rows);
+    const up = { ...req.body };
+    if ('cuisine_types' in up && Array.isArray(up.cuisine_types)) {
+      up.cuisine_types = JSON.stringify(up.cuisine_types);
+    }
+    const fields = Object.keys(up)
+      .filter(k => up[k] !== undefined)
+      .map(k => `${k} = :${k}`);
+    if (fields.length === 0) return res.json({ ok: true });
+
+    const sql = `UPDATE restaurants SET ${fields.join(', ')} WHERE id = :id`;
+    await pool.execute(sql, { id, ...up });
+    res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'linked_restaurants_failed', detail: String(e) });
+    console.error('updateRestaurant error', e);
+    res.status(500).json({ error: 'Failed to update restaurant', detail: String(e?.message || e) });
   }
 });
 
-// LIST dishes linked to a restaurant
-app.get('/admin/restaurants/:id/dishes', async (req, res) => {
+// Delete Restaurant
+app.delete('/api/admin/restaurants/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const [rows] = await pool.query(`
-      SELECT d.*
-      FROM dish_restaurants dr
-      JOIN dishes d ON d.id=dr.dish_id
-      WHERE dr.restaurant_id=?`, [id]);
-    res.json(rows);
+    await pool.execute(`DELETE FROM dish_restaurants WHERE restaurant_id = :id`, { id });
+    await pool.execute(`DELETE FROM restaurants WHERE id = :id`, { id });
+    res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'linked_dishes_failed', detail: String(e) });
+    console.error('deleteRestaurant error', e);
+    res.status(500).json({ error: 'Failed to delete restaurant', detail: String(e?.message || e) });
   }
 });
 
-// LINK (idempotent)
-app.post('/admin/dish-restaurants', async (req, res) => {
+// Link Dish <-> Restaurant
+app.post('/api/admin/dish-restaurants', async (req, res) => {
   try {
-    const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body ?? {};
-    if (!dish_id || !restaurant_id) return res.status(400).json({ error: 'dish_id_and_restaurant_id_required' });
+    const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body;
+    const sql = `
+      INSERT INTO dish_restaurants (dish_id, restaurant_id, price_note, availability)
+      VALUES (:dish_id, :restaurant_id, :price_note, :availability)
+      ON DUPLICATE KEY UPDATE price_note = VALUES(price_note), availability = VALUES(availability)
+    `;
+    await pool.execute(sql, { dish_id, restaurant_id, price_note, availability });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('link dish-restaurant error', e);
+    res.status(500).json({ error: 'Failed to link', detail: String(e?.message || e) });
+  }
+});
 
-    // ensure table & columns exist dynamically
-    const cols = await getCols('dish_restaurants');
-    const row = onlyKnown('dish_restaurants', { dish_id, restaurant_id, price_note, availability }, cols);
-    const keys = Object.keys(row);
-    const placeholders = keys.map(k => `:${k}`).join(', ');
-    await pool.query(
-      `INSERT IGNORE INTO dish_restaurants (${keys.map(k => `\`${k}\``).join(', ')}) VALUES (${placeholders})`,
-      row
+app.delete('/api/admin/dish-restaurants', async (req, res) => {
+  try {
+    const { dish_id, restaurant_id } = req.query;
+    const sql = `DELETE FROM dish_restaurants WHERE dish_id = :dish_id AND restaurant_id = :restaurant_id`;
+    await pool.execute(sql, { dish_id, restaurant_id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('unlink dish-restaurant error', e);
+    res.status(500).json({ error: 'Failed to unlink', detail: String(e?.message || e) });
+  }
+});
+
+// Set dish curation (signature/panel rank)
+app.patch('/api/admin/dishes/:id/curation', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { is_signature = null, panel_rank = null } = req.body;
+    await pool.execute(
+      `UPDATE dishes SET is_signature = :is_signature, panel_rank = :panel_rank WHERE id = :id`,
+      { id, is_signature, panel_rank }
     );
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'link_failed', detail: String(e) });
+    console.error('setDishCuration error', e);
+    res.status(500).json({ error: 'Failed to set dish curation', detail: String(e?.message || e) });
   }
-});
-
-// UNLINK
-app.delete('/admin/dish-restaurants', async (req, res) => {
-  try {
-    const dish_id = Number(req.query.dish_id);
-    const restaurant_id = Number(req.query.restaurant_id);
-    if (!dish_id || !restaurant_id) return res.status(400).json({ error: 'dish_id_and_restaurant_id_required' });
-    await pool.query('DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?', [dish_id, restaurant_id]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'unlink_failed', detail: String(e) });
-  }
-});
-
-/* ------------------------- 404 & Error ------------------------- */
-app.use((req, res) => {
-  res.status(404).json({ error: 'not_found' });
 });
 
 app.listen(PORT, () => {
   console.log(`Admin API listening on http://localhost:${PORT}`);
-  console.log(`Allowed CORS origins: ${[...allowedSet].join(', ')}`);
 });

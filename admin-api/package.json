@@ -4,8 +4,8 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon --ext js --watch . index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon --ext js --watch . index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
