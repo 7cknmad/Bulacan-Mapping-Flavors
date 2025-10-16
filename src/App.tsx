@@ -3,7 +3,7 @@ import React, { Suspense } from "react";
 import { HashRouter as Router, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AnimatePresence } from "framer-motion";
-
+import AdminDashboard from "./pages/admin/AdminDashboard";
 import Layout from "./components/layout/Layout";
 import PageTransition from "./components/common/PageTransition";
 import ErrorBoundary from "./components/common/ErrorBoundary";
@@ -24,6 +24,7 @@ function Routed() {
       <Routes location={location} key={location.pathname}>
         <Route path="/" element={<PageTransition><HomePage /></PageTransition>} />
         <Route path="/map" element={<PageTransition><MapExplorer /></PageTransition>} />
+        <Route path="/admin" element={<PageTransition><AdminDashboard /></PageTransition>} />
         <Route path="/dishes" element={<PageTransition><DishesPage /></PageTransition>} />
         <Route path="/dish/:slug" element={<PageTransition><DishDetails /></PageTransition>} />
         <Route path="/restaurants" element={<PageTransition><RestaurantList /></PageTransition>} />
