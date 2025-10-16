@@ -464,83 +464,113 @@ function RestaurantsTab() {
 ---------------------------------------------------------------------------- */
 function CurationTab() {
   const qc = useQueryClient();
-  const toast = useToast();
+  const [qDish, setQDish] = useState("");
+  const [qRest, setQRest] = useState("");
+  const [muniId, setMuniId] = useState<number | null>(null);
+  const [category, setCategory] = useState<"all" | "food" | "delicacy" | "drink">("all");
 
-  const [muni, setMuni] = useState<number | "all">("all");
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
-  const dishesQ = useQuery({ queryKey: ["dishes", muni], queryFn: () => listDishes({ municipalityId: muni === "all" ? undefined : muni as number }) });
-  const restsQ = useQuery({ queryKey: ["restaurants", muni], queryFn: () => listRestaurants({ municipalityId: muni === "all" ? undefined : muni as number }) });
+  const dishesQ = useQuery({
+    queryKey: ["dishes", qDish, muniId, category],
+    queryFn: () => listDishes({ q: qDish, municipalityId: muniId ?? undefined, category: category === "all" ? undefined : category }),
+    keepPreviousData: true
+  });
+  const restsQ = useQuery({
+    queryKey: ["rests", qRest, muniId],
+    queryFn: () => listRestaurants({ q: qRest, municipalityId: muniId ?? undefined }),
+    keepPreviousData: true
+  });
 
-  const ensureUniqueRank = async<T extends { id: number }>(items: T[], key: keyof any, rank: number, targetId: number, clear: (id: number) => Promise<any>) => {
-    const conflict = items.find((x: any) => x[key] === rank && x.id !== targetId);
+  const patchDishM = useMutation({
+    mutationFn: ({ id, payload }: { id: number, payload: any }) => setDishCuration(id, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] })
+  });
+  const patchRestM = useMutation({
+    mutationFn: ({ id, payload }: { id: number, payload: any }) => setRestaurantCuration(id, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] })
+  });
+
+  async function setDishRank(d: Dish, rank: number | null) {
+    const list = (dishesQ.data ?? []).filter(x => !muniId || x.municipality_id === muniId);
+    const conflict = rank ? list.find(x => x.panel_rank === rank && x.id !== d.id) : null;
     if (conflict) {
-      const ok = await useConfirm()(`Replace "${(conflict as any).name}" at Top ${rank}?`);
-      if (!ok) return false;
-      await clear(conflict.id);
+      const ok = await confirmThen(`Replace "${conflict.name}" at TOP ${rank} with "${d.name}"?`);
+      if (!ok) return;
+      await patchDishM.mutateAsync({ id: conflict.id, payload: { panel_rank: null, is_signature: 0 as 0 } });
     }
-    return true;
-  };
-
-  const setDishRank = async (d: Dish, rank: number | null) => {
-    const items = (dishesQ.data ?? []) as Dish[];
-    if (rank && !(await ensureUniqueRank(items, "panel_rank", rank, d.id, (id) => setDishCuration(id, { panel_rank: null, is_signature: 0 })))) return;
-    await qc.setQueryData(["dishes", muni], (old: any) => (old ?? []).map((x: Dish) => x.id === d.id ? { ...x, panel_rank: rank, is_signature: rank ? 1 : 0 } : x));
-    await setDishCuration(d.id, { panel_rank: rank, is_signature: rank ? 1 : 0 });
-    qc.invalidateQueries({ queryKey: ["dishes"] });
-    toast("Dish rank updated");
-  };
-
-  const setRestRank = async (r: Restaurant, rank: number | null) => {
-    const items = (restsQ.data ?? []) as Restaurant[];
-    if (rank && !(await ensureUniqueRank(items, "featured_rank", rank, r.id, (id) => setRestaurantCuration(id, { featured_rank: null, featured: 0 })))) return;
-    await qc.setQueryData(["restaurants", muni], (old: any) => (old ?? []).map((x: Restaurant) => x.id === r.id ? { ...x, featured_rank: rank, featured: rank ? 1 : 0 } : x));
-    await setRestaurantCuration(r.id, { featured_rank: rank, featured: rank ? 1 : 0 });
-    qc.invalidateQueries({ queryKey: ["restaurants"] });
-    toast("Restaurant rank updated");
-  };
+    await patchDishM.mutateAsync({ id: d.id, payload: { panel_rank: rank, is_signature: rank ? 1 as 1 : 0 as 0 } });
+  }
+  async function setRestRank(r: Restaurant, rank: number | null) {
+    const list = (restsQ.data ?? []).filter(x => !muniId || x.municipality_id === muniId);
+    const conflict = rank ? list.find(x => x.featured_rank === rank && x.id !== r.id) : null;
+    if (conflict) {
+      const ok = await confirmThen(`Replace "${conflict.name}" at TOP ${rank} with "${r.name}"?`);
+      if (!ok) return;
+      await patchRestM.mutateAsync({ id: conflict.id, payload: { featured_rank: null, featured: 0 as 0 } });
+    }
+    await patchRestM.mutateAsync({ id: r.id, payload: { featured_rank: rank, featured: rank ? 1 as 1 : 0 as 0 } });
+  }
 
   return (
     <div className="grid lg:grid-cols-2 gap-6">
+      {/* Dishes curation */}
       <div className="bg-white border rounded-2xl p-4">
         <div className="flex items-center gap-2 mb-3">
-          <h3 className="font-semibold">Top Dishes</h3>
-          <select className="ml-auto border rounded px-2 py-1 text-sm" value={muni} onChange={(e) => setMuni(e.target.value === "all" ? "all" : Number(e.target.value))}>
-            <option value="all">All municipalities</option>
-            {(muniQ.data ?? []).map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+          <h3 className="font-semibold">Top Dishes/Delicacy</h3>
+          <select className="ml-auto border rounded px-2 py-1 text-sm" value={muniId ?? 0} onChange={(e) => setMuniId(Number(e.target.value) || null)}>
+            <option value={0}>All municipalities</option>
+            {(muniQ.data ?? []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <select className="border rounded px-2 py-1 text-sm" value={category} onChange={(e) => setCategory(e.target.value as any)}>
+            <option value="all">All</option>
+            <option value="food">Food</option>
+            <option value="delicacy">Delicacy</option>
+            <option value="drink">Drink</option>
           </select>
         </div>
+        <input className="border rounded px-3 py-2 w-full mb-3" placeholder="Search dishes…" value={qDish} onChange={(e) => setQDish(e.target.value)} />
         <div className="grid sm:grid-cols-2 gap-3 max-h-[60vh] overflow-auto">
-          {(dishesQ.data ?? []).map((d) => (
+          {(dishesQ.data ?? []).map(d => (
             <div key={d.id} className="border rounded-xl p-3">
-              <div className="font-medium">{d.name}</div>
-              <div className="mt-2 flex items-center gap-2">
-                {[1,2,3].map((rank) => (
-                  <button key={rank} className={cx("px-2 py-1 text-xs rounded border", d.panel_rank === rank && "bg-neutral-900 text-white")} onClick={() => setDishRank(d, d.panel_rank === rank ? null : rank)}>Top {rank}</button>
+              <div className="font-semibold">{d.name}</div>
+              <div className="text-xs text-neutral-500">{d.category} • {(muniQ.data ?? []).find(m => m.id === d.municipality_id)?.name}</div>
+              <div className="flex items-center gap-2 mt-2">
+                {[1,2,3].map(rank => (
+                  <button key={rank}
+                          className={cx("px-2 py-1 text-xs rounded border", d.panel_rank === rank && "bg-neutral-900 text-white")}
+                          onClick={() => setDishRank(d, d.panel_rank === rank ? null : rank)}>
+                    Top {rank}
+                  </button>
                 ))}
-                <button className="px-2 py-1 text-xs rounded border" onClick={() => setDishRank(d, null)}>Clear</button>
               </div>
             </div>
           ))}
         </div>
       </div>
 
+      {/* Restaurants curation */}
       <div className="bg-white border rounded-2xl p-4">
         <div className="flex items-center gap-2 mb-3">
           <h3 className="font-semibold">Top Restaurants</h3>
-          <select className="ml-auto border rounded px-2 py-1 text-sm" value={muni} onChange={(e) => setMuni(e.target.value === "all" ? "all" : Number(e.target.value))}>
-            <option value="all">All municipalities</option>
-            {(muniQ.data ?? []).map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+          <select className="ml-auto border rounded px-2 py-1 text-sm" value={muniId ?? 0} onChange={(e) => setMuniId(Number(e.target.value) || null)}>
+            <option value={0}>All municipalities</option>
+            {(muniQ.data ?? []).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </div>
+        <input className="border rounded px-3 py-2 w-full mb-3" placeholder="Search restaurants…" value={qRest} onChange={(e) => setQRest(e.target.value)} />
         <div className="grid sm:grid-cols-2 gap-3 max-h-[60vh] overflow-auto">
-          {(restsQ.data ?? []).map((r) => (
+          {(restsQ.data ?? []).map(r => (
             <div key={r.id} className="border rounded-xl p-3">
-              <div className="font-medium">{r.name}</div>
-              <div className="mt-2 flex items-center gap-2">
-                {[1,2,3].map((rank) => (
-                  <button key={rank} className={cx("px-2 py-1 text-xs rounded border", (r as any).featured_rank === rank && "bg-neutral-900 text-white")} onClick={() => setRestRank(r, (r as any).featured_rank === rank ? null : rank)}>Top {rank}</button>
+              <div className="font-semibold">{r.name}</div>
+              <div className="text-xs text-neutral-500">{(muniQ.data ?? []).find(m => m.id === (r.municipality_id ?? 0))?.name}</div>
+              <div className="flex items-center gap-2 mt-2">
+                {[1,2,3].map(rank => (
+                  <button key={rank}
+                          className={cx("px-2 py-1 text-xs rounded border", r.featured_rank === rank && "bg-neutral-900 text-white")}
+                          onClick={() => setRestRank(r, r.featured_rank === rank ? null : rank)}>
+                    Top {rank}
+                  </button>
                 ))}
-                <button className="px-2 py-1 text-xs rounded border" onClick={() => setRestRank(r, null)}>Clear</button>
               </div>
             </div>
           ))}
@@ -549,7 +579,6 @@ function CurationTab() {
     </div>
   );
 }
-
 /* ----------------------------------------------------------------------------
    5) Linking – search, filters, selected highlight, linked-first
 ---------------------------------------------------------------------------- */
