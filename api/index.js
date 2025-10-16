@@ -108,7 +108,22 @@ function parse0or1(v) {
   if (v === '1' || v === 1) return 1;
   return null;
 }
+function toArray(x) {
+  if (x == null) return [];
+  if (Array.isArray(x)) return x;
+  try {
+    const parsed = typeof x === 'string' ? JSON.parse(x) : x;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
+function toFloat(x) {
+  if (x == null) return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
 const arr = (x) => Array.isArray(x) ? x
   : (x == null || x === '') ? null
   : (typeof x === 'string'
@@ -183,69 +198,128 @@ app.get('/api/municipalities', async (req, res) => {
 
 app.get('/api/dishes', async (req, res) => {
   try {
-    const muniId = parseIntOrNull(req.query.municipalityId);
-    const category = (req.query.category || '').toString().trim();
-    const qStr = (req.query.q || '').toString().trim();
-    const signature = parse0or1(req.query.signature);
-    const limit = parseIntOrNull(req.query.limit) || 100;
+    const { municipalityId, category, q, signature, limit } = req.query;
 
     const where = [];
-    const params = {};
-    if (muniId) { where.push('d.municipality_id = :muniId'); params.muniId = muniId; }
-    if (category) { where.push('d.category = :category'); params.category = category; }
-    if (qStr) { where.push('(d.name LIKE :q OR d.slug LIKE :q)'); params.q = `%${qStr}%`; }
-    if (signature !== null) { where.push('IFNULL(d.is_signature,0) = :sig'); params.sig = signature; }
+    const params = [];
 
-    const rows = await q(
-      `SELECT d.*
-       FROM dishes d
-       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-       ORDER BY
-         CASE WHEN d.panel_rank IS NULL THEN 999 ELSE d.panel_rank END ASC,
-         IFNULL(d.rating, 0) DESC,
-         d.name ASC
-       LIMIT :limit`, { ...params, limit }
-    );
-    res.json(rows.map(coerceDish));
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to fetch dishes', detail: String(e?.message || e) });
+    if (municipalityId) { where.push('d.municipality_id = ?'); params.push(Number(municipalityId)); }
+    if (category)       { where.push('d.category = ?');        params.push(String(category)); }
+    if (q)              { where.push('(d.name LIKE ? OR d.slug LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+    if (signature != null) { where.push('d.is_signature = ?'); params.push(Number(signature) ? 1 : 0); }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limitSql = limit ? `LIMIT ${Number(limit)}` : '';
+
+    const sql = `
+      SELECT
+        d.id, d.slug, d.name, d.description, d.image_url,
+        d.rating, d.popularity, d.flavor_profile, d.ingredients,
+        d.municipality_id, m.name AS municipality_name,
+        d.category, d.is_signature, d.panel_rank
+      FROM dishes d
+      LEFT JOIN municipalities m ON m.id = d.municipality_id
+      ${whereSql}
+      ORDER BY
+        CASE WHEN d.is_signature = 1 THEN 0 ELSE 1 END,
+        CASE WHEN d.panel_rank IS NULL THEN 99 ELSE d.panel_rank END,
+        d.popularity DESC,
+        d.rating DESC,
+        d.name ASC
+      ${limitSql}
+    `;
+
+    const [rows] = await pool.query(sql, params);
+
+    const out = rows.map(r => ({
+      id: r.id,
+      slug: r.slug,
+      name: r.name,
+      description: r.description ?? null,
+      image_url: r.image_url ?? null,
+      rating: toFloat(r.rating),
+      popularity: r.popularity == null ? null : Number(r.popularity),
+      flavor_profile: toArray(r.flavor_profile),
+      ingredients: toArray(r.ingredients),
+      municipality_id: r.municipality_id,
+      municipality_name: r.municipality_name,
+      category: r.category,
+      is_signature: r.is_signature ? 1 : 0,
+      panel_rank: r.panel_rank == null ? null : Number(r.panel_rank),
+    }));
+
+    res.json(out);
+  } catch (err) {
+    console.error('GET /api/dishes error:', err);
+    res.status(500).json({ error: 'Failed to fetch dishes' });
   }
 });
 
 app.get('/api/restaurants', async (req, res) => {
   try {
-    const muniId = parseIntOrNull(req.query.municipalityId);
-    const dishId = parseIntOrNull(req.query.dishId);
-    const qStr = (req.query.q || '').toString().trim();
-    const featured = parse0or1(req.query.featured);
-    const limit = parseIntOrNull(req.query.limit) || 100;
+    const { municipalityId, dishId, q, featured, limit } = req.query;
 
     const where = [];
-    const params = {};
+    const params = [];
     let join = '';
 
+    if (municipalityId) { where.push('r.municipality_id = ?'); params.push(Number(municipalityId)); }
+    if (q)              { where.push('(r.name LIKE ? OR r.slug LIKE ? OR r.address LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+    if (featured != null) { where.push('r.featured = ?'); params.push(Number(featured) ? 1 : 0); }
     if (dishId) {
-      join = 'INNER JOIN dish_restaurant dr ON dr.restaurant_id = r.id AND dr.dish_id = :dishId';
-      params.dishId = dishId;
+      join = 'JOIN dish_restaurants dr ON dr.restaurant_id = r.id';
+      where.push('dr.dish_id = ?'); params.push(Number(dishId));
     }
-    if (muniId) { where.push('r.municipality_id = :muniId'); params.muniId = muniId; }
-    if (qStr) { where.push('(r.name LIKE :q OR r.slug LIKE :q OR r.address LIKE :q)'); params.q = `%${qStr}%`; }
-    if (featured !== null) { where.push('IFNULL(r.featured,0) = :feat'); params.feat = featured; }
 
-    const rows = await q(
-      `SELECT r.*
-       FROM restaurants r
-       ${join}
-       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-       ORDER BY
-         CASE WHEN r.featured_rank IS NULL THEN 999 ELSE r.featured_rank END ASC,
-         IFNULL(r.rating, 0) DESC,
-         r.name ASC
-       LIMIT :limit`, { ...params, limit }
-    );
-    res.json(rows.map(coerceRestaurant));
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to fetch restaurants', detail: String(e?.message || e) });
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limitSql = limit ? `LIMIT ${Number(limit)}` : '';
+
+    const sql = `
+      SELECT
+        r.id, r.municipality_id, r.name, r.slug, r.kind,
+        r.description, r.address, r.phone, r.website, r.facebook, r.instagram,
+        r.opening_hours, r.price_range, r.cuisine_types, r.rating, r.lat, r.lng,
+        r.image_url, r.featured, r.featured_rank
+      FROM restaurants r
+      ${join}
+      ${whereSql}
+      ORDER BY
+        CASE WHEN r.featured = 1 THEN 0 ELSE 1 END,
+        CASE WHEN r.featured_rank IS NULL THEN 99 ELSE r.featured_rank END,
+        r.rating DESC,
+        r.name ASC
+      ${limitSql}
+    `;
+
+    const [rows] = await pool.query(sql, params);
+
+    const out = rows.map(r => ({
+      id: r.id,
+      municipality_id: r.municipality_id,
+      name: r.name,
+      slug: r.slug,
+      kind: r.kind,
+      description: r.description ?? null,
+      address: r.address ?? '',
+      phone: r.phone ?? null,
+      website: r.website ?? null,
+      facebook: r.facebook ?? null,
+      instagram: r.instagram ?? null,
+      opening_hours: r.opening_hours ?? null,
+      price_range: r.price_range ?? null,
+      cuisine_types: toArray(r.cuisine_types),
+      rating: toFloat(r.rating) ?? 0,
+      lat: toFloat(r.lat),
+      lng: toFloat(r.lng),
+      image_url: r.image_url ?? null,
+      featured: r.featured ? 1 : 0,
+      featured_rank: r.featured_rank == null ? null : Number(r.featured_rank),
+    }));
+
+    res.json(out);
+  } catch (err) {
+    console.error('GET /api/restaurants error:', err);
+    res.status(500).json({ error: 'Failed to fetch restaurants' });
   }
 });
 
