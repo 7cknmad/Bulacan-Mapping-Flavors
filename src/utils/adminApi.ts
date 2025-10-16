@@ -1,164 +1,96 @@
 // src/utils/adminApi.ts
-
-// Base URLs
-export const PUBLIC_API =
-  (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/+$/, "");
 export const ADMIN_API =
   (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
 
-// While developing, read from ADMIN so you only need one server running.
-// If you later want reads from the public API again, flip this to PUBLIC_API.
-const READS_API = ADMIN_API;
-
-// Small fetch helpers (no auth for now)
-async function request(method: string, url: string, body?: any) {
+// generic fetch (no auth)
+async function req<T = any>(method: string, path: string, body?: any): Promise<T> {
+  const url = path.startsWith("http") ? path : `${ADMIN_API}${path}`;
   const res = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
     credentials: "omit",
   });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${text || ""}`);
-  try { return text ? JSON.parse(text) : null; } catch { return null; }
+  const txt = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${txt || ""}`);
+  try { return txt ? JSON.parse(txt) : null; } catch { return null as any; }
 }
-const get   = (url: string) => request("GET", url);
-const post  = (url: string, body?: any) => request("POST", url, body);
-const patch = (url: string, body?: any) => request("PATCH", url, body);
-const del   = (url: string) => request("DELETE", url);
+const get = <T=any>(p:string)=>req<T>("GET",p);
+const post=<T=any>(p:string,b?:any)=>req<T>("POST",p,b);
+const patch=<T=any>(p:string,b?:any)=>req<T>("PATCH",p,b);
+const del =<T=any>(p:string)=>req<T>("DELETE",p);
 
-// Normalize csv/json string fields to string[]
-export function toArr(v: unknown): string[] | null {
-  if (v == null) return null;
-  if (Array.isArray(v)) return v.filter(Boolean).map(String);
-  if (typeof v === "string") {
-    const s = v.trim();
-    if (!s) return [];
-    if (s.startsWith("[") && s.endsWith("]")) {
-      try {
-        const parsed = JSON.parse(s);
-        return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
-      } catch { /* ignore */ }
-    }
-    return s.split(",").map(x => x.trim()).filter(Boolean);
-  }
-  return [];
-}
-
-// Types
-export type Municipality = { id: number; name: string; slug: string };
-
+export type Municipality = { id:number; name:string; slug:string };
 export type Dish = {
-  id: number;
-  municipality_id: number | null;
-  name: string; slug: string;
-  description: string | null;
-  image_url: string | null;
-  category: "food" | "delicacy" | "drink";
-  flavor_profile?: any;
-  ingredients?: any;
-  popularity?: number | null;
-  rating?: number | null;
-  is_signature?: 0 | 1 | null;
-  panel_rank?: number | null;
+  id:number; municipality_id:number|null;
+  name:string; slug:string; description:string|null;
+  category:"food"|"delicacy"|"drink";
+  flavor_profile?: any; ingredients?: any;
+  popularity?: number|null; rating?: number|null;
+  is_signature?: 0|1|null; panel_rank?: number|null;
+  image_url?: string|null;
 };
-
 export type Restaurant = {
-  id: number;
-  municipality_id: number | null;
-  name: string; slug: string;
+  id:number; municipality_id:number|null;
+  name:string; slug:string; address:string;
+  lat:number; lng:number;
   kind?: "restaurant"|"stall"|"store"|"dealer"|"market"|"home-based";
-  description?: string | null;
-  address: string;
-  phone?: string | null;
-  website?: string | null;
-  facebook?: string | null;
-  instagram?: string | null;
-  opening_hours?: string | null;
-  price_range?: "budget"|"moderate"|"expensive";
-  cuisine_types?: any;
-  rating?: number | null;
-  lat: number; lng: number;
-  image_url?: string | null;
-  featured?: 0 | 1 | null;
-  featured_rank?: number | null;
+  description?:string|null; phone?:string|null;
+  website?:string|null; facebook?:string|null; instagram?:string|null;
+  opening_hours?:string|null; price_range?:"budget"|"moderate"|"expensive";
+  cuisine_types?: any; rating?:number|null;
+  image_url?:string|null; featured?:0|1|null; featured_rank?:number|null;
 };
 
-// Health/write-cap: always true for now (no login/gating yet)
-export async function writeCap(): Promise<boolean> { return true; }
-
-// Reads (from ADMIN for dev convenience)
-export const listMunicipalities = () =>
-  get(`${READS_API}/api/municipalities`) as Promise<Municipality[]>;
-
-export const listDishes = (opts: {
-  municipalityId?: number;
-  category?: string;
-  q?: string;
-  signature?: 0|1;
-  limit?: number;
-} = {}) => {
+// READS
+export const listMunicipalities = () => get<Municipality[]>(`/api/municipalities`);
+export const listDishes = (opts: { municipalityId?:number; q?:string; category?:string; signature?:0|1; limit?:number } = {}) => {
   const qs = new URLSearchParams();
   if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
-  if (opts.category)       qs.set("category", String(opts.category));
-  if (opts.q)              qs.set("q", opts.q);
-  if (opts.signature!=null)qs.set("signature", String(opts.signature));
-  if (opts.limit)          qs.set("limit", String(opts.limit));
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return get(`${READS_API}/api/dishes${suffix}`) as Promise<Dish[]>;
+  if (opts.q) qs.set("q", opts.q);
+  if (opts.category) qs.set("category", String(opts.category));
+  if (opts.signature!=null) qs.set("signature", String(opts.signature));
+  if (opts.limit) qs.set("limit", String(opts.limit));
+  return get<Dish[]>(`/api/dishes${qs.toString() ? `?${qs}` : ""}`);
 };
-
-export const listRestaurants = (opts: {
-  municipalityId?: number;
-  dishId?: number;
-  q?: string;
-  featured?: 0|1;
-  limit?: number;
-} = {}) => {
+export const listRestaurants = (opts: { municipalityId?:number; q?:string; dishId?:number; featured?:0|1; limit?:number } = {}) => {
   const qs = new URLSearchParams();
   if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
-  if (opts.dishId)         qs.set("dishId", String(opts.dishId));
-  if (opts.q)              qs.set("q", opts.q);
+  if (opts.q) qs.set("q", opts.q);
+  if (opts.dishId) qs.set("dishId", String(opts.dishId));
   if (opts.featured!=null) qs.set("featured", String(opts.featured));
-  if (opts.limit)          qs.set("limit", String(opts.limit));
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return get(`${READS_API}/api/restaurants${suffix}`) as Promise<Restaurant[]>;
+  if (opts.limit) qs.set("limit", String(opts.limit));
+  return get<Restaurant[]>(`/api/restaurants${qs.toString() ? `?${qs}` : ""}`);
 };
 
-// Writes (admin API)
-export const createDish        = (payload: Partial<Dish>) => post(`${ADMIN_API}/admin/dishes`, payload);
-export const updateDish        = (id: number, payload: Partial<Dish>) => patch(`${ADMIN_API}/admin/dishes/${id}`, payload);
-export const deleteDish        = (id: number) => del(`${ADMIN_API}/admin/dishes/${id}`);
+// CRUD
+export const createDish = (payload: Partial<Dish>) => post<Dish>(`/admin/dishes`, payload);
+export const updateDish = (id:number, payload: Partial<Dish>) => patch<Dish>(`/admin/dishes/${id}`, payload);
+export const deleteDish = (id:number) => del<{ok:true}>(`/admin/dishes/${id}`);
 
-export const createRestaurant  = (payload: Partial<Restaurant>) => post(`${ADMIN_API}/admin/restaurants`, payload);
-export const updateRestaurant  = (id: number, payload: Partial<Restaurant>) => patch(`${ADMIN_API}/admin/restaurants/${id}`, payload);
-export const deleteRestaurant  = (id: number) => del(`${ADMIN_API}/admin/restaurants/${id}`);
+export const createRestaurant = (payload: Partial<Restaurant>) => post<Restaurant>(`/admin/restaurants`, payload);
+export const updateRestaurant = (id:number, payload: Partial<Restaurant>) => patch<Restaurant>(`/admin/restaurants/${id}`, payload);
+export const deleteRestaurant = (id:number) => del<{ok:true}>(`/admin/restaurants/${id}`);
 
 // Linking
-export const linkedRestaurantsForDish = (dishId: number) =>
-  get(`${ADMIN_API}/admin/dishes/${dishId}/restaurants`) as Promise<Restaurant[]>;
-
-export const linkedDishesForRestaurant = (restId: number) =>
-  get(`${ADMIN_API}/admin/restaurants/${restId}/dishes`) as Promise<Dish[]>;
-
-export const linkDishRestaurant = (dish_id: number, restaurant_id: number, price_note?: string|null, availability: 'regular'|'seasonal'|'preorder' = 'regular') =>
-  post(`${ADMIN_API}/admin/dish-restaurants`, { dish_id, restaurant_id, price_note: price_note ?? null, availability });
-
-export const unlinkDishRestaurant = (dish_id: number, restaurant_id: number) =>
-  del(`${ADMIN_API}/admin/dish-restaurants?dish_id=${dish_id}&restaurant_id=${restaurant_id}`);
+export const linkedRestaurantsForDish = (dishId:number) => get<Restaurant[]>(`/admin/dishes/${dishId}/restaurants`);
+export const linkedDishesForRestaurant = (restId:number) => get<Dish[]>(`/admin/restaurants/${restId}/dishes`);
+export const linkDishRestaurant   = (dish_id:number, restaurant_id:number, price_note?:string|null, availability:'regular'|'seasonal'|'preorder'='regular') =>
+  post<{ok:true}>(`/admin/dish-restaurants`, { dish_id, restaurant_id, price_note: price_note ?? null, availability });
+export const unlinkDishRestaurant = (dish_id:number, restaurant_id:number) =>
+  del<{ok:true}>(`/admin/dish-restaurants?dish_id=${dish_id}&restaurant_id=${restaurant_id}`);
 
 // Curation
-export const setDishCuration = (id: number, payload: { is_signature?: 0|1, panel_rank?: number|null }) =>
-  patch(`${ADMIN_API}/admin/dishes/${id}`, payload);
+export const setDishCuration = (id:number, payload: { is_signature:0|1|null; panel_rank:number|null }) =>
+  patch<Dish>(`/admin/dishes/${id}/curation`, payload);
 
-export const setRestaurantCuration = (id: number, payload: { featured?: 0|1, featured_rank?: number|null }) =>
-  patch(`${ADMIN_API}/admin/restaurants/${id}`, payload);
+export const setRestaurantCuration = (id:number, payload: { featured:0|1|null; featured_rank:number|null }) =>
+  patch<Restaurant>(`/admin/restaurants/${id}/curation`, payload);
 
-// Analytics (admin API)
-export const getAnalyticsSummary = () =>
-  get(`${ADMIN_API}/admin/analytics/summary`) as Promise<{
-    counts: { dishes: number; restaurants: number };
-    perMunicipality: Array<{ slug: string; dishes: number; restaurants: number }>;
-    topDishes: Array<{ id:number; name:string; panel_rank:number|null }>;
-    topRestaurants: Array<{ id:number; name:string; featured_rank:number|null }>;
-  }>;
+// Analytics
+export const getAnalyticsSummary = () => get<{
+  counts: { dishes:number; restaurants:number };
+  perMunicipality: Array<{ slug:string; dishes:number; restaurants:number }>;
+  topDishes: Array<{ id:number; name:string; panel_rank:number|null }>;
+  topRestaurants: Array<{ id:number; name:string; featured_rank:number|null }>;
+}>(`/admin/analytics/summary`);

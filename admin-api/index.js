@@ -1,231 +1,339 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import mysql from 'mysql2/promise';
+// admin-api/index.js  — minimal admin server (no auth; CORS open; talks to same DB)
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import mysql from "mysql2/promise";
 
-const {
-  PORT = 3002,
-  DB_HOST = '127.0.0.1',
-  DB_USER = 'root',
-  DB_PASSWORD = '',
-  DB_NAME = 'bulacan_flavors',
-  ALLOWED_ORIGINS = 'http://localhost:5174,https://7cknmad.github.io',
-} = process.env;
+dotenv.config();
 
-const allowed = new Set(
-  ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
-);
+const PORT = Number(process.env.PORT || 3002);
 
 const app = express();
+// Permissive CORS for now (no cookies; front uses credentials: 'omit')
+app.use(cors({
+  origin: "*",
+  methods: ["GET","POST","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type"]
+}));
 app.use(express.json());
 
-// CORS (no cookies; front-end should use credentials:'omit')
-app.use(cors({
-  origin(origin, cb) {
-    if (!origin) return cb(null, true);               // curl / server-to-server
-    if (allowed.has(origin)) return cb(null, true);
-    return cb(new Error('Not allowed by CORS: ' + origin));
-  },
-  methods: ['GET','POST','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type'],
-  credentials: false
-}));
-
-// DB pool
+// ---- DB POOL ----
 const pool = mysql.createPool({
-  host: DB_HOST, user: DB_USER, password: DB_PASSWORD, database: DB_NAME,
-  waitForConnections: true, connectionLimit: 10, namedPlaceholders: true,
+  host:     process.env.DB_HOST     || "127.0.0.1",
+  user:     process.env.DB_USER     || "root",
+  password: process.env.DB_PASSWORD || "",
+  database: process.env.DB_NAME     || "bulacan_flavors",
+  waitForConnections: true,
+  connectionLimit: 10,
 });
+const q = async (sql, params=[]) => (await pool.query(sql, params))[0];
 
-app.get('/api/admin/health', (req, res) => {
-  res.json({ ok: true, service: 'admin-api', time: new Date().toISOString() });
-});
+/* ========================= READS ========================= */
 
-/* ---------- Minimal writes you can expand later ----------
-   NOTE: These SQLs assume columns you already have.
-   If some columns differ in your schema, tweak the SET lists accordingly.
-*/
-
-// Create Dish
-app.post('/api/admin/dishes', async (req, res) => {
+app.get("/api/municipalities", async (req, res) => {
   try {
-    const {
-      municipality_id, name, slug, description = null, image_url = null,
-      category = 'food', flavor_profile = null, ingredients = null,
-      rating = null, popularity = null, is_signature = null, panel_rank = null,
-    } = req.body;
-
-    const sql = `
-      INSERT INTO dishes
-      (municipality_id, name, slug, description, image_url, category,
-       flavor_profile, ingredients, rating, popularity, is_signature, panel_rank)
-      VALUES (:municipality_id, :name, :slug, :description, :image_url, :category,
-              :flavor_profile, :ingredients, :rating, :popularity, :is_signature, :panel_rank)
-    `;
-    await pool.execute(sql, {
-      municipality_id, name, slug, description, image_url, category,
-      flavor_profile: flavor_profile ? JSON.stringify(flavor_profile) : null,
-      ingredients: ingredients ? JSON.stringify(ingredients) : null,
-      rating, popularity, is_signature, panel_rank,
-    });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('createDish error', e);
-    res.status(500).json({ error: 'Failed to create dish', detail: String(e?.message || e) });
-  }
+    const rows = await q(`SELECT id, name, slug FROM municipalities ORDER BY name`);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: "Failed to fetch municipalities", detail: String(e) }); }
 });
 
-// Update Dish
-app.patch('/api/admin/dishes/:id', async (req, res) => {
+app.get("/api/dishes", async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    const up = { ...req.body };
-    if ('flavor_profile' in up && Array.isArray(up.flavor_profile)) {
-      up.flavor_profile = JSON.stringify(up.flavor_profile);
-    }
-    if ('ingredients' in up && Array.isArray(up.ingredients)) {
-      up.ingredients = JSON.stringify(up.ingredients);
-    }
-
-    const fields = Object.keys(up)
-      .filter(k => up[k] !== undefined)
-      .map(k => `${k} = :${k}`);
-    if (fields.length === 0) return res.json({ ok: true });
-
-    const sql = `UPDATE dishes SET ${fields.join(', ')} WHERE id = :id`;
-    await pool.execute(sql, { id, ...up });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('updateDish error', e);
-    res.status(500).json({ error: 'Failed to update dish', detail: String(e?.message || e) });
-  }
+    const { municipalityId, category, q:search, signature, limit } = req.query;
+    const where = [];
+    const args = [];
+    if (municipalityId) { where.push("d.municipality_id = ?"); args.push(Number(municipalityId)); }
+    if (category)       { where.push("d.category = ?");       args.push(String(category)); }
+    if (search)         { where.push("(d.name LIKE ? OR d.slug LIKE ?)"); const s = `%${search}%`; args.push(s, s); }
+    if (signature != null) { where.push("COALESCE(d.is_signature,0) = ?"); args.push(Number(signature)); }
+    const lim = Math.min(Number(limit || 200), 500);
+    const rows = await q(
+      `SELECT d.* FROM dishes d
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY COALESCE(d.panel_rank, 999), d.name
+       LIMIT ${lim}`, args);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: "Failed to fetch dishes", detail: String(e) }); }
 });
 
-// Delete Dish
-app.delete('/api/admin/dishes/:id', async (req, res) => {
+app.get("/api/restaurants", async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    await pool.execute(`DELETE FROM dish_restaurants WHERE dish_id = :id`, { id });
-    await pool.execute(`DELETE FROM dishes WHERE id = :id`, { id });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('deleteDish error', e);
-    res.status(500).json({ error: 'Failed to delete dish', detail: String(e?.message || e) });
-  }
+    const { municipalityId, q:search, dishId, featured, limit } = req.query;
+    const where = [];
+    const args = [];
+    let join = "";
+    if (dishId) { join = "JOIN dish_restaurants dr ON dr.restaurant_id = r.id"; where.push("dr.dish_id = ?"); args.push(Number(dishId)); }
+    if (municipalityId) { where.push("r.municipality_id = ?"); args.push(Number(municipalityId)); }
+    if (search) { where.push("(r.name LIKE ? OR r.slug LIKE ?)"); const s = `%${search}%`; args.push(s, s); }
+    if (featured != null) { where.push("COALESCE(r.featured,0) = ?"); args.push(Number(featured)); }
+    const lim = Math.min(Number(limit || 200), 500);
+    const rows = await q(
+      `SELECT r.* FROM restaurants r
+       ${join}
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY COALESCE(r.featured_rank, 999), r.name
+       LIMIT ${lim}`, args);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: "Failed to fetch restaurants", detail: String(e) }); }
 });
 
-// Create Restaurant
-app.post('/api/admin/restaurants', async (req, res) => {
+/* ========================= CRUD: DISHES ========================= */
+
+const DISH_COLUMNS = new Set([
+  "municipality_id","name","slug","description","category",
+  "flavor_profile","ingredients","popularity","rating","is_signature","panel_rank","image_url"
+]);
+
+app.post("/admin/dishes", async (req, res) => {
   try {
-    const {
-      municipality_id = null, name, slug, kind = 'restaurant',
-      description = null, address = '', phone = null, website = null,
-      facebook = null, instagram = null, opening_hours = null,
-      price_range = null, cuisine_types = null, rating = null,
-      lat, lng, image_url = null
-    } = req.body;
-
-    const sql = `
-      INSERT INTO restaurants
-      (municipality_id, name, slug, kind, description, address, phone, website,
-       facebook, instagram, opening_hours, price_range, cuisine_types, rating,
-       lat, lng, image_url)
-      VALUES
-      (:municipality_id, :name, :slug, :kind, :description, :address, :phone, :website,
-       :facebook, :instagram, :opening_hours, :price_range, :cuisine_types, :rating,
-       :lat, :lng, :image_url)
-    `;
-    await pool.execute(sql, {
-      municipality_id, name, slug, kind, description, address, phone, website,
-      facebook, instagram, opening_hours, price_range,
-      cuisine_types: cuisine_types ? JSON.stringify(cuisine_types) : null,
-      rating, lat, lng, image_url
-    });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('createRestaurant error', e);
-    res.status(500).json({ error: 'Failed to create restaurant', detail: String(e?.message || e) });
-  }
+    const payload = req.body || {};
+    const cols = Object.keys(payload).filter(k => DISH_COLUMNS.has(k));
+    if (cols.length === 0) return res.status(400).json({ error: "No valid fields" });
+    const placeholders = cols.map(()=>"?").join(",");
+    const sql = `INSERT INTO dishes (${cols.join(",")}) VALUES (${placeholders})`;
+    const args = cols.map(k => payload[k]);
+    const r = await q(sql, args);
+    const [row] = await q(`SELECT * FROM dishes WHERE id=?`, [r.insertId]);
+    res.json(row);
+  } catch (e) { res.status(500).json({ error:"Failed to create dish", detail:String(e) }); }
 });
 
-// Update Restaurant
-app.patch('/api/admin/restaurants/:id', async (req, res) => {
+app.patch("/admin/dishes/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const up = { ...req.body };
-    if ('cuisine_types' in up && Array.isArray(up.cuisine_types)) {
-      up.cuisine_types = JSON.stringify(up.cuisine_types);
-    }
-    const fields = Object.keys(up)
-      .filter(k => up[k] !== undefined)
-      .map(k => `${k} = :${k}`);
-    if (fields.length === 0) return res.json({ ok: true });
-
-    const sql = `UPDATE restaurants SET ${fields.join(', ')} WHERE id = :id`;
-    await pool.execute(sql, { id, ...up });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('updateRestaurant error', e);
-    res.status(500).json({ error: 'Failed to update restaurant', detail: String(e?.message || e) });
-  }
+    const payload = req.body || {};
+    const cols = Object.keys(payload).filter(k => DISH_COLUMNS.has(k));
+    if (cols.length === 0) return res.status(400).json({ error: "No valid fields" });
+    const setSql = cols.map(c => `${c}=?`).join(",");
+    const args = cols.map(k => payload[k]); args.push(id);
+    await q(`UPDATE dishes SET ${setSql} WHERE id=?`, args);
+    const [row] = await q(`SELECT * FROM dishes WHERE id=?`, [id]);
+    res.json(row);
+  } catch (e) { res.status(500).json({ error:"Failed to update dish", detail:String(e) }); }
 });
 
-// Delete Restaurant
-app.delete('/api/admin/restaurants/:id', async (req, res) => {
+app.delete("/admin/dishes/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    await pool.execute(`DELETE FROM dish_restaurants WHERE restaurant_id = :id`, { id });
-    await pool.execute(`DELETE FROM restaurants WHERE id = :id`, { id });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('deleteRestaurant error', e);
-    res.status(500).json({ error: 'Failed to delete restaurant', detail: String(e?.message || e) });
-  }
+    await q(`DELETE FROM dish_restaurants WHERE dish_id=?`, [id]);
+    await q(`DELETE FROM dishes WHERE id=?`, [id]);
+    res.json({ ok:true });
+  } catch (e) { res.status(500).json({ error:"Failed to delete dish", detail:String(e) }); }
 });
 
-// Link Dish <-> Restaurant
-app.post('/api/admin/dish-restaurants', async (req, res) => {
+/* ========================= CRUD: RESTAURANTS ========================= */
+
+const REST_COLUMNS = new Set([
+  "municipality_id","name","slug","kind","description","address","phone","website",
+  "facebook","instagram","opening_hours","price_range","cuisine_types","rating","lat","lng",
+  "image_url","featured","featured_rank"
+]);
+
+app.post("/admin/restaurants", async (req, res) => {
   try {
-    const { dish_id, restaurant_id, price_note = null, availability = 'regular' } = req.body;
-    const sql = `
-      INSERT INTO dish_restaurants (dish_id, restaurant_id, price_note, availability)
-      VALUES (:dish_id, :restaurant_id, :price_note, :availability)
-      ON DUPLICATE KEY UPDATE price_note = VALUES(price_note), availability = VALUES(availability)
-    `;
-    await pool.execute(sql, { dish_id, restaurant_id, price_note, availability });
-    res.json({ ok: true });
+    const payload = req.body || {};
+    const cols = Object.keys(payload).filter(k => REST_COLUMNS.has(k));
+    if (cols.length === 0) return res.status(400).json({ error: "No valid fields" });
+    const placeholders = cols.map(()=>"?").join(",");
+    const sql = `INSERT INTO restaurants (${cols.join(",")}) VALUES (${placeholders})`;
+    const args = cols.map(k => payload[k]);
+    const r = await q(sql, args);
+    const [row] = await q(`SELECT * FROM restaurants WHERE id=?`, [r.insertId]);
+    res.json(row);
   } catch (e) {
-    console.error('link dish-restaurant error', e);
-    res.status(500).json({ error: 'Failed to link', detail: String(e?.message || e) });
+    res.status(500).json({ error:"Failed to create restaurant", detail:String(e) });
   }
 });
 
-app.delete('/api/admin/dish-restaurants', async (req, res) => {
-  try {
-    const { dish_id, restaurant_id } = req.query;
-    const sql = `DELETE FROM dish_restaurants WHERE dish_id = :dish_id AND restaurant_id = :restaurant_id`;
-    await pool.execute(sql, { dish_id, restaurant_id });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('unlink dish-restaurant error', e);
-    res.status(500).json({ error: 'Failed to unlink', detail: String(e?.message || e) });
-  }
-});
-
-// Set dish curation (signature/panel rank)
-app.patch('/api/admin/dishes/:id/curation', async (req, res) => {
+app.patch("/admin/restaurants/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { is_signature = null, panel_rank = null } = req.body;
-    await pool.execute(
-      `UPDATE dishes SET is_signature = :is_signature, panel_rank = :panel_rank WHERE id = :id`,
-      { id, is_signature, panel_rank }
+    const payload = req.body || {};
+    const cols = Object.keys(payload).filter(k => REST_COLUMNS.has(k));
+    if (cols.length === 0) return res.status(400).json({ error: "No valid fields" });
+    const setSql = cols.map(c => `${c}=?`).join(",");
+    const args = cols.map(k => payload[k]); args.push(id);
+    await q(`UPDATE restaurants SET ${setSql} WHERE id=?`, args);
+    const [row] = await q(`SELECT * FROM restaurants WHERE id=?`, [id]);
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ error:"Failed to update restaurant", detail:String(e) });
+  }
+});
+
+app.delete("/admin/restaurants/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await q(`DELETE FROM dish_restaurants WHERE restaurant_id=?`, [id]);
+    await q(`DELETE FROM restaurants WHERE id=?`, [id]);
+    res.json({ ok:true });
+  } catch (e) { res.status(500).json({ error:"Failed to delete restaurant", detail:String(e) }); }
+});
+
+/* ========================= LINKING ========================= */
+
+app.get("/admin/dishes/:id/restaurants", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const rows = await q(
+      `SELECT r.* FROM dish_restaurants dr
+       JOIN restaurants r ON r.id=dr.restaurant_id
+       WHERE dr.dish_id=? ORDER BY r.name`, [id]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error:"Failed to list restaurants for dish", detail:String(e) }); }
+});
+
+app.get("/admin/restaurants/:id/dishes", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const rows = await q(
+      `SELECT d.* FROM dish_restaurants dr
+       JOIN dishes d ON d.id=dr.dish_id
+       WHERE dr.restaurant_id=? ORDER BY d.name`, [id]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error:"Failed to list dishes for restaurant", detail:String(e) }); }
+});
+
+app.post("/admin/dish-restaurants", async (req, res) => {
+  try {
+    const { dish_id, restaurant_id, price_note=null, availability='regular' } = req.body || {};
+    if (!dish_id || !restaurant_id) return res.status(400).json({ error:"dish_id and restaurant_id required" });
+    await q(
+      `INSERT IGNORE INTO dish_restaurants (dish_id, restaurant_id, price_note, availability)
+       VALUES (?,?,?,?)`,
+      [dish_id, restaurant_id, price_note, availability]
     );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('setDishCuration error', e);
-    res.status(500).json({ error: 'Failed to set dish curation', detail: String(e?.message || e) });
-  }
+    res.json({ ok:true });
+  } catch (e) { res.status(500).json({ error:"Failed to link", detail:String(e) }); }
+});
+
+app.delete("/admin/dish-restaurants", async (req, res) => {
+  try {
+    const dish_id = Number(req.query.dish_id);
+    const restaurant_id = Number(req.query.restaurant_id);
+    if (!dish_id || !restaurant_id) return res.status(400).json({ error:"dish_id and restaurant_id required" });
+    await q(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [dish_id, restaurant_id]);
+    res.json({ ok:true });
+  } catch (e) { res.status(500).json({ error:"Failed to unlink", detail:String(e) }); }
+});
+
+/* ========================= CURATION ========================= */
+/** Helper: ensure ranks 1..3 are unique per municipality for dishes */
+async function enforceDishRankUniqueness(municipality_id) {
+  // If any municipality has duplicates, keep the smallest id for each rank; null the others.
+  await q(
+    `UPDATE dishes d
+     JOIN (
+       SELECT municipality_id, panel_rank, MIN(id) keep_id
+       FROM dishes
+       WHERE municipality_id=? AND panel_rank IN (1,2,3)
+       GROUP BY municipality_id, panel_rank
+     ) x ON x.municipality_id=d.municipality_id AND x.panel_rank=d.panel_rank
+     SET d.panel_rank = IF(d.id = x.keep_id, d.panel_rank, NULL),
+         d.is_signature = IF(d.id = x.keep_id, 1, d.is_signature)`,
+    [municipality_id]
+  );
+}
+
+/** Enforce only 3 rows max per municipality with is_signature=1 and panel_rank in 1..3 */
+async function enforceDishTop3Cap(municipality_id) {
+  // If more than 3 rows flagged, null ranks beyond 3 by rank order.
+  await q(
+    `UPDATE dishes d
+     JOIN (
+       SELECT id, ROW_NUMBER() OVER (PARTITION BY municipality_id ORDER BY COALESCE(panel_rank,999), name) AS rn
+       FROM dishes
+       WHERE municipality_id=? AND COALESCE(is_signature,0)=1
+     ) x ON x.id=d.id
+     SET d.panel_rank = IF(x.rn<=3, d.panel_rank, NULL),
+         d.is_signature = IF(x.rn<=3, d.is_signature, 0)
+    `, [municipality_id]
+  );
+}
+
+/** PATCH dish curation */
+app.patch("/admin/dishes/:id/curation", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { is_signature=null, panel_rank=null } = req.body || {};
+    // update fields
+    await q(`UPDATE dishes SET is_signature=?, panel_rank=? WHERE id=?`,
+      [is_signature, panel_rank, id]);
+    // fetch municipality_id to enforce uniqueness/scoping
+    const [row] = await q(`SELECT municipality_id FROM dishes WHERE id=?`, [id]);
+    if (row?.municipality_id) {
+      await enforceDishRankUniqueness(row.municipality_id);
+      await enforceDishTop3Cap(row.municipality_id);
+    }
+    const [dish] = await q(`SELECT * FROM dishes WHERE id=?`, [id]);
+    res.json(dish);
+  } catch (e) { res.status(500).json({ error:"Failed to set dish curation", detail:String(e) }); }
+});
+
+/** PATCH restaurant curation (optional columns) */
+app.patch("/admin/restaurants/:id/curation", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { featured=null, featured_rank=null } = req.body || {};
+    try {
+      await q(`UPDATE restaurants SET featured=?, featured_rank=? WHERE id=?`,
+        [featured, featured_rank, id]);
+
+      // Enforce unique rank per municipality and cap 3 (if municipality_id exists)
+      const [row] = await q(`SELECT municipality_id FROM restaurants WHERE id=?`, [id]);
+      if (row?.municipality_id) {
+        await q(
+          `UPDATE restaurants r
+           JOIN (
+             SELECT municipality_id, featured_rank, MIN(id) keep_id
+             FROM restaurants
+             WHERE municipality_id=? AND featured_rank IN (1,2,3)
+             GROUP BY municipality_id, featured_rank
+           ) x ON x.municipality_id=r.municipality_id AND x.featured_rank=r.featured_rank
+           SET r.featured_rank = IF(r.id = x.keep_id, r.featured_rank, NULL),
+               r.featured = IF(r.id = x.keep_id, 1, r.featured)`,
+          [row.municipality_id]
+        );
+        await q(
+          `UPDATE restaurants r
+           JOIN (
+             SELECT id, ROW_NUMBER() OVER (PARTITION BY municipality_id ORDER BY COALESCE(featured_rank,999), name) AS rn
+             FROM restaurants
+             WHERE municipality_id=? AND COALESCE(featured,0)=1
+           ) x ON x.id=r.id
+           SET r.featured_rank = IF(x.rn<=3, r.featured_rank, NULL),
+               r.featured = IF(x.rn<=3, r.featured, 0)
+          `,[row.municipality_id]
+        );
+      }
+
+      const [rest] = await q(`SELECT * FROM restaurants WHERE id=?`, [id]);
+      res.json(rest);
+    } catch (colErr) {
+      // If columns don't exist, return a clear error
+      return res.status(409).json({ error:"MISSING_COLUMNS", detail:"restaurants table needs featured TINYINT and featured_rank INT" });
+    }
+  } catch (e) { res.status(500).json({ error:"Failed to set restaurant curation", detail:String(e) }); }
+});
+
+/* ========================= ANALYTICS ========================= */
+app.get("/admin/analytics/summary", async (req, res) => {
+  try {
+    const [[{ cD }]] = await Promise.all([q(`SELECT COUNT(*) cD FROM dishes`)]);
+    const [[{ cR }]] = await Promise.all([q(`SELECT COUNT(*) cR FROM restaurants`)]);
+    const perMunicipality = await q(
+      `SELECT m.slug,
+              (SELECT COUNT(*) FROM dishes d WHERE d.municipality_id=m.id) AS dishes,
+              (SELECT COUNT(*) FROM restaurants r WHERE r.municipality_id=m.id) AS restaurants
+       FROM municipalities m ORDER BY m.name`
+    );
+    let topDishes = [];
+    try { topDishes = await q(`SELECT id,name,panel_rank FROM dishes WHERE COALESCE(is_signature,0)=1 ORDER BY COALESCE(panel_rank,999), name LIMIT 10`); } catch {}
+    let topRestaurants = [];
+    try { topRestaurants = await q(`SELECT id,name,featured_rank FROM restaurants WHERE COALESCE(featured,0)=1 ORDER BY COALESCE(featured_rank,999), name LIMIT 10`); } catch {}
+
+    res.json({ counts: { dishes: cD, restaurants: cR }, perMunicipality, topDishes, topRestaurants });
+  } catch (e) { res.status(500).json({ error:"Failed analytics", detail:String(e) }); }
 });
 
 app.listen(PORT, () => {

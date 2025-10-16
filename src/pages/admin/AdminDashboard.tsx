@@ -1,554 +1,420 @@
-// src/pages/admin/AdminDashboard.tsx
 import React, { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  listMunicipalities, listDishes, listRestaurants, toArr,
+  listMunicipalities, listDishes, listRestaurants,
   createDish, updateDish, deleteDish,
   createRestaurant, updateRestaurant, deleteRestaurant,
-  linkedRestaurantsForDish, linkedDishesForRestaurant,
-  linkDishRestaurant, unlinkDishRestaurant,
+  linkedRestaurantsForDish, linkDishRestaurant, unlinkDishRestaurant,
   setDishCuration, setRestaurantCuration,
-  getAnalyticsSummary, writeCap,
-  type Municipality, type Dish, type Restaurant,
+  getAnalyticsSummary, type Municipality, type Dish, type Restaurant
 } from "../../utils/adminApi";
 
-// If you don't have recharts installed yet:
-// npm i recharts
-import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell,
-} from "recharts";
-
-const colors = ["#4f46e5","#06b6d4","#f59e0b","#10b981","#ef4444","#8b5cf6","#ec4899","#14b8a6"];
-
-function Section({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, children }: { title:string; children:React.ReactNode }) {
   return (
-    <section className="bg-white border rounded-2xl p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        {right}
-      </div>
-      {children}
+    <section className="mb-8">
+      <h2 className="text-lg font-semibold mb-3">{title}</h2>
+      <div className="rounded border bg-white p-3">{children}</div>
     </section>
   );
 }
 
-function useWriteEnabled() {
-  const { data } = useQuery({ queryKey: ["admin:write-cap"], queryFn: writeCap });
-  return !!data;
-}
-
-function MuniSelect({
-  value, onChange, allowAll = true,
-}: { value: number | null; onChange: (v:number|null)=>void; allowAll?: boolean }) {
-  const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
-  const opts = muniQ.data ?? [];
-  return (
-    <select
-      className="border rounded px-2 py-1"
-      value={value ?? ""}
-      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-    >
-      {allowAll && <option value="">All municipalities</option>}
-      {opts.map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
-    </select>
-  );
-}
-
-/* ========================== Analytics ========================== */
-function AnalyticsTab() {
-  const q = useQuery({ queryKey: ["analytics"], queryFn: getAnalyticsSummary, refetchOnWindowFocus: false });
-  const [chart, setChart] = useState<"bar"|"pie">("bar");
-  if (q.isLoading) return <Section title="Analytics"><div>Loading…</div></Section>;
-  if (q.isError) return <Section title="Analytics"><div className="text-red-600">Failed to load analytics</div></Section>;
-  const data = q.data!;
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Section title="Totals">
-        <div className="flex gap-4">
-          <div className="flex-1 bg-indigo-50 rounded-lg p-4">
-            <div className="text-sm text-indigo-800/80">Dishes</div>
-            <div className="text-3xl font-semibold">{data.counts.dishes}</div>
-          </div>
-          <div className="flex-1 bg-cyan-50 rounded-lg p-4">
-            <div className="text-sm text-cyan-800/80">Restaurants</div>
-            <div className="text-3xl font-semibold">{data.counts.restaurants}</div>
-          </div>
-        </div>
-      </Section>
-
-      <Section
-        title="Per municipality"
-        right={
-          <div className="flex items-center gap-2">
-            <button className={`px-2 py-1 rounded border ${chart==="bar"?"bg-neutral-100":""}`} onClick={()=>setChart("bar")}>Bar</button>
-            <button className={`px-2 py-1 rounded border ${chart==="pie"?"bg-neutral-100":""}`} onClick={()=>setChart("pie")}>Pie</button>
-          </div>
-        }
-      >
-        <div className="h-60">
-          <ResponsiveContainer width="100%" height="100%">
-            {chart === "bar" ? (
-              <BarChart data={data.perMunicipality}>
-                <XAxis dataKey="slug" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="dishes" />
-                <Bar dataKey="restaurants" />
-              </BarChart>
-            ) : (
-              <PieChart>
-                <Pie data={data.perMunicipality} dataKey="dishes" nameKey="slug" outerRadius={80} label>
-                  {data.perMunicipality.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
-                </Pie>
-              </PieChart>
-            )}
-          </ResponsiveContainer>
-        </div>
-      </Section>
-
-      <Section title="Top dishes (signature/panel_rank)">
-        <ul className="space-y-2">
-          {data.topDishes.map((d: any) => (
-            <li key={d.id} className="p-3 border rounded-md flex items-center justify-between">
-              <div>
-                <div className="font-medium">{d.name}</div>
-                <div className="text-xs text-neutral-500">panel_rank: {d.panel_rank ?? "—"}</div>
-              </div>
-              <span className="text-xs px-2 py-1 bg-neutral-100 rounded">signature</span>
-            </li>
-          ))}
-        </ul>
-      </Section>
-
-      <Section title="Top restaurants (featured/featured_rank)">
-        <ul className="space-y-2">
-          {data.topRestaurants.map((r: any) => (
-            <li key={r.id} className="p-3 border rounded-md flex items-center justify-between">
-              <div>
-                <div className="font-medium">{r.name}</div>
-                <div className="text-xs text-neutral-500">featured_rank: {r.featured_rank ?? "—"}</div>
-              </div>
-              <span className="text-xs px-2 py-1 bg-neutral-100 rounded">featured</span>
-            </li>
-          ))}
-        </ul>
-      </Section>
-    </div>
-  );
-}
-
-/* ========================== Dishes CRUD ========================== */
-function DishesTab() {
+export default function AdminDashboard() {
   const qc = useQueryClient();
-  const writable = useWriteEnabled();
-  const [muniId, setMuniId] = useState<number|null>(null);
-  const [q, setQ] = useState("");
-  const [editing, setEditing] = useState<Dish|null>(null);
 
-  const dishQ = useQuery({
-    queryKey: ["dishes", muniId, q],
-    queryFn: () => listDishes({ municipalityId: muniId ?? undefined, q: q || undefined }),
+  // shared filters
+  const muniQ = useQuery({ queryKey: ["muni"], queryFn: listMunicipalities, staleTime: 300000 });
+  const [muniId, setMuniId] = useState<number|undefined>(undefined);
+
+  // ----- DISHES -----
+  const [dishQStr, setDishQStr] = useState("");
+  const dishesQ = useQuery({
+    queryKey: ["dishes", { muniId, dishQStr }],
+    queryFn: () => listDishes({ municipalityId: muniId, q: dishQStr }),
+    staleTime: 30_000,
   });
 
-  const save = useMutation({
-    mutationFn: async (payload: Partial<Dish>) => {
-      if (!writable) throw new Error("Admin backend not running");
-      if (editing) return updateDish(editing.id, payload);
-      return createDish(payload);
+  const [editingDish, setEditingDish] = useState<Partial<Dish> | null>(null);
+  const dishCreate = useMutation({
+    mutationFn: createDish,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] }),
+  });
+  const dishUpdate = useMutation({
+    mutationFn: ({ id, data }: { id:number; data:Partial<Dish> }) => updateDish(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] }),
+  });
+  const dishDelete = useMutation({
+    mutationFn: (id:number) => deleteDish(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] }),
+  });
+
+  // ----- RESTAURANTS -----
+  const [restQStr, setRestQStr] = useState("");
+  const restaurantsQ = useQuery({
+    queryKey: ["rests", { muniId, restQStr }],
+    queryFn: () => listRestaurants({ municipalityId: muniId, q: restQStr }),
+    staleTime: 30_000,
+  });
+
+  const [editingRest, setEditingRest] = useState<Partial<Restaurant> | null>(null);
+  const restCreate = useMutation({
+    mutationFn: createRestaurant,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] }),
+  });
+  const restUpdate = useMutation({
+    mutationFn: ({ id, data }: { id:number; data:Partial<Restaurant> }) => updateRestaurant(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] }),
+  });
+  const restDelete = useMutation({
+    mutationFn: (id:number) => deleteRestaurant(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] }),
+  });
+
+  // ----- LINKING (by dish) -----
+  const [linkDishSel, setLinkDishSel] = useState<number|undefined>(undefined);
+  const linkedRestsQ = useQuery({
+    queryKey: ["linkedR", linkDishSel],
+    queryFn: () => linkedRestaurantsForDish(linkDishSel!),
+    enabled: !!linkDishSel,
+  });
+  const linkedSet = new Set((linkedRestsQ.data ?? []).map(r => r.id));
+  const linkMut = useMutation({
+    mutationFn: ({ dish_id, restaurant_id, mode }: { dish_id:number; restaurant_id:number; mode: "link"|"unlink" }) =>
+      mode === "link"
+        ? linkDishRestaurant(dish_id, restaurant_id)
+        : unlinkDishRestaurant(dish_id, restaurant_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["linkedR"] }),
+  });
+
+  // ----- ANALYTICS -----
+  const analyticsQ = useQuery({ queryKey:["an"], queryFn: getAnalyticsSummary, staleTime: 30_000 });
+
+  /* ==================== CURATION ==================== */
+  // local helpers to enforce max 3 in UI
+  const curDishList = useMemo(
+    () => (dishesQ.data ?? []).filter(d => (muniId ? d.municipality_id === muniId : true)),
+    [dishesQ.data, muniId]
+  );
+  const curRestList = useMemo(
+    () => (restaurantsQ.data ?? []).filter(r => (muniId ? r.municipality_id === muniId : true)),
+    [restaurantsQ.data, muniId]
+  );
+
+  const curTopDishes = useMemo(
+    () => curDishList.filter(d => (d.is_signature ?? 0) === 1).sort((a,b)=> (a.panel_rank??999) - (b.panel_rank??999)).slice(0,3),
+    [curDishList]
+  );
+  const curTopRests = useMemo(
+    () => curRestList.filter(r => (r.featured ?? 0) === 1).sort((a,b)=> (a.featured_rank??999) - (b.featured_rank??999)).slice(0,3),
+    [curRestList]
+  );
+
+  const dishCuration = useMutation({
+    mutationFn: ({ id, is_signature, panel_rank }: { id:number; is_signature:0|1|null; panel_rank:number|null }) =>
+      setDishCuration(id, { is_signature, panel_rank }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] }),
+  });
+
+  const [restaurantCurationError, setRestaurantCurationError] = useState<string | null>(null);
+  const restCuration = useMutation({
+    mutationFn: async ({ id, featured, featured_rank }: { id:number; featured:0|1|null; featured_rank:number|null }) => {
+      setRestaurantCurationError(null);
+      return setRestaurantCuration(id, { featured, featured_rank });
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); setEditing(null); }
-  });
-  const del = useMutation({
-    mutationFn: async (id: number) => {
-      if (!writable) throw new Error("Admin backend not running");
-      return deleteDish(id);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] })
-  });
-
-  const [autoSlug, setAutoSlug] = useState(true);
-  function slugify(s: string) {
-    return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-  }
-
-  const [form, setForm] = useState<Partial<Dish>>({
-    name: "", slug: "", category: "food", municipality_id: null, description: "", image_url: "",
-    flavor_profile: null, ingredients: null, is_signature: 0, panel_rank: null
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] }),
+    onError: (err:any) => {
+      const msg = String(err?.message || err);
+      if (msg.includes("MISSING_COLUMNS")) {
+        setRestaurantCurationError("Restaurant curation columns missing. Add 'featured' TINYINT and 'featured_rank' INT to restaurants table.");
+      } else {
+        setRestaurantCurationError("Failed to update restaurant curation.");
+      }
+    }
   });
 
-  function startEdit(d: Dish) {
-    setEditing(d);
-    setForm({
-      ...d,
-      flavor_profile: toArr(d.flavor_profile) ?? null,
-      ingredients: toArr(d.ingredients) ?? null,
-    });
+  function nextFreeRank(taken: (number|null|undefined)[]) {
+    for (let r=1; r<=3; r++) if (!taken.includes(r)) return r;
+    return null;
   }
 
-  function resetForm() {
-    setEditing(null);
-    setForm({ name: "", slug: "", category: "food", municipality_id: null, description: "", image_url: "", flavor_profile: null, ingredients: null, is_signature: 0, panel_rank: null });
-  }
-
-  const list = (dishQ.data ?? []).filter(d => !q || d.name.toLowerCase().includes(q.toLowerCase()));
+  /* ================================================== */
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Section
-        title="Find or create dishes"
-        right={
-          <div className="flex items-center gap-2">
-            <MuniSelect value={muniId} onChange={setMuniId} />
-            <input className="border rounded px-2 py-1" placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)} />
-          </div>
-        }
-      >
-        <div className="max-h-[430px] overflow-auto divide-y">
-          {list.map(d => (
-            <button
-              key={d.id}
-              onClick={()=>startEdit(d)}
-              className="w-full text-left p-3 hover:bg-neutral-50 flex items-center justify-between"
-            >
-              <div>
-                <div className="font-medium">{d.name}</div>
-                <div className="text-xs text-neutral-500">{d.slug} • {d.category}</div>
-              </div>
-              {(d.is_signature === 1) && <span className="text-[11px] px-2 py-0.5 rounded bg-amber-50 border border-amber-200">signature #{d.panel_rank ?? "?"}</span>}
-            </button>
-          ))}
-          {list.length === 0 && <div className="p-4 text-sm text-neutral-500">No dishes</div>}
-        </div>
-      </Section>
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      <h1 className="text-2xl font-bold mb-6">Admin Dashboard (no login)</h1>
 
-      <Section
-        title={editing ? `Edit dish: ${editing.name}` : "Create dish"}
-        right={!writable && <span className="text-xs px-2 py-1 rounded bg-neutral-100 border">Writes disabled (admin API off)</span>}
-      >
-        <form
-          onSubmit={e=>{ e.preventDefault(); save.mutate(form); }}
-          className="space-y-3"
+      {/* GLOBAL FILTER */}
+      <div className="mb-6 flex items-center gap-3">
+        <label className="text-sm">Municipality:</label>
+        <select
+          className="border rounded px-2 py-1"
+          value={muniId ?? ""}
+          onChange={(e)=> setMuniId(e.target.value ? Number(e.target.value) : undefined)}
         >
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm">Name
-              <input className="mt-1 w-full border rounded px-2 py-1" required
-                value={form.name ?? ""}
-                onChange={e=>{
-                  const name = e.target.value;
-                  setForm(f => ({...f, name, slug: autoSlug ? slugify(name) : (f.slug ?? "")}));
-                }} />
-            </label>
-            <label className="text-sm flex items-end gap-2">
-              <span>Slug</span>
-              <input className="flex-1 border rounded px-2 py-1" required
-                value={form.slug ?? ""}
-                onChange={e=>{ setForm(f=>({...f, slug: e.target.value})); setAutoSlug(false); }} />
-              <label className="text-xs flex items-center gap-1">
-                <input type="checkbox" checked={autoSlug} onChange={e=>setAutoSlug(e.target.checked)} />
-                auto
-              </label>
-            </label>
-            <label className="text-sm">Municipality
-              <MuniSelect value={form.municipality_id ?? null} onChange={(v)=>setForm(f=>({...f, municipality_id: v}))} allowAll={false}/>
-            </label>
-            <label className="text-sm">Category
-              <select className="mt-1 w-full border rounded px-2 py-1" value={form.category ?? "food"} onChange={e=>setForm(f=>({...f, category: e.target.value as any}))}>
-                <option value="food">Food</option>
-                <option value="delicacy">Delicacy</option>
-                <option value="drink">Drink</option>
-              </select>
-            </label>
-            <label className="col-span-2 text-sm">Image URL
-              <input className="mt-1 w-full border rounded px-2 py-1" value={form.image_url ?? ""} onChange={e=>setForm(f=>({...f, image_url: e.target.value}))}/>
-            </label>
-            <label className="col-span-2 text-sm">Description
-              <textarea className="mt-1 w-full border rounded px-2 py-1" rows={3} value={form.description ?? ""} onChange={e=>setForm(f=>({...f, description: e.target.value}))}/>
-            </label>
-            <label className="text-sm">Flavor profile (csv)
-              <input className="mt-1 w-full border rounded px-2 py-1"
-                value={(form.flavor_profile ?? []).join?.(", ") ?? ""}
-                onChange={e=>setForm(f=>({...f, flavor_profile: toArr(e.target.value)}))}/>
-            </label>
-            <label className="text-sm">Ingredients (csv)
-              <input className="mt-1 w-full border rounded px-2 py-1"
-                value={(form.ingredients ?? []).join?.(", ") ?? ""}
-                onChange={e=>setForm(f=>({...f, ingredients: toArr(e.target.value)}))}/>
-            </label>
-            <label className="text-sm">Signature?
-              <select className="mt-1 w-full border rounded px-2 py-1" value={form.is_signature ?? 0} onChange={e=>setForm(f=>({...f, is_signature: Number(e.target.value) as 0|1}))}>
-                <option value={0}>No</option>
-                <option value={1}>Yes</option>
-              </select>
-            </label>
-            <label className="text-sm">Panel rank
-              <input type="number" className="mt-1 w-full border rounded px-2 py-1" value={form.panel_rank ?? ""} onChange={e=>setForm(f=>({...f, panel_rank: e.target.value ? Number(e.target.value) : null}))}/>
-            </label>
-          </div>
+          <option value="">All</option>
+          {(muniQ.data ?? []).map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
+        </select>
+      </div>
 
-          <div className="flex gap-2">
-            <button className="px-3 py-1.5 rounded bg-indigo-600 text-white disabled:opacity-50" disabled={!writable || save.isLoading} type="submit">
-              {editing ? "Save" : "Create"}
-            </button>
-            {editing && (
-              <>
-                <button type="button" className="px-3 py-1.5 rounded border" onClick={resetForm}>Cancel</button>
-                <button type="button" className="px-3 py-1.5 rounded bg-red-600 text-white disabled:opacity-50"
-                  disabled={!writable || del.isLoading}
-                  onClick={()=>editing && del.mutate(editing.id)}
-                >Delete</button>
-              </>
-            )}
+      {/* ANALYTICS */}
+      <Section title="Analytics">
+        {analyticsQ.isLoading ? <div>Loading…</div> : analyticsQ.isError ? <div className="text-red-600">Failed to load analytics</div> : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="rounded border p-3">
+              <div className="text-sm text-neutral-500">Total dishes</div>
+              <div className="text-2xl font-semibold">{analyticsQ.data!.counts.dishes}</div>
+            </div>
+            <div className="rounded border p-3">
+              <div className="text-sm text-neutral-500">Total restaurants</div>
+              <div className="text-2xl font-semibold">{analyticsQ.data!.counts.restaurants}</div>
+            </div>
+            <div className="rounded border p-3">
+              <div className="text-sm text-neutral-500">Municipalities with data</div>
+              <div className="text-2xl font-semibold">{(analyticsQ.data!.perMunicipality ?? []).filter(x => x.dishes || x.restaurants).length}</div>
+            </div>
           </div>
-          {(save.isError || del.isError) && <div className="text-sm text-red-600">Action failed: {(save.error as any)?.message || (del.error as any)?.message}</div>}
-        </form>
+        )}
       </Section>
-    </div>
-  );
-}
 
-/* ========================== Restaurants CRUD ========================== */
-function RestaurantsTab() {
-  const qc = useQueryClient();
-  const writable = useWriteEnabled();
-  const [muniId, setMuniId] = useState<number|null>(null);
-  const [q, setQ] = useState("");
-  const [editing, setEditing] = useState<Restaurant|null>(null);
+      {/* CURATION */}
+      <Section title="Curation (Top 3 per municipality)">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Dishes curation */}
+          <div>
+            <h3 className="font-semibold mb-2">Top Dishes</h3>
+            <div className="text-xs text-neutral-500 mb-2">Pick up to three per selected municipality. Ranks must be 1,2,3.</div>
 
-  const restQ = useQuery({
-    queryKey: ["restaurants", muniId, q],
-    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined, q: q || undefined }),
-  });
-
-  const save = useMutation({
-    mutationFn: async (payload: Partial<Restaurant>) => {
-      if (!writable) throw new Error("Admin backend not running");
-      if (editing) return updateRestaurant(editing.id, payload);
-      return createRestaurant(payload);
-    },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["restaurants"] }); setEditing(null); }
-  });
-  const del = useMutation({
-    mutationFn: async (id: number) => {
-      if (!writable) throw new Error("Admin backend not running");
-      return deleteRestaurant(id);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurants"] })
-  });
-
-  const [autoSlug, setAutoSlug] = useState(true);
-  function slugify(s: string) {
-    return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-  }
-
-  const [form, setForm] = useState<Partial<Restaurant>>({
-    name: "", slug: "", municipality_id: null, address: "", lat: 0, lng: 0,
-    cuisine_types: null, kind: "restaurant", description: "", image_url: "",
-    featured: 0, featured_rank: null,
-  });
-
-  function startEdit(r: Restaurant) {
-    setEditing(r);
-    setForm({
-      ...r,
-      cuisine_types: toArr(r.cuisine_types) ?? null,
-    });
-  }
-
-  function resetForm() {
-    setEditing(null);
-    setForm({
-      name: "", slug: "", municipality_id: null, address: "", lat: 0, lng: 0,
-      cuisine_types: null, kind: "restaurant", description: "", image_url: "",
-      featured: 0, featured_rank: null,
-    });
-  }
-
-  const list = (restQ.data ?? []).filter(r => !q || r.name.toLowerCase().includes(q.toLowerCase()));
-
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Section
-        title="Find or create restaurants"
-        right={
-          <div className="flex items-center gap-2">
-            <MuniSelect value={muniId} onChange={setMuniId} />
-            <input className="border rounded px-2 py-1" placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)} />
+            <div className="max-h-80 overflow-auto border rounded">
+              {curDishList.map(d => {
+                const checked = (d.is_signature ?? 0) === 1;
+                const taken = curTopDishes.map(x => x.panel_rank ?? null).filter(Boolean) as number[];
+                const canAdd = checked || taken.length < 3;
+                const currentRank = d.panel_rank ?? null;
+                return (
+                  <div key={d.id} className="flex items-center gap-3 px-3 py-2 border-b">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!checked && !canAdd}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const r = currentRank ?? nextFreeRank(taken);
+                          if (!r) return;
+                          dishCuration.mutate({ id: d.id, is_signature: 1, panel_rank: r });
+                        } else {
+                          dishCuration.mutate({ id: d.id, is_signature: 0, panel_rank: null });
+                        }
+                      }}
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium">{d.name}</div>
+                      <div className="text-[11px] text-neutral-500">{d.slug}</div>
+                    </div>
+                    <select
+                      className="border rounded px-2 py-1 text-sm"
+                      value={currentRank ?? ""}
+                      onChange={(e)=>{
+                        const val = e.target.value ? Number(e.target.value) : null;
+                        dishCuration.mutate({ id: d.id, is_signature: val ? 1 : 0, panel_rank: val });
+                      }}
+                    >
+                      <option value="">—</option>
+                      {[1,2,3].map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        }
-      >
-        <div className="max-h-[430px] overflow-auto divide-y">
-          {list.map(r => (
-            <button
-              key={r.id}
-              onClick={()=>startEdit(r)}
-              className="w-full text-left p-3 hover:bg-neutral-50 flex items-center justify-between"
-            >
-              <div>
-                <div className="font-medium">{r.name}</div>
-                <div className="text-xs text-neutral-500">{r.slug}</div>
+
+          {/* Restaurants curation */}
+          <div>
+            <h3 className="font-semibold mb-2">Top Restaurants</h3>
+            {restaurantCurationError && (
+              <div className="mb-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                {restaurantCurationError}
               </div>
-              {(r.featured === 1) && <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200">featured #{r.featured_rank ?? "?"}</span>}
-            </button>
-          ))}
-          {list.length === 0 && <div className="p-4 text-sm text-neutral-500">No restaurants</div>}
-        </div>
-      </Section>
-
-      <Section
-        title={editing ? `Edit restaurant: ${editing.name}` : "Create restaurant"}
-        right={!writable && <span className="text-xs px-2 py-1 rounded bg-neutral-100 border">Writes disabled (admin API off)</span>}
-      >
-        <form onSubmit={e=>{ e.preventDefault(); save.mutate(form); }} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm">Name
-              <input className="mt-1 w-full border rounded px-2 py-1" required
-                value={form.name ?? ""}
-                onChange={e=>{
-                  const name = e.target.value;
-                  setForm(f => ({...f, name, slug: autoSlug ? slugify(name) : (f.slug ?? "")}));
-                }}/>
-            </label>
-            <label className="text-sm flex items-end gap-2">
-              <span>Slug</span>
-              <input className="flex-1 border rounded px-2 py-1" required
-                value={form.slug ?? ""}
-                onChange={e=>{ setForm(f=>({...f, slug: e.target.value})); setAutoSlug(false); }} />
-              <label className="text-xs flex items-center gap-1">
-                <input type="checkbox" checked={autoSlug} onChange={e=>setAutoSlug(e.target.checked)} />
-                auto
-              </label>
-            </label>
-            <label className="text-sm">Municipality
-              <MuniSelect value={form.municipality_id ?? null} onChange={(v)=>setForm(f=>({...f, municipality_id: v}))} allowAll={false}/>
-            </label>
-            <label className="text-sm">Kind
-              <select className="mt-1 w-full border rounded px-2 py-1" value={form.kind ?? "restaurant"} onChange={e=>setForm(f=>({...f, kind: e.target.value}))}>
-                <option>restaurant</option><option>stall</option><option>store</option><option>dealer</option><option>market</option><option>home-based</option>
-              </select>
-            </label>
-            <label className="col-span-2 text-sm">Address
-              <input className="mt-1 w-full border rounded px-2 py-1" value={form.address ?? ""} onChange={e=>setForm(f=>({...f, address: e.target.value}))}/>
-            </label>
-            <label className="text-sm">Lat
-              <input type="number" step="any" className="mt-1 w-full border rounded px-2 py-1" value={form.lat ?? 0} onChange={e=>setForm(f=>({...f, lat: Number(e.target.value)}))}/>
-            </label>
-            <label className="text-sm">Lng
-              <input type="number" step="any" className="mt-1 w-full border rounded px-2 py-1" value={form.lng ?? 0} onChange={e=>setForm(f=>({...f, lng: Number(e.target.value)}))}/>
-            </label>
-            <label className="col-span-2 text-sm">Image URL
-              <input className="mt-1 w-full border rounded px-2 py-1" value={form.image_url ?? ""} onChange={e=>setForm(f=>({...f, image_url: e.target.value}))}/>
-            </label>
-            <label className="col-span-2 text-sm">Description
-              <textarea className="mt-1 w-full border rounded px-2 py-1" rows={3} value={form.description ?? ""} onChange={e=>setForm(f=>({...f, description: e.target.value}))}/>
-            </label>
-            <label className="text-sm">Cuisine types (csv)
-              <input className="mt-1 w-full border rounded px-2 py-1"
-                value={(form.cuisine_types ?? []).join?.(", ") ?? ""}
-                onChange={e=>setForm(f=>({...f, cuisine_types: toArr(e.target.value)}))}/>
-            </label>
-            <label className="text-sm">Featured?
-              <select className="mt-1 w-full border rounded px-2 py-1" value={form.featured ?? 0} onChange={e=>setForm(f=>({...f, featured: Number(e.target.value) as 0|1}))}>
-                <option value={0}>No</option>
-                <option value={1}>Yes</option>
-              </select>
-            </label>
-            <label className="text-sm">Featured rank
-              <input type="number" className="mt-1 w-full border rounded px-2 py-1" value={form.featured_rank ?? ""} onChange={e=>setForm(f=>({...f, featured_rank: e.target.value ? Number(e.target.value) : null}))}/>
-            </label>
-          </div>
-          <div className="flex gap-2">
-            <button className="px-3 py-1.5 rounded bg-indigo-600 text-white disabled:opacity-50" disabled={!writable || save.isLoading} type="submit">
-              {editing ? "Save" : "Create"}
-            </button>
-            {editing && (
-              <>
-                <button type="button" className="px-3 py-1.5 rounded border" onClick={resetForm}>Cancel</button>
-                <button type="button" className="px-3 py-1.5 rounded bg-red-600 text-white disabled:opacity-50"
-                  disabled={!writable || del.isLoading}
-                  onClick={()=>editing && del.mutate(editing.id)}
-                >Delete</button>
-              </>
             )}
+            <div className="text-xs text-neutral-500 mb-2">Pick up to three per selected municipality. Ranks must be 1,2,3.</div>
+            <div className="max-h-80 overflow-auto border rounded">
+              {curRestList.map(r => {
+                const checked = (r.featured ?? 0) === 1;
+                const taken = curTopRests.map(x => x.featured_rank ?? null).filter(Boolean) as number[];
+                const canAdd = checked || taken.length < 3;
+                const currentRank = r.featured_rank ?? null;
+                return (
+                  <div key={r.id} className="flex items-center gap-3 px-3 py-2 border-b">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!checked && !canAdd}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const rank = currentRank ?? nextFreeRank(taken);
+                          if (!rank) return;
+                          restCuration.mutate({ id: r.id, featured: 1, featured_rank: rank });
+                        } else {
+                          restCuration.mutate({ id: r.id, featured: 0, featured_rank: null });
+                        }
+                      }}
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium">{r.name}</div>
+                      <div className="text-[11px] text-neutral-500">{r.slug}</div>
+                    </div>
+                    <select
+                      className="border rounded px-2 py-1 text-sm"
+                      value={currentRank ?? ""}
+                      onChange={(e)=>{
+                        const val = e.target.value ? Number(e.target.value) : null;
+                        restCuration.mutate({ id: r.id, featured: val ? 1 : 0, featured_rank: val });
+                      }}
+                    >
+                      <option value="">—</option>
+                      {[1,2,3].map(x => <option key={x} value={x}>{x}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          {(save.isError || del.isError) && <div className="text-sm text-red-600">Action failed: {(save.error as any)?.message || (del.error as any)?.message}</div>}
-        </form>
-      </Section>
-    </div>
-  );
-}
-
-/* ========================== Linking (1 dish → many restaurants) ========================== */
-function LinkingTab() {
-  const writable = useWriteEnabled();
-  const [muniId, setMuniId] = useState<number|null>(null);
-  const [activeDish, setActiveDish] = useState<Dish|null>(null);
-
-  const dishQ = useQuery({ queryKey: ["link:dishes", muniId], queryFn: ()=>listDishes({ municipalityId: muniId ?? undefined }) });
-  const restQ = useQuery({ queryKey: ["link:restaurants", muniId], queryFn: ()=>listRestaurants({ municipalityId: muniId ?? undefined }) });
-
-  const linkedQ = useQuery({
-    queryKey: ["link:linked-rest-for-dish", activeDish?.id],
-    queryFn: () => activeDish ? linkedRestaurantsForDish(activeDish.id) : Promise.resolve([] as Restaurant[]),
-    enabled: !!activeDish,
-  });
-
-  const qc = useQueryClient();
-  const doLink = useMutation({
-    mutationFn: async (rid: number) => {
-      if (!activeDish) throw new Error("No dish selected");
-      if (!writable) throw new Error("Admin backend not running");
-      return linkDishRestaurant(activeDish.id, rid);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["link:linked-rest-for-dish"] }),
-  });
-
-  const doUnlink = useMutation({
-    mutationFn: async (rid: number) => {
-      if (!activeDish) throw new Error("No dish selected");
-      if (!writable) throw new Error("Admin backend not running");
-      return unlinkDishRestaurant(activeDish.id, rid);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["link:linked-rest-for-dish"] }),
-  });
-
-  const linkedIds = new Set((linkedQ.data ?? []).map(r => r.id));
-
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Section
-        title="Pick a dish"
-        right={<MuniSelect value={muniId} onChange={setMuniId} />}
-      >
-        <div className="max-h-[430px] overflow-auto divide-y">
-          {(dishQ.data ?? []).map(d => (
-            <button key={d.id} onClick={()=>setActiveDish(d)} className={`w-full text-left p-3 hover:bg-neutral-50 ${activeDish?.id===d.id?"bg-neutral-50":""}`}>
-              <div className="font-medium">{d.name}</div>
-              <div className="text-xs text-neutral-500">{d.slug}</div>
-            </button>
-          ))}
         </div>
       </Section>
 
-      <Section
-        title={activeDish ? `Link restaurants to: ${activeDish.name}` : "Select a dish to start linking"}
-        right={!writable && <span className="text-xs px-2 py-1 rounded bg-neutral-100 border">Writes disabled (admin API off)</span>}
-      >
-        {!activeDish ? (
-          <div className="text-sm text-neutral-500">Pick a dish on the left.</div>
-        ) : (
-          <div className="max-h-[430px] overflow-auto divide-y">
-            {(restQ.data ?? []).map(r => {
-              const on = linkedIds.has(r.id);
+      {/* DISHES */}
+      <Section title="Dishes (search & CRUD)">
+        <div className="mb-2 flex gap-2">
+          <input
+            className="border rounded px-2 py-1 w-64"
+            placeholder="Search dishes by name/slug…"
+            value={dishQStr}
+            onChange={(e)=> setDishQStr(e.target.value)}
+          />
+          <button className="px-3 py-1 rounded border" onClick={()=> setEditingDish({
+            id: 0, name: "", slug: "", description: "", category: "food", municipality_id: muniId ?? null
+          } as any)}>+ New Dish</button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="max-h-96 overflow-auto border rounded">
+            {(dishesQ.data ?? []).map(d => (
+              <div key={d.id} className="flex items-center justify-between border-b px-3 py-2">
+                <div>
+                  <div className="font-medium">{d.name}</div>
+                  <div className="text-xs text-neutral-500">
+                    {d.slug} · {d.category} · muni {d.municipality_id ?? "-"}
+                    {(d.is_signature ?? 0) === 1 ? <> · <span className="text-green-700">Top {d.panel_rank ?? "?"}</span></> : null}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button className="text-blue-600 text-sm" onClick={()=> setEditingDish(d)}>Edit</button>
+                  <button className="text-red-600 text-sm" onClick={()=>{
+                    if (confirm(`Delete dish "${d.name}"?`)) dishDelete.mutate(d.id);
+                  }}>Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* editor */}
+          <div>
+            {editingDish ? (
+              <DishForm
+                value={editingDish}
+                municipalities={muniQ.data ?? []}
+                onCancel={()=> setEditingDish(null)}
+                onSave={(val)=>{
+                  if (val.id && val.id > 0) dishUpdate.mutate({ id: val.id, data: val as any }, { onSuccess: ()=> setEditingDish(null) });
+                  else dishCreate.mutate(val as any, { onSuccess: ()=> setEditingDish(null) });
+                }}
+              />
+            ) : <div className="text-sm text-neutral-500">Select a dish to edit or click “New Dish”.</div>}
+          </div>
+        </div>
+      </Section>
+
+      {/* RESTAURANTS */}
+      <Section title="Restaurants (search & CRUD)">
+        <div className="mb-2 flex gap-2">
+          <input
+            className="border rounded px-2 py-1 w-64"
+            placeholder="Search restaurants by name/slug…"
+            value={restQStr}
+            onChange={(e)=> setRestQStr(e.target.value)}
+          />
+          <button className="px-3 py-1 rounded border" onClick={()=> setEditingRest({
+            id: 0, name: "", slug: "", address: "", lat: 0, lng: 0, municipality_id: muniId ?? null
+          } as any)}>+ New Restaurant</button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="max-h-96 overflow-auto border rounded">
+            {(restaurantsQ.data ?? []).map(r => (
+              <div key={r.id} className="flex items-center justify-between border-b px-3 py-2">
+                <div>
+                  <div className="font-medium">{r.name}</div>
+                  <div className="text-xs text-neutral-500">
+                    {r.slug} · muni {r.municipality_id ?? "-"} · lat {r.lat}, lng {r.lng}
+                    {(r.featured ?? 0) === 1 ? <> · <span className="text-green-700">Top {r.featured_rank ?? "?"}</span></> : null}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button className="text-blue-600 text-sm" onClick={()=> setEditingRest(r)}>Edit</button>
+                  <button className="text-red-600 text-sm" onClick={()=>{
+                    if (confirm(`Delete restaurant "${r.name}"?`)) restDelete.mutate(r.id);
+                  }}>Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* editor */}
+          <div>
+            {editingRest ? (
+              <RestaurantForm
+                value={editingRest}
+                municipalities={muniQ.data ?? []}
+                onCancel={()=> setEditingRest(null)}
+                onSave={(val)=>{
+                  if (val.id && val.id > 0) restUpdate.mutate({ id: val.id, data: val as any }, { onSuccess: ()=> setEditingRest(null) });
+                  else restCreate.mutate(val as any, { onSuccess: ()=> setEditingRest(null) });
+                }}
+              />
+            ) : <div className="text-sm text-neutral-500">Select a restaurant to edit or click “New Restaurant”.</div>}
+          </div>
+        </div>
+      </Section>
+
+      {/* LINKING */}
+      <Section title="Linking: Dish → Restaurants">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="text-sm">Dish:</span>
+          <select className="border rounded px-2 py-1"
+            value={linkDishSel ?? ""}
+            onChange={(e)=> setLinkDishSel(e.target.value ? Number(e.target.value) : undefined)}
+          >
+            <option value="">Choose…</option>
+            {(dishesQ.data ?? []).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <span className="text-xs text-neutral-500">Tip: filter Dish list above first.</span>
+        </div>
+
+        {!linkDishSel ? <div className="text-sm text-neutral-500">Pick a dish to start linking.</div> : (
+          <div className="max-h-96 overflow-auto border rounded">
+            {(restaurantsQ.data ?? []).map(r => {
+              const checked = linkedSet.has(r.id);
               return (
-                <label key={r.id} className="flex items-center gap-3 p-3">
-                  <input type="checkbox" disabled={!writable || doLink.isLoading || doUnlink.isLoading}
-                    checked={on}
-                    onChange={(e)=> e.target.checked ? doLink.mutate(r.id) : doUnlink.mutate(r.id) } />
-                  <div className="flex-1">
+                <label key={r.id} className="flex items-center justify-between px-3 py-2 border-b">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e)=>{
+                        linkMut.mutate({ dish_id: linkDishSel!, restaurant_id: r.id, mode: e.target.checked ? "link" : "unlink" });
+                      }}
+                    />
                     <div className="font-medium">{r.name}</div>
                     <div className="text-xs text-neutral-500">{r.slug}</div>
                   </div>
-                  {on && <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200">linked</span>}
                 </label>
               );
             })}
@@ -559,119 +425,112 @@ function LinkingTab() {
   );
 }
 
-/* ========================== Curation ========================== */
-function CurationTab() {
-  const writable = useWriteEnabled();
-  const [muniId, setMuniId] = useState<number|null>(null);
-
-  const dishQ = useQuery({ queryKey: ["cur:dishes", muniId], queryFn: ()=>listDishes({ municipalityId: muniId ?? undefined }) });
-  const restQ = useQuery({ queryKey: ["cur:restaurants", muniId], queryFn: ()=>listRestaurants({ municipalityId: muniId ?? undefined }) });
-
-  const qc = useQueryClient();
-  const setDish = useMutation({
-    mutationFn: (p: { id:number, is_signature?: 0|1, panel_rank?: number|null }) => setDishCuration(p.id, { is_signature: p.is_signature, panel_rank: p.panel_rank }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cur:dishes"] }),
-  });
-  const setRest = useMutation({
-    mutationFn: (p: { id:number, featured?: 0|1, featured_rank?: number|null }) => setRestaurantCuration(p.id, { featured: p.featured, featured_rank: p.featured_rank }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cur:restaurants"] }),
-  });
-
-  const sig = useMemo(() =>
-    [...(dishQ.data ?? [])].filter(d=>d.is_signature===1).sort((a,b)=>(a.panel_rank??99)-(b.panel_rank??99)).slice(0,3)
-  , [dishQ.data]);
-
-  const feat = useMemo(() =>
-    [...(restQ.data ?? [])].filter(r=>(r.featured??0)===1).sort((a,b)=>(a.featured_rank??99)-(b.featured_rank??99)).slice(0,3)
-  , [restQ.data]);
-
+/* ======= Forms ======= */
+function DishForm({
+  value, municipalities, onSave, onCancel
+}: {
+  value: Partial<Dish>;
+  municipalities: Municipality[];
+  onSave: (v: Partial<Dish>) => void;
+  onCancel: () => void;
+}) {
+  const [v, setV] = useState<Partial<Dish>>(value);
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Section title="Municipality" right={<MuniSelect value={muniId} onChange={setMuniId} />}>
-        <div className="text-sm text-neutral-500">Choose a municipality to curate its Top 3.</div>
-      </Section>
-
-      <Section title="Top 3 dishes" right={!writable && <span className="text-xs px-2 py-1 rounded bg-neutral-100 border">Writes disabled</span>}>
-        <div className="space-y-2">
-          {(dishQ.data ?? []).map(d => (
-            <div key={d.id} className="p-2 border rounded flex items-center gap-3">
-              <select className="border rounded px-1 py-0.5"
-                value={d.is_signature ?? 0}
-                onChange={e=>setDish.mutate({ id: d.id, is_signature: Number(e.target.value) as 0|1 })} disabled={!writable}>
-                <option value={0}>Not top</option>
-                <option value={1}>Top</option>
-              </select>
-              <input type="number" className="border rounded px-2 py-1 w-20"
-                placeholder="rank"
-                value={d.panel_rank ?? ""}
-                onChange={e=>setDish.mutate({ id: d.id, panel_rank: e.target.value ? Number(e.target.value) : null })} disabled={!writable}/>
-              <div className="flex-1">
-                <div className="font-medium">{d.name}</div>
-                <div className="text-xs text-neutral-500">{d.slug}</div>
-              </div>
-              {(d.is_signature===1) && <span className="text-[11px] px-2 py-0.5 rounded bg-amber-50 border border-amber-200">rank {d.panel_rank ?? "?"}</span>}
-            </div>
-          ))}
+    <form className="space-y-2" onSubmit={(e)=>{ e.preventDefault(); onSave(v); }}>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs">Name</label>
+          <input className="border rounded px-2 py-1 w-full" value={v.name ?? ""} onChange={e=> setV(s => ({...s, name:e.target.value}))}/>
         </div>
-      </Section>
-
-      <Section title="Top 3 restaurants" right={!writable && <span className="text-xs px-2 py-1 rounded bg-neutral-100 border">Writes disabled</span>}>
-        <div className="space-y-2">
-          {(restQ.data ?? []).map(r => (
-            <div key={r.id} className="p-2 border rounded flex items-center gap-3">
-              <select className="border rounded px-1 py-0.5"
-                value={r.featured ?? 0}
-                onChange={e=>setRest.mutate({ id: r.id, featured: Number(e.target.value) as 0|1 })} disabled={!writable}>
-                <option value={0}>Not top</option>
-                <option value={1}>Top</option>
-              </select>
-              <input type="number" className="border rounded px-2 py-1 w-20"
-                placeholder="rank"
-                value={r.featured_rank ?? ""}
-                onChange={e=>setRest.mutate({ id: r.id, featured_rank: e.target.value ? Number(e.target.value) : null })} disabled={!writable}/>
-              <div className="flex-1">
-                <div className="font-medium">{r.name}</div>
-                <div className="text-xs text-neutral-500">{r.slug}</div>
-              </div>
-              {(r.featured===1) && <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200">rank {r.featured_rank ?? "?"}</span>}
-            </div>
-          ))}
+        <div>
+          <label className="text-xs">Slug</label>
+          <input className="border rounded px-2 py-1 w-full" value={v.slug ?? ""} onChange={e=> setV(s => ({...s, slug:e.target.value}))}/>
         </div>
-      </Section>
-    </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs">Municipality</label>
+          <select className="border rounded px-2 py-1 w-full"
+            value={v.municipality_id ?? ""}
+            onChange={e=> setV(s=> ({...s, municipality_id: e.target.value ? Number(e.target.value) : null}))}>
+            <option value="">—</option>
+            {municipalities.map(m => <option value={m.id} key={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs">Category</label>
+          <select className="border rounded px-2 py-1 w-full"
+            value={v.category ?? "food"}
+            onChange={e=> setV(s=> ({...s, category: e.target.value as any}))}>
+            <option value="food">food</option>
+            <option value="delicacy">delicacy</option>
+            <option value="drink">drink</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className="text-xs">Description</label>
+        <textarea className="border rounded px-2 py-1 w-full" rows={3}
+          value={v.description ?? ""} onChange={e=> setV(s=> ({...s, description:e.target.value}))}/>
+      </div>
+      <div className="flex gap-2">
+        <button className="px-3 py-1 rounded border bg-blue-600 text-white" type="submit">Save</button>
+        <button className="px-3 py-1 rounded border" type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
   );
 }
 
-/* ========================== Page wrapper with tabs ========================== */
-export default function AdminDashboard() {
-  const [tab, setTab] = useState<"analytics"|"dishes"|"restaurants"|"linking"|"curation">("analytics");
-  const writable = useWriteEnabled();
+function RestaurantForm({
+  value, municipalities, onSave, onCancel
+}: {
+  value: Partial<Restaurant>;
+  municipalities: Municipality[];
+  onSave: (v: Partial<Restaurant>) => void;
+  onCancel: () => void;
+}) {
+  const [v, setV] = useState<Partial<Restaurant>>(value);
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">Admin Dashboard</h1>
-        {!writable && (
-          <div className="text-xs px-3 py-1 rounded bg-yellow-50 border border-yellow-200 text-yellow-900">
-            Admin writes disabled. Start admin API at <code>VITE_ADMIN_API_URL</code> to enable create/edit/delete/linking/curation.
-          </div>
-        )}
+    <form className="space-y-2" onSubmit={(e)=>{ e.preventDefault(); onSave(v); }}>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs">Name</label>
+          <input className="border rounded px-2 py-1 w-full" value={v.name ?? ""} onChange={e=> setV(s => ({...s, name:e.target.value}))}/>
+        </div>
+        <div>
+          <label className="text-xs">Slug</label>
+          <input className="border rounded px-2 py-1 w-full" value={v.slug ?? ""} onChange={e=> setV(s => ({...s, slug:e.target.value}))}/>
+        </div>
       </div>
-
-      <nav className="flex gap-2 text-sm">
-        {(["analytics","dishes","restaurants","linking","curation"] as const).map(k => (
-          <button key={k}
-            className={`px-3 py-1.5 rounded border ${tab===k ? "bg-neutral-100" : "hover:bg-neutral-50"}`}
-            onClick={()=>setTab(k)}>
-            {k[0].toUpperCase()+k.slice(1)}
-          </button>
-        ))}
-      </nav>
-
-      {tab === "analytics" && <AnalyticsTab />}
-      {tab === "dishes" && <DishesTab />}
-      {tab === "restaurants" && <RestaurantsTab />}
-      {tab === "linking" && <LinkingTab />}
-      {tab === "curation" && <CurationTab />}
-    </div>
+      <div>
+        <label className="text-xs">Address</label>
+        <input className="border rounded px-2 py-1 w-full" value={v.address ?? ""} onChange={e=> setV(s => ({...s, address:e.target.value}))}/>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs">Municipality</label>
+          <select className="border rounded px-2 py-1 w-full"
+            value={v.municipality_id ?? ""}
+            onChange={e=> setV(s=> ({...s, municipality_id: e.target.value ? Number(e.target.value) : null}))}>
+            <option value="">—</option>
+            {municipalities.map(m => <option value={m.id} key={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs">Lat</label>
+            <input type="number" step="any" className="border rounded px-2 py-1 w-full" value={v.lat ?? 0} onChange={e=> setV(s => ({...s, lat:Number(e.target.value)}))}/>
+          </div>
+          <div>
+            <label className="text-xs">Lng</label>
+            <input type="number" step="any" className="border rounded px-2 py-1 w-full" value={v.lng ?? 0} onChange={e=> setV(s => ({...s, lng:Number(e.target.value)}))}/>
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button className="px-3 py-1 rounded border bg-blue-600 text-white" type="submit">Save</button>
+        <button className="px-3 py-1 rounded border" type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
   );
 }
