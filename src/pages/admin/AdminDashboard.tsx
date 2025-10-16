@@ -52,7 +52,49 @@ function AnalyticsTab() {
   const summaryQ = useQuery({ queryKey: ["admin:analytics:summary"], queryFn: getAnalyticsSummary, staleTime: 60_000 });
 
   const data = countsQ.data ?? [];
+  const counts = summaryQ.data?.counts ?? { dishes: 0, restaurants: 0, municipalities: 0 };
   const colors = ["#6366F1", "#22C55E", "#F59E0B", "#EC4899", "#06B6D4", "#F43F5E", "#84CC16"];
+
+  // Always provide a single chart element (never null) to ResponsiveContainer
+  const chartEl = useMemo<React.ReactElement>(() => {
+    if (chartType === "line") {
+      return (
+        <LineChart data={data}>
+          <XAxis dataKey="municipality_name" />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Line type="monotone" dataKey="dishes" stroke="#6366F1" name="Dishes" />
+          <Line type="monotone" dataKey="restaurants" stroke="#22C55E" name="Restaurants" />
+        </LineChart>
+      );
+    }
+    if (chartType === "pie") {
+      return (
+        <PieChart>
+          <Tooltip />
+          <Legend />
+          <Pie data={data} dataKey="dishes" nameKey="municipality_name" outerRadius={90} label>
+            {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+          </Pie>
+          <Pie data={data} dataKey="restaurants" nameKey="municipality_name" innerRadius={100} outerRadius={130}>
+            {data.map((_, i) => <Cell key={i} fill={colors[(i + 3) % colors.length]} />)}
+          </Pie>
+        </PieChart>
+      );
+    }
+    // default: bar
+    return (
+      <BarChart data={data}>
+        <XAxis dataKey="municipality_name" />
+        <YAxis />
+        <Tooltip />
+        <Legend />
+        <Bar dataKey="dishes" fill="#6366F1" name="Dishes" />
+        <Bar dataKey="restaurants" fill="#22C55E" name="Restaurants" />
+      </BarChart>
+    );
+  }, [chartType, data]);
 
   return (
     <div className="space-y-6">
@@ -72,53 +114,27 @@ function AnalyticsTab() {
 
       <div className="h-72 bg-white rounded-xl border p-3">
         <ResponsiveContainer width="100%" height="100%">
-          {chartType === "bar" && (
-            <BarChart data={data}>
-              <XAxis dataKey="municipality_name" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="dishes" fill="#6366F1" name="Dishes" />
-              <Bar dataKey="restaurants" fill="#22C55E" name="Restaurants" />
-            </BarChart>
-          )}
-          {chartType === "line" && (
-            <LineChart data={data}>
-              <XAxis dataKey="municipality_name" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="dishes" stroke="#6366F1" name="Dishes" />
-              <Line type="monotone" dataKey="restaurants" stroke="#22C55E" name="Restaurants" />
-            </LineChart>
-          )}
-          {chartType === "pie" && (
-            <PieChart>
-              <Tooltip />
-              <Legend />
-              <Pie data={data} dataKey="dishes" nameKey="municipality_name" outerRadius={90} label>
-                {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
-              </Pie>
-              <Pie data={data} dataKey="restaurants" nameKey="municipality_name" innerRadius={100} outerRadius={130}>
-                {data.map((_, i) => <Cell key={i} fill={colors[(i + 3) % colors.length]} />)}
-              </Pie>
-            </PieChart>
-          )}
+          {chartEl}
         </ResponsiveContainer>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {(summaryQ.data ? Object.entries(summaryQ.data) : []).map(([k, v]) => (
-          <div key={k} className="bg-white border rounded-xl p-4">
-            <div className="text-xs text-neutral-500">{k}</div>
-            <div className="text-2xl font-semibold">{String(v)}</div>
-          </div>
-        ))}
+        <div className="bg-white border rounded-xl p-4">
+          <div className="text-xs text-neutral-500">Municipalities</div>
+          <div className="text-2xl font-semibold">{counts.municipalities}</div>
+        </div>
+        <div className="bg-white border rounded-xl p-4">
+          <div className="text-xs text-neutral-500">Dishes</div>
+          <div className="text-2xl font-semibold">{counts.dishes}</div>
+        </div>
+        <div className="bg-white border rounded-xl p-4">
+          <div className="text-xs text-neutral-500">Restaurants</div>
+          <div className="text-2xl font-semibold">{counts.restaurants}</div>
+        </div>
       </div>
     </div>
   );
 }
-
 // ------------- Dishes CRUD -------------
 type DishFormState = Partial<Dish> & { autoSlug?: boolean };
 const emptyDish: DishFormState = { name: "", slug: "", category: "food", municipality_id: 0, autoSlug: true };
