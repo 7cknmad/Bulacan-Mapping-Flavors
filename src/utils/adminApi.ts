@@ -21,8 +21,6 @@ const get = <T,>(p: string) => request<T>(p);
 const post = <T,>(p: string, b?: any) => request<T>(p, { method: "POST", body: b ? JSON.stringify(b) : undefined });
 const patch = <T,>(p: string, b?: any) => request<T>(p, { method: "PATCH", body: b ? JSON.stringify(b) : undefined });
 const del = <T,>(p: string) => request<T>(p, { method: "DELETE" });
-
-/** Try several paths (for minor backend naming differences) and resolve on first success. */
 async function getFirst<T>(paths: string[]): Promise<T> {
   let lastErr: any;
   for (const p of paths) {
@@ -143,13 +141,11 @@ export const deleteRestaurant = (id: number) => del<null>(`/admin/restaurants/${
 export const listRestaurantsForDish = (dishId: number) =>
   // Common variants used in your threads
   getFirst<Restaurant[]>([
-    `/api/dishes/${dishId}/restaurants`,
     `/admin/dishes/${dishId}/restaurants`,
   ]);
 
 export const listDishesForRestaurant = (restId: number) =>
   getFirst<Dish[]>([
-    `/api/restaurants/${restId}/dishes`,
     `/admin/restaurants/${restId}/dishes`,
   ]);
 
