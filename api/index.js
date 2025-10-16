@@ -17,22 +17,21 @@ const DEFAULT_ALLOWED = [
 ];
 // allow comma-separated origins via env
 const extra = (process.env.ALLOW_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-const allowedOrigins = new Set([
-  "http://localhost:5173",
-  "https://7cknmad.github.io",
-]);
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'https://7cknmad.github.io',                 // your Pages domain
+];
 
-app.use(
-  cors({
-    origin(origin, cb) {
-      if (!origin) return cb(null, true);                  // Postman/curl
-      cb(null, allowedOrigins.has(origin));                // true/false
-    },
-    credentials: true,                                     // <— MUST be true for cookies
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+app.use(cors({
+  origin(origin, cb) {
+    // allow non-browser tools (e.g. curl) and allowed origins
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, origin ?? true);
+    return cb(new Error(`CORS: ${origin} not allowed`));
+  },
+  credentials: true, // << allow cookies
+}));
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.has(origin)) {
@@ -234,25 +233,40 @@ app.get('/api/restaurants', async (req, res) => {
 });
 
 // === Admin auth ===
-app.post('/api/admin/auth/login', (req, res) => {
-  const { email, password } = req.body || {};
-  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-  const token = makeToken(email);
-  res.cookie('adm', token, cookieOpts);
-  res.json({ ok: true, email });
+app.post('/api/admin/auth/login', async (req, res) => {
+  const { email, password } = req.body ?? {};
+  // TODO: validate against DB
+  const ok = email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD;
+  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+  // create a signed token or session id; for demo, a simple string
+  const token = 'session-'+Date.now();
+
+  // Cookie MUST be SameSite=None and Secure for cross-site (GitHub Pages) requests
+  res.cookie('admin_sess', token, {
+    httpOnly: true,
+    sameSite: 'none',
+    secure: true,     // required when site is HTTPS (GitHub Pages)
+    path: '/',
+    maxAge: 7 * 24 * 3600 * 1000, // 7 days
+  });
+  res.json({ user: { id: 1, email } });
 });
 
 app.get('/api/admin/auth/me', (req, res) => {
-  const raw = req.cookies?.adm;
-  const payload = raw ? verifyToken(raw) : null;
-  if (!payload) return res.status(401).json({ error: 'Not authenticated' });
-  res.json({ email: payload.email, name: 'Admin' });
+  const token = req.cookies?.admin_sess;
+  if (!token) return res.status(401).json({ user: null });
+  // TODO: verify token, fetch user
+  res.json({ user: { id: 1, email: process.env.ADMIN_EMAIL } });
 });
 
 app.post('/api/admin/auth/logout', (req, res) => {
-  res.clearCookie('adm', { path: '/', sameSite: cookieOpts.sameSite, secure: cookieOpts.secure });
+  res.clearCookie('admin_sess', {
+    httpOnly: true,
+    sameSite: 'none',
+    secure: true,
+    path: '/',
+  });
   res.json({ ok: true });
 });
 

@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { adminAuth } from "../../utils/adminApi";
-
 export default function AdminLogin() {
   const nav = useNavigate();
   const loc = useLocation() as any;
@@ -17,7 +16,7 @@ export default function AdminLogin() {
     setBusy(true);
     setErr(null);
     try {
-      await adminAuth.login(email.trim(), password);
+      await adminAuth.login(email, password);
       const to = loc?.state?.from?.pathname ?? "/admin";
       nav(to, { replace: true });
     } catch (e: any) {
