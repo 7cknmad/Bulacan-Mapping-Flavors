@@ -1,507 +1,941 @@
 // src/pages/admin/AdminDashboard.tsx
-import React, { useMemo, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  adminHealth, analyticsSummary, listMunicipalities,
-  listDishes, createDish, updateDish, deleteDish,
-  listRestaurants, createRestaurant, updateRestaurant, deleteRestaurant,
-  restaurantsForDish, linkDishRestaurant, unlinkDishRestaurant,
-  curateDish, curateRestaurant,
-  type Municipality, type Dish, type Restaurant
+  listMunicipalities, type Municipality,
+  listDishes, type Dish, createDish, updateDish, deleteDish,
+  listRestaurants, type Restaurant, createRestaurant, updateRestaurant, deleteRestaurant,
+  listRestaurantsForDish, listDishesForRestaurant,
+  linkDishRestaurant, unlinkDishRestaurant,
+  setDishCuration, setRestaurantCuration,
+  getPerMunicipalityCounts, getAnalyticsSummary,
+  coerceStringArray
 } from "../../utils/adminApi";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+// Recharts
+import {
+  BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
+  LineChart, Line, PieChart, Pie, Cell
+} from "recharts";
+
+// ========== Tiny helpers ==========
+const useLocalStorage = <T,>(key: string, initial: T) => {
+  const [v, setV] = useState<T>(() => {
+    try { const raw = localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : initial; } catch { return initial; }
+  });
+  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)); } catch {} }, [key, v]);
+  return [v, setV] as const;
+};
+
+const colors = ["#2563eb","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4"];
+
+// ========== Zod Schemas ==========
+const dishSchema = z.object({
+  id: z.number().optional(),
+  municipality_id: z.coerce.number().min(1, "Municipality is required"),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  description: z.string().nullable().optional(),
+  image_url: z.string().url().nullish(),
+  category: z.enum(["food","delicacy","drink"]),
+  flavor_profile: z.string().optional(), // comma list
+  ingredients: z.string().optional(),    // comma list
+  popularity: z.coerce.number().nullable().optional(),
+  rating: z.coerce.number().nullable().optional(),
+  is_signature: z.coerce.number().nullable().optional(), // 0/1
+  panel_rank: z.coerce.number().nullable().optional(),   // 1..3 or null
+});
+
+const restaurantSchema = z.object({
+  id: z.number().optional(),
+  municipality_id: z.coerce.number().min(1, "Municipality is required"),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  kind: z.enum(["restaurant","stall","store","dealer","market","home-based"]).nullish(),
+  description: z.string().nullable().optional(),
+  address: z.string().min(1),
+  phone: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  facebook: z.string().nullable().optional(),
+  instagram: z.string().nullable().optional(),
+  opening_hours: z.string().nullable().optional(),
+  price_range: z.enum(["budget","moderate","expensive"]).nullish(),
+  cuisine_types: z.string().optional(), // comma list
+  rating: z.coerce.number().nullable().optional(),
+  lat: z.coerce.number(),
+  lng: z.coerce.number(),
+  image_url: z.string().url().nullish(),
+  featured: z.coerce.number().nullable().optional(),
+  featured_rank: z.coerce.number().nullable().optional(),
+});
+
+// ========== Small Select for Municipalities ==========
+function MunicipalitySelect({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 5 * 60_000 });
   return (
-    <section className="bg-white rounded-xl shadow-sm border p-4 md:p-6">
-      <h2 className="text-lg font-semibold mb-3">{title}</h2>
-      {children}
-    </section>
+    <select
+      className="border rounded px-2 py-1"
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+    >
+      <option value="">All municipalities</option>
+      {(muniQ.data ?? []).map((m) => (
+        <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>
+      ))}
+    </select>
   );
 }
 
-function Badge({ children, tone='neutral' }:{children:React.ReactNode; tone?:'neutral'|'success'|'warn'}) {
-  const cls = tone==='success'?'bg-green-50 text-green-700 border-green-200':
-             tone==='warn'   ?'bg-amber-50 text-amber-700 border-amber-200':
-                                'bg-neutral-50 text-neutral-700 border-neutral-200';
-  return <span className={`inline-block text-[11px] px-2 py-0.5 rounded-full border ${cls}`}>{children}</span>;
-}
+// ========== Analytics Panel ==========
+function AnalyticsPanel() {
+  const [chart, setChart] = useLocalStorage<"bar" | "line" | "pie">("adm:chart", "bar");
+  const muniCounts = useQuery({ queryKey: ["analytics:per-muni"], queryFn: getPerMunicipalityCounts, refetchOnWindowFocus: false });
+  const sumQ = useQuery({ queryKey: ["analytics:summary"], queryFn: getAnalyticsSummary, refetchOnWindowFocus: false });
 
-function BarRow({ label, n, max }:{label:string; n:number; max:number}) {
-  const pct = max>0 ? Math.round((n/max)*100) : 0;
+  const data = muniCounts.data ?? [];
+
   return (
-    <div className="flex items-center gap-3">
-      <div className="w-40 text-sm truncate">{label}</div>
-      <div className="flex-1 h-2 bg-neutral-100 rounded-full overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#60a5fa,#34d399)' }} />
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Per Municipality Status</h2>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-neutral-500">Chart:</span>
+          <select className="border rounded px-2 py-1" value={chart} onChange={(e) => setChart(e.target.value as any)}>
+            <option value="bar">Bars</option>
+            <option value="line">Lines</option>
+            <option value="pie">Pie (donut)</option>
+          </select>
+        </div>
       </div>
-      <div className="w-10 text-xs tabular-nums text-right">{n}</div>
+
+      <div className="h-80 bg-white border rounded-lg p-3">
+        {chart === "bar" && (
+          <ResponsiveContainer>
+            <BarChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="municipality_name" />
+              <YAxis allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="dishes" name="Dishes" fill={colors[0]} />
+              <Bar dataKey="restaurants" name="Restaurants" fill={colors[1]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+        {chart === "line" && (
+          <ResponsiveContainer>
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="municipality_name" />
+              <YAxis allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Line dataKey="dishes" name="Dishes" stroke={colors[0]} />
+              <Line dataKey="restaurants" name="Restaurants" stroke={colors[1]} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+        {chart === "pie" && (
+          <div className="h-full grid grid-cols-1 md:grid-cols-2 gap-2">
+            <ResponsiveContainer>
+              <PieChart>
+                <Tooltip />
+                <Legend />
+                <Pie
+                  data={data}
+                  dataKey="dishes"
+                  nameKey="municipality_name"
+                  innerRadius="50%"
+                  outerRadius="80%"
+                  label
+                >
+                  {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+            <ResponsiveContainer>
+              <PieChart>
+                <Tooltip />
+                <Legend />
+                <Pie
+                  data={data}
+                  dataKey="restaurants"
+                  nameKey="municipality_name"
+                  innerRadius="50%"
+                  outerRadius="80%"
+                  label
+                >
+                  {data.map((_, i) => <Cell key={i} fill={colors[(i + 1) % colors.length]} />)}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Quick peek: Top items by municipality without going to curation */}
+      <TopPeek />
     </div>
   );
 }
 
-export default function AdminDashboard() {
+// Quick "Top by municipality" viewer
+function TopPeek() {
+  const [muniId, setMuniId] = useLocalStorage<number | null>("adm:peek:muni", null);
+  const dishQ = useQuery({
+    queryKey: ["peek:dishes", muniId],
+    queryFn: () => listDishes({ municipalityId: muniId ?? undefined, signature: 1 }),
+    enabled: muniId != null
+  });
+  const restQ = useQuery({
+    queryKey: ["peek:restaurants", muniId],
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined, featured: 1 }),
+    enabled: muniId != null
+  });
+
+  const topD = useMemo(() => (dishQ.data ?? []).slice().sort((a, b) => (a.panel_rank ?? 99) - (b.panel_rank ?? 99)), [dishQ.data]);
+  const topR = useMemo(() => (restQ.data ?? []).slice().sort((a, b) => (a.featured_rank ?? 99) - (b.featured_rank ?? 99)), [restQ.data]);
+
+  return (
+    <div className="bg-white border rounded-lg p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">Top per Municipality</h3>
+        <MunicipalitySelect value={muniId} onChange={setMuniId} />
+      </div>
+      {muniId == null ? (
+        <div className="text-sm text-neutral-500 mt-2">Select a municipality to preview its current Top 1–3.</div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+          <div>
+            <div className="font-medium mb-2">Top Dishes/Delicacy</div>
+            <ol className="space-y-1">
+              {topD.map((d) => (
+                <li key={d.id} className="flex items-center gap-2">
+                  <span className="text-xs rounded px-2 py-0.5 bg-amber-50 border">{d.panel_rank ?? "—"}</span>
+                  <span>{d.name} <span className="text-xs text-neutral-500">({d.category})</span></span>
+                </li>
+              ))}
+              {topD.length === 0 && <div className="text-sm text-neutral-500">No top dishes set.</div>}
+            </ol>
+          </div>
+          <div>
+            <div className="font-medium mb-2">Top Restaurants</div>
+            <ol className="space-y-1">
+              {topR.map((r) => (
+                <li key={r.id} className="flex items-center gap-2">
+                  <span className="text-xs rounded px-2 py-0.5 bg-sky-50 border">{r.featured_rank ?? "—"}</span>
+                  <span>{r.name}</span>
+                </li>
+              ))}
+              {topR.length === 0 && <div className="text-sm text-neutral-500">No top restaurants set.</div>}
+            </ol>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ========== Dishes CRUD ==========
+function DishesPanel() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'analytics'|'dishes'|'restaurants'|'curation'|'linking'>('analytics');
+  const [q, setQ] = useState("");
+  const [muniId, setMuniId] = useLocalStorage<number | null>("adm:dish:muni", null);
+  const [category, setCategory] = useLocalStorage<"" | "food" | "delicacy" | "drink">("adm:dish:cat", "");
 
-  // filters, cached in state
-  const [dishQ, setDishQ] = useState('');
-  const [restQ, setRestQ] = useState('');
-  const [dishMuni, setDishMuni] = useState<number|null>(null);
-  const [restMuni, setRestMuni] = useState<number|null>(null);
-
-  const health = useQuery({ queryKey:['admin:health'], queryFn: adminHealth, retry: false });
-  const muni = useQuery({ queryKey:['admin:municipalities'], queryFn: listMunicipalities, staleTime: 5*60_000 });
-  const analytics = useQuery({ queryKey:['admin:analytics'], queryFn: analyticsSummary, enabled: tab==='analytics', staleTime: 30_000 });
-
-  const dishes = useQuery({
-    queryKey:['admin:dishes', dishMuni, dishQ],
-    queryFn: ()=>listDishes({ municipalityId:dishMuni||undefined, q:dishQ||undefined }),
-    enabled: tab==='dishes' || tab==='curation' || tab==='linking',
-    staleTime: 10_000
+  const listQ = useQuery({
+    queryKey: ["dishes", muniId, category, q],
+    queryFn: () => listDishes({
+      municipalityId: muniId ?? undefined,
+      category: category || undefined,
+      q: q || undefined
+    }),
   });
 
-  const restaurants = useQuery({
-    queryKey:['admin:restaurants', restMuni, restQ],
-    queryFn: ()=>listRestaurants({ municipalityId:restMuni||undefined, q:restQ||undefined }),
-    enabled: tab==='restaurants' || tab==='curation' || tab==='linking',
-    staleTime: 10_000
+  const [editing, setEditing] = useState<Dish | null>(null);
+
+  const saveCreate = useMutation({
+    mutationFn: (payload: Partial<Dish>) => createDish(payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); alert("Dish created."); }
+  });
+  const saveUpdate = useMutation({
+    mutationFn: (payload: Dish) => updateDish(payload.id!, payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); alert("Dish updated."); }
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => deleteDish(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["dishes"] }); alert("Dish deleted."); }
   });
 
-  // ---- CRUD: Dishes
-  const [editingDish, setEditingDish] = useState<Partial<Dish>&{category?:Dish['category']}>({ category: 'food' });
-  const saveDish = useMutation({
-    mutationFn: async (payload: Partial<Dish>&{category?:Dish['category']}) => {
-      if (payload.id) return updateDish(payload.id, payload);
-      return createDish(payload as any);
-    },
-    onSuccess: ()=> { qc.invalidateQueries({queryKey:['admin:dishes']}); setEditingDish({ category:'food' }); }
-  });
-  const delDish = useMutation({
-    mutationFn: (id:number)=>deleteDish(id),
-    onSuccess: ()=> qc.invalidateQueries({queryKey:['admin:dishes']})
-  });
-
-  // ---- CRUD: Restaurants
-  const [editingRest, setEditingRest] = useState<Partial<Restaurant>>({ kind:'restaurant' });
-  const saveRest = useMutation({
-    mutationFn: async (payload: Partial<Restaurant>) => {
-      if (payload.id) return updateRestaurant(payload.id, payload);
-      return createRestaurant(payload as any);
-    },
-    onSuccess: ()=> { qc.invalidateQueries({queryKey:['admin:restaurants']}); setEditingRest({ kind:'restaurant' }); }
-  });
-  const delRest = useMutation({
-    mutationFn: (id:number)=>deleteRestaurant(id),
-    onSuccess: ()=> qc.invalidateQueries({queryKey:['admin:restaurants']})
+  const onNew = () => setEditing({
+    id: 0,
+    municipality_id: muniId ?? 0,
+    name: "",
+    slug: "",
+    description: null,
+    image_url: null,
+    category: (category || "food") as any,
+    flavor_profile: null,
+    ingredients: null,
+    popularity: null,
+    rating: null,
+    is_signature: 0,
+    panel_rank: null
   });
 
-  // ---- Curation
-  const setDishCur = useMutation({
-    mutationFn: ({id, is_signature, panel_rank}:{id:number; is_signature?:0|1; panel_rank?:number|null}) =>
-      curateDish(id, { is_signature, panel_rank }),
-    onSuccess: ()=> qc.invalidateQueries({queryKey:['admin:dishes']})
-  });
-  const setRestCur = useMutation({
-    mutationFn: ({id, featured, featured_rank}:{id:number; featured?:0|1; featured_rank?:number|null}) =>
-      curateRestaurant(id, { featured, featured_rank }),
-    onSuccess: ()=> qc.invalidateQueries({queryKey:['admin:restaurants']})
-  });
+  const items = listQ.data ?? [];
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      {/* Left: List */}
+      <div className="lg:col-span-2 bg-white border rounded-lg p-3 flex flex-col">
+        <div className="flex items-center gap-2">
+          <input className="border rounded px-3 py-2 flex-1" placeholder="Search dishes…" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <div className="flex items-center gap-2 mt-2">
+          <MunicipalitySelect value={muniId} onChange={setMuniId} />
+          <select className="border rounded px-2 py-1" value={category} onChange={(e) => setCategory(e.target.value as any)}>
+            <option value="">All</option>
+            <option value="food">Food</option>
+            <option value="delicacy">Delicacy</option>
+            <option value="drink">Drink</option>
+          </select>
+          <button className="ml-auto px-3 py-1.5 rounded bg-black text-white" onClick={onNew}>+ New Dish</button>
+        </div>
 
-  // ---- Linking (Dish → Restaurants)
-  const [linkDishId, setLinkDishId] = useState<number|null>(null);
-  const linkedForDish = useQuery({
-    queryKey:['admin:linkedForDish', linkDishId],
-    queryFn: ()=> restaurantsForDish(linkDishId!),
-    enabled: tab==='linking' && !!linkDishId
-  });
-  const toggleLink = useMutation({
-    mutationFn: async ({restaurant_id, linked}:{restaurant_id:number; linked:boolean}) => {
-      if (!linkDishId) return;
-      if (linked) return unlinkDishRestaurant(linkDishId, restaurant_id);
-      return linkDishRestaurant(linkDishId, restaurant_id);
-    },
-    onSuccess: ()=> qc.invalidateQueries({queryKey:['admin:linkedForDish']})
-  });
+        <div className="mt-3 flex-1 overflow-auto divide-y">
+          {items.map((d) => {
+            const fp = coerceStringArray(d.flavor_profile);
+            const ing = coerceStringArray(d.ingredients);
+            return (
+              <button
+                key={d.id}
+                onClick={() => setEditing(d)}
+                className="w-full text-left px-2 py-2 hover:bg-neutral-50"
+              >
+                <div className="font-medium">{d.name} <span className="text-xs text-neutral-500">({d.slug})</span></div>
+                <div className="text-xs text-neutral-500">
+                  {d.category} • {fp?.join(" · ") || "—"} • {ing?.slice(0,3)?.join(", ") || "—"}
+                </div>
+                {(d.is_signature ? true : false) && (
+                  <div className="text-xs mt-1">
+                    <span className="px-2 py-0.5 rounded bg-amber-50 border mr-1">Signature</span>
+                    <span className="px-2 py-0.5 rounded bg-amber-50 border">Top {d.panel_rank ?? "—"}</span>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+          {items.length === 0 && <div className="p-3 text-sm text-neutral-500">No dishes.</div>}
+        </div>
+      </div>
 
-  // small helpers
-  const muniName = (id:number|null|undefined) => {
-    const m = (muni.data||[]).find(x=>x.id===id);
-    return m ? `${m.name} (${m.slug})` : 'All municipalities';
-  };
-  const topBar = (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="text-xl font-semibold">Admin Dashboard</div>
-      <div className="flex items-center gap-2 text-sm">
-        {!health.isLoading && !health.isError && health.data?.ok ? (
-          <Badge tone="success">Admin API: OK</Badge>
+      {/* Right: Form */}
+      <div className="lg:col-span-3 bg-white border rounded-lg p-4">
+        {!editing ? (
+          <div className="text-neutral-500">Select a dish to edit, or click “New Dish”.</div>
         ) : (
-          <Badge tone="warn">Admin API unreachable</Badge>
+          <DishForm
+            initial={editing}
+            onCancel={() => setEditing(null)}
+            onDelete={() => { if (editing.id && window.confirm("Delete this dish?")) remove.mutate(editing.id); setEditing(null); }}
+            onSave={(payload) => {
+              if (payload.id && payload.id !== 0) saveUpdate.mutate(payload as Dish);
+              else saveCreate.mutate(payload as Partial<Dish>);
+              setEditing(null);
+            }}
+          />
         )}
       </div>
     </div>
   );
+}
+
+function DishForm({ initial, onCancel, onDelete, onSave }: {
+  initial: Dish;
+  onCancel: () => void;
+  onDelete: () => void;
+  onSave: (payload: Partial<Dish> | Dish) => void;
+}) {
+  const f = useForm<z.infer<typeof dishSchema>>({
+    resolver: zodResolver(dishSchema),
+    defaultValues: {
+      ...initial,
+      flavor_profile: Array.isArray(initial.flavor_profile) ? initial.flavor_profile.join(", ") : (initial.flavor_profile as any) ?? "",
+      ingredients: Array.isArray(initial.ingredients) ? initial.ingredients.join(", ") : (initial.ingredients as any) ?? "",
+    }
+  });
+
+  const watchName = f.watch("name");
+  useEffect(() => {
+    // auto-slug if field empty
+    const slug = f.getValues("slug");
+    if (!slug) f.setValue("slug", watchName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""), { shouldDirty: true });
+  }, [watchName]);
+
+  const submit = f.handleSubmit((v) => {
+    const payload: Partial<Dish> = {
+      ...v,
+      flavor_profile: v.flavor_profile ? v.flavor_profile.split(",").map(s => s.trim()).filter(Boolean) : null,
+      ingredients: v.ingredients ? v.ingredients.split(",").map(s => s.trim()).filter(Boolean) : null,
+    };
+    onSave(initial.id ? { ...payload, id: initial.id } : payload);
+  });
 
   return (
-    <div className="space-y-6">
-      {topBar}
-
-      <div className="flex gap-2 text-sm">
-        {(['analytics','dishes','restaurants','curation','linking'] as const).map(t => (
-          <button key={t}
-            onClick={()=>setTab(t)}
-            className={`px-3 py-1.5 rounded border ${tab===t?'bg-neutral-900 text-white border-neutral-900':'bg-white hover:bg-neutral-50'}`}>
-            {t[0].toUpperCase()+t.slice(1)}
-          </button>
-        ))}
+    <form onSubmit={submit} className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">{initial.id ? "Edit Dish" : "Create Dish"}</h3>
+        <div className="flex gap-2">
+          {initial.id ? <button type="button" className="px-3 py-1.5 rounded border" onClick={onDelete}>Delete</button> : null}
+          <button type="button" className="px-3 py-1.5 rounded border" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="px-3 py-1.5 rounded bg-black text-white">Save</button>
+        </div>
       </div>
 
-      {tab==='analytics' && (
-        <Section title="Analytics">
-          {analytics.isLoading ? <div>Loading…</div> : analytics.isError ? <div className="text-red-600">Failed to load analytics.</div> : (
-            <div className="space-y-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 border rounded-lg bg-neutral-50">
-                  <div className="text-xs text-neutral-500">Total Dishes</div>
-                  <div className="text-2xl font-semibold">{analytics.data!.counts.dishes}</div>
-                </div>
-                <div className="p-4 border rounded-lg bg-neutral-50">
-                  <div className="text-xs text-neutral-500">Total Restaurants</div>
-                  <div className="text-2xl font-semibold">{analytics.data!.counts.restaurants}</div>
-                </div>
-                <div className="p-4 border rounded-lg bg-neutral-50">
-                  <div className="text-xs text-neutral-500">Municipalities</div>
-                  <div className="text-2xl font-semibold">{analytics.data!.counts.municipalities}</div>
-                </div>
-              </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <label className="text-sm">Municipality
+          <MunicipalitySelect value={f.watch("municipality_id") || null} onChange={(v) => f.setValue("municipality_id", v ?? 0, { shouldDirty: true })} />
+        </label>
+        <label className="text-sm">Category
+          <select className="border rounded px-2 py-1 w-full" {...f.register("category")}>
+            <option value="food">Food</option>
+            <option value="delicacy">Delicacy</option>
+            <option value="drink">Drink</option>
+          </select>
+        </label>
+        <label className="text-sm">Image URL
+          <input className="border rounded px-2 py-1 w-full" placeholder="https://…" {...f.register("image_url")} />
+        </label>
 
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <div className="font-medium">Dishes by municipality</div>
-                  {(() => {
-                    const rows = analytics.data!.perMunicipality.dishes;
-                    const max = Math.max(1, ...rows.map(r=>r.count));
-                    return rows.map(r => <BarRow key={r.id} label={r.name} n={r.count} max={max} />);
-                  })()}
-                </div>
-                <div className="space-y-2">
-                  <div className="font-medium">Restaurants by municipality</div>
-                  {(() => {
-                    const rows = analytics.data!.perMunicipality.restaurants;
-                    const max = Math.max(1, ...rows.map(r=>r.count));
-                    return rows.map(r => <BarRow key={r.id} label={r.name} n={r.count} max={max} />);
-                  })()}
-                </div>
-              </div>
+        <label className="text-sm col-span-2">Name
+          <input className="border rounded px-2 py-1 w-full" {...f.register("name")} />
+        </label>
+        <label className="text-sm">Slug
+          <input className="border rounded px-2 py-1 w-full" {...f.register("slug")} />
+        </label>
 
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <div className="font-medium mb-2">Top Dishes</div>
-                  <ul className="space-y-1">
-                    {analytics.data!.top.dishes.map((d:any, i:number)=>(
-                      <li key={d.id} className="flex items-center gap-2">
-                        <Badge>{i+1}</Badge>
-                        <span className="font-medium">{d.name}</span>
-                        {!!d.panel_rank && <Badge tone="success">rank: {d.panel_rank}</Badge>}
-                        {!!d.is_signature && <Badge tone="success">signature</Badge>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <div className="font-medium mb-2">Top Restaurants</div>
-                  <ul className="space-y-1">
-                    {analytics.data!.top.restaurants.map((r:any, i:number)=>(
-                      <li key={r.id} className="flex items-center gap-2">
-                        <Badge>{i+1}</Badge>
-                        <span className="font-medium">{r.name}</span>
-                        {!!r.featured_rank && <Badge tone="success">rank: {r.featured_rank}</Badge>}
-                        {!!r.featured && <Badge tone="success">featured</Badge>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </div>
-          )}
-        </Section>
-      )}
+        <label className="text-sm col-span-3">Description
+          <textarea className="border rounded px-2 py-1 w-full" rows={3} {...f.register("description" as any)} />
+        </label>
 
-      {tab==='dishes' && (
-        <Section title="Dishes — Find or Create">
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <select className="border rounded px-2 py-1"
-              value={dishMuni ?? ''}
-              onChange={e=> setDishMuni(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">All municipalities</option>
-              {(muni.data||[]).map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
-            </select>
-            <input className="border rounded px-2 py-1 w-64" placeholder="Search dish…"
-              value={dishQ} onChange={e=>setDishQ(e.target.value)} />
-            <span className="text-xs text-neutral-500">Showing: {dishes.data?.length ?? 0}</span>
-          </div>
+        <label className="text-sm">Flavor profile (comma)
+          <input className="border rounded px-2 py-1 w-full" {...f.register("flavor_profile")} />
+        </label>
+        <label className="text-sm">Ingredients (comma)
+          <input className="border rounded px-2 py-1 w-full" {...f.register("ingredients")} />
+        </label>
+        <label className="text-sm">Rating
+          <input className="border rounded px-2 py-1 w-full" type="number" step="0.1" {...f.register("rating" as any)} />
+        </label>
+        <label className="text-sm">Popularity
+          <input className="border rounded px-2 py-1 w-full" type="number" step="1" {...f.register("popularity" as any)} />
+        </label>
 
-          <div className="grid md:grid-cols-3 gap-4">
-            {/* list */}
-            <div className="md:col-span-2 border rounded-lg max-h-[520px] overflow-auto">
-              {dishes.isLoading ? <div className="p-4">Loading…</div> :
-               dishes.isError ? <div className="p-4 text-red-600">Failed to load.</div> :
-               (dishes.data||[]).map(d => (
-                <div key={d.id} className="flex items-center justify-between border-b px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{d.name}</div>
-                    <div className="text-xs text-neutral-500 truncate">{d.slug}</div>
-                    <div className="text-xs flex gap-2 mt-1">
-                      {!!d.is_signature && <Badge tone="success">signature</Badge>}
-                      {d.panel_rank!=null && <Badge tone="success">rank {d.panel_rank}</Badge>}
-                      <Badge>{d.category}</Badge>
-                    </div>
+        <label className="text-sm">Signature?
+          <select className="border rounded px-2 py-1 w-full" {...f.register("is_signature" as any)}>
+            <option value="">—</option>
+            <option value="1">Yes</option>
+            <option value="0">No</option>
+          </select>
+        </label>
+        <label className="text-sm">Panel Rank (1–3)
+          <select className="border rounded px-2 py-1 w-full" {...f.register("panel_rank" as any)}>
+            <option value="">—</option>
+            {[1,2,3].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      </div>
+    </form>
+  );
+}
+
+// ========== Restaurants CRUD ==========
+function RestaurantsPanel() {
+  const qc = useQueryClient();
+  const [q, setQ] = useState("");
+  const [muniId, setMuniId] = useLocalStorage<number | null>("adm:rest:muni", null);
+
+  const listQ = useQuery({
+    queryKey: ["restaurants", muniId, q],
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined, q: q || undefined }),
+  });
+
+  const [editing, setEditing] = useState<Restaurant | null>(null);
+
+  const saveCreate = useMutation({
+    mutationFn: (payload: Partial<Restaurant>) => createRestaurant(payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["restaurants"] }); alert("Restaurant created."); }
+  });
+  const saveUpdate = useMutation({
+    mutationFn: (payload: Restaurant) => updateRestaurant(payload.id!, payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["restaurants"] }); alert("Restaurant updated."); }
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => deleteRestaurant(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["restaurants"] }); alert("Restaurant deleted."); }
+  });
+
+  const onNew = () => setEditing({
+    id: 0,
+    municipality_id: muniId ?? 0,
+    name: "",
+    slug: "",
+    kind: "restaurant",
+    description: null,
+    address: "",
+    phone: null,
+    website: null,
+    facebook: null,
+    instagram: null,
+    opening_hours: null,
+    price_range: "moderate",
+    cuisine_types: null,
+    rating: null,
+    lat: 0,
+    lng: 0,
+    image_url: null,
+    featured: 0,
+    featured_rank: null
+  });
+
+  const items = listQ.data ?? [];
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      {/* Left: List */}
+      <div className="lg:col-span-2 bg-white border rounded-lg p-3 flex flex-col">
+        <div className="flex items-center gap-2">
+          <input className="border rounded px-3 py-2 flex-1" placeholder="Search restaurants…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <MunicipalitySelect value={muniId} onChange={setMuniId} />
+          <button className="ml-auto px-3 py-1.5 rounded bg-black text-white" onClick={onNew}>+ New Restaurant</button>
+        </div>
+
+        <div className="mt-3 flex-1 overflow-auto divide-y">
+          {items.map((r) => {
+            const ct = coerceStringArray(r.cuisine_types);
+            return (
+              <button
+                key={r.id}
+                onClick={() => setEditing(r)}
+                className="w-full text-left px-2 py-2 hover:bg-neutral-50"
+              >
+                <div className="font-medium">{r.name} <span className="text-xs text-neutral-500">({r.slug})</span></div>
+                <div className="text-xs text-neutral-500">
+                  {r.kind ?? "—"} • {ct?.join(" · ") || "—"} • {r.address}
+                </div>
+                {(r.featured ? true : false) && (
+                  <div className="text-xs mt-1">
+                    <span className="px-2 py-0.5 rounded bg-sky-50 border mr-1">Featured</span>
+                    <span className="px-2 py-0.5 rounded bg-sky-50 border">Top {r.featured_rank ?? "—"}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button className="text-blue-600 hover:underline" onClick={()=>setEditingDish(d)}>Edit</button>
-                    <button className="text-red-600 hover:underline" onClick={()=>{ if(confirm(`Delete "${d.name}"?`)) delDish.mutate(d.id); }}>Delete</button>
-                  </div>
-                </div>
-               ))}
-            </div>
-
-            {/* form */}
-            <div className="border rounded-lg p-3 space-y-2">
-              <div className="font-medium">{editingDish.id ? `Editing: #${editingDish.id}` : 'Create dish'}</div>
-              <label className="block text-sm">Municipality</label>
-              <select className="border rounded px-2 py-1 w-full"
-                value={editingDish.municipality_id ?? ''} onChange={e=>setEditingDish(v=>({...v, municipality_id: e.target.value?Number(e.target.value):undefined}))}>
-                <option value="">Select…</option>
-                {(muni.data||[]).map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
-              </select>
-              <label className="block text-sm">Category</label>
-              <select className="border rounded px-2 py-1 w-full"
-                value={editingDish.category ?? 'food'} onChange={e=>setEditingDish(v=>({...v, category: e.target.value as any}))}>
-                <option value="food">food</option>
-                <option value="delicacy">delicacy</option>
-                <option value="drink">drink</option>
-              </select>
-              <input className="border rounded px-2 py-1 w-full" placeholder="Name"
-                value={editingDish.name ?? ''} onChange={e=>setEditingDish(v=>({...v, name:e.target.value}))}/>
-              <input className="border rounded px-2 py-1 w-full" placeholder="Slug (auto if empty)"
-                value={editingDish.slug ?? ''} onChange={e=>setEditingDish(v=>({...v, slug:e.target.value}))}/>
-              <textarea className="border rounded px-2 py-1 w-full" placeholder="Description"
-                value={editingDish.description ?? ''} onChange={e=>setEditingDish(v=>({...v, description:e.target.value}))}/>
-              <input className="border rounded px-2 py-1 w-full" placeholder="Image URL"
-                value={editingDish.image_url ?? ''} onChange={e=>setEditingDish(v=>({...v, image_url:e.target.value}))}/>
-              <div className="grid grid-cols-2 gap-2">
-                <input className="border rounded px-2 py-1" placeholder="Popularity (0-100)"
-                  value={editingDish.popularity ?? ''} onChange={e=>setEditingDish(v=>({...v, popularity:e.target.value?Number(e.target.value):null}))}/>
-                <input className="border rounded px-2 py-1" placeholder="Rating (0-5)"
-                  value={editingDish.rating ?? ''} onChange={e=>setEditingDish(v=>({...v, rating:e.target.value?Number(e.target.value):null}))}/>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={()=>saveDish.mutate(editingDish)}
-                  className="px-3 py-1.5 rounded bg-neutral-900 text-white">
-                  {editingDish.id ? 'Save changes' : 'Create'}
-                </button>
-                {editingDish.id && (
-                  <button onClick={()=>setEditingDish({ category:'food' })}
-                    className="px-3 py-1.5 rounded border">
-                    Cancel
-                  </button>
                 )}
-              </div>
-            </div>
-          </div>
-        </Section>
-      )}
+              </button>
+            );
+          })}
+          {items.length === 0 && <div className="p-3 text-sm text-neutral-500">No restaurants.</div>}
+        </div>
+      </div>
 
-      {tab==='restaurants' && (
-        <Section title="Restaurants — Find or Create">
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <select className="border rounded px-2 py-1"
-              value={restMuni ?? ''}
-              onChange={e=> setRestMuni(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">All municipalities</option>
-              {(muni.data||[]).map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
-            </select>
-            <input className="border rounded px-2 py-1 w-64" placeholder="Search restaurant…"
-              value={restQ} onChange={e=>setRestQ(e.target.value)} />
-            <span className="text-xs text-neutral-500">Showing: {restaurants.data?.length ?? 0}</span>
-          </div>
+      {/* Right: Form */}
+      <div className="lg:col-span-3 bg-white border rounded-lg p-4">
+        {!editing ? (
+          <div className="text-neutral-500">Select a restaurant to edit, or click “New Restaurant”.</div>
+        ) : (
+          <RestaurantForm
+            initial={editing}
+            onCancel={() => setEditing(null)}
+            onDelete={() => { if (editing.id && window.confirm("Delete this restaurant?")) { remove.mutate(editing.id); setEditing(null); }}}
+            onSave={(payload) => {
+              if (payload.id && payload.id !== 0) saveUpdate.mutate(payload as Restaurant);
+              else saveCreate.mutate(payload as Partial<Restaurant>);
+              setEditing(null);
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
-          <div className="grid md:grid-cols-3 gap-4">
-            <div className="md:col-span-2 border rounded-lg max-h-[520px] overflow-auto">
-              {restaurants.isLoading ? <div className="p-4">Loading…</div> :
-               restaurants.isError ? <div className="p-4 text-red-600">Failed to load.</div> :
-               (restaurants.data||[]).map(r => (
-                <div key={r.id} className="flex items-center justify-between border-b px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{r.name}</div>
-                    <div className="text-xs text-neutral-500 truncate">{r.slug}</div>
-                    <div className="text-xs flex gap-2 mt-1">
-                      {!!r.featured && <Badge tone="success">featured</Badge>}
-                      {r.featured_rank!=null && <Badge tone="success">rank {r.featured_rank}</Badge>}
-                      <Badge>{r.kind||'restaurant'}</Badge>
+function RestaurantForm({ initial, onCancel, onDelete, onSave }: {
+  initial: Restaurant;
+  onCancel: () => void;
+  onDelete: () => void;
+  onSave: (payload: Partial<Restaurant> | Restaurant) => void;
+}) {
+  const f = useForm<z.infer<typeof restaurantSchema>>({
+    resolver: zodResolver(restaurantSchema),
+    defaultValues: {
+      ...initial,
+      cuisine_types: Array.isArray(initial.cuisine_types) ? initial.cuisine_types.join(", ") : (initial.cuisine_types as any) ?? "",
+    }
+  });
+  const watchName = f.watch("name");
+  useEffect(() => {
+    const slug = f.getValues("slug");
+    if (!slug) f.setValue("slug", watchName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""), { shouldDirty: true });
+  }, [watchName]);
+
+  const submit = f.handleSubmit((v) => {
+    const payload: Partial<Restaurant> = {
+      ...v,
+      cuisine_types: v.cuisine_types ? v.cuisine_types.split(",").map(s => s.trim()).filter(Boolean) : null,
+    };
+    onSave(initial.id ? { ...payload, id: initial.id } : payload);
+  });
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">{initial.id ? "Edit Restaurant" : "Create Restaurant"}</h3>
+        <div className="flex gap-2">
+          {initial.id ? <button type="button" className="px-3 py-1.5 rounded border" onClick={onDelete}>Delete</button> : null}
+          <button type="button" className="px-3 py-1.5 rounded border" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="px-3 py-1.5 rounded bg-black text-white">Save</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <label className="text-sm">Municipality
+          <MunicipalitySelect value={f.watch("municipality_id") || null} onChange={(v) => f.setValue("municipality_id", v ?? 0, { shouldDirty: true })} />
+        </label>
+        <label className="text-sm">Kind
+          <select className="border rounded px-2 py-1 w-full" {...f.register("kind" as any)}>
+            <option value="">—</option>
+            <option value="restaurant">Restaurant</option>
+            <option value="stall">Stall</option>
+            <option value="store">Store</option>
+            <option value="dealer">Dealer</option>
+            <option value="market">Market</option>
+            <option value="home-based">Home-based</option>
+          </select>
+        </label>
+        <label className="text-sm">Price Range
+          <select className="border rounded px-2 py-1 w-full" {...f.register("price_range" as any)}>
+            <option value="">—</option>
+            <option value="budget">Budget</option>
+            <option value="moderate">Moderate</option>
+            <option value="expensive">Expensive</option>
+          </select>
+        </label>
+
+        <label className="text-sm col-span-2">Name
+          <input className="border rounded px-2 py-1 w-full" {...f.register("name")} />
+        </label>
+        <label className="text-sm">Slug
+          <input className="border rounded px-2 py-1 w-full" {...f.register("slug")} />
+        </label>
+
+        <label className="text-sm col-span-3">Address
+          <input className="border rounded px-2 py-1 w-full" {...f.register("address")} />
+        </label>
+
+        <label className="text-sm col-span-3">Description
+          <textarea className="border rounded px-2 py-1 w-full" rows={3} {...f.register("description" as any)} />
+        </label>
+
+        <label className="text-sm">Phone
+          <input className="border rounded px-2 py-1 w-full" {...f.register("phone" as any)} />
+        </label>
+        <label className="text-sm">Website
+          <input className="border rounded px-2 py-1 w-full" {...f.register("website" as any)} />
+        </label>
+        <label className="text-sm">Facebook
+          <input className="border rounded px-2 py-1 w-full" {...f.register("facebook" as any)} />
+        </label>
+        <label className="text-sm">Instagram
+          <input className="border rounded px-2 py-1 w-full" {...f.register("instagram" as any)} />
+        </label>
+        <label className="text-sm">Opening Hours
+          <input className="border rounded px-2 py-1 w-full" {...f.register("opening_hours" as any)} />
+        </label>
+        <label className="text-sm">Cuisine Types (comma)
+          <input className="border rounded px-2 py-1 w-full" {...f.register("cuisine_types" as any)} />
+        </label>
+
+        <label className="text-sm">Rating
+          <input className="border rounded px-2 py-1 w-full" type="number" step="0.1" {...f.register("rating" as any)} />
+        </label>
+        <label className="text-sm">Latitude
+          <input className="border rounded px-2 py-1 w-full" type="number" step="0.000001" {...f.register("lat" as any)} />
+        </label>
+        <label className="text-sm">Longitude
+          <input className="border rounded px-2 py-1 w-full" type="number" step="0.000001" {...f.register("lng" as any)} />
+        </label>
+
+        <label className="text-sm">Image URL
+          <input className="border rounded px-2 py-1 w-full" {...f.register("image_url" as any)} />
+        </label>
+        <label className="text-sm">Featured?
+          <select className="border rounded px-2 py-1 w-full" {...f.register("featured" as any)}>
+            <option value="">—</option>
+            <option value="1">Yes</option>
+            <option value="0">No</option>
+          </select>
+        </label>
+        <label className="text-sm">Featured Rank (1–3)
+          <select className="border rounded px-2 py-1 w-full" {...f.register("featured_rank" as any)}>
+            <option value="">—</option>
+            {[1,2,3].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      </div>
+    </form>
+  );
+}
+
+// ========== Curation ==========
+function CurationPanel() {
+  const qc = useQueryClient();
+  const [muniId, setMuniId] = useLocalStorage<number | null>("adm:cur:muni", null);
+  const [cat, setCat] = useLocalStorage<"food"|"delicacy"|"drink">("adm:cur:cat", "food");
+  const dishQ = useQuery({
+    queryKey: ["cur:dishes", muniId, cat],
+    queryFn: () => listDishes({ municipalityId: muniId ?? undefined, category: cat }),
+    enabled: muniId != null
+  });
+  const restQ = useQuery({
+    queryKey: ["cur:restaurants", muniId],
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined }),
+    enabled: muniId != null
+  });
+
+  const assignDish = async (dish: Dish, rank: number | null) => {
+    if (muniId == null) return;
+    // ensure uniqueness: unset same rank from others
+    const all = (dishQ.data ?? []).filter(d => d.id !== dish.id);
+    const conflicted = all.find(d => d.panel_rank === rank && (d.is_signature ?? 0) === 1);
+    if (rank && conflicted) {
+      await setDishCuration(conflicted.id, { is_signature: 0, panel_rank: null });
+    }
+    await setDishCuration(dish.id, { is_signature: rank ? 1 : 0, panel_rank: rank });
+    await qc.invalidateQueries({ queryKey: ["cur:dishes"] });
+    alert("Dish curation updated.");
+  };
+
+  const assignRest = async (r: Restaurant, rank: number | null) => {
+    if (muniId == null) return;
+    const all = (restQ.data ?? []).filter(x => x.id !== r.id);
+    const conflicted = all.find(x => x.featured_rank === rank && (x.featured ?? 0) === 1);
+    if (rank && conflicted) {
+      await setRestaurantCuration(conflicted.id, { featured: 0, featured_rank: null });
+    }
+    await setRestaurantCuration(r.id, { featured: rank ? 1 : 0, featured_rank: rank });
+    await qc.invalidateQueries({ queryKey: ["cur:restaurants"] });
+    alert("Restaurant curation updated.");
+  };
+
+  const sortedD = useMemo(() =>
+    (dishQ.data ?? []).slice().sort((a,b)=>(a.panel_rank ?? 99)-(b.panel_rank ?? 99))
+  ,[dishQ.data]);
+
+  const sortedR = useMemo(() =>
+    (restQ.data ?? []).slice().sort((a,b)=>(a.featured_rank ?? 99)-(b.featured_rank ?? 99))
+  ,[restQ.data]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-3 items-center">
+        <MunicipalitySelect value={muniId} onChange={setMuniId} />
+        <select className="border rounded px-2 py-1" value={cat} onChange={(e)=>setCat(e.target.value as any)}>
+          <option value="food">Food</option>
+          <option value="delicacy">Delicacy</option>
+          <option value="drink">Drink</option>
+        </select>
+      </div>
+
+      {muniId == null ? <div className="text-neutral-500">Select a municipality.</div> : (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white border rounded-lg p-3">
+            <div className="font-semibold mb-2">Dishes / Delicacy</div>
+            <ul className="space-y-2 max-h-96 overflow-auto">
+              {sortedD.map((d)=>(
+                <li key={d.id} className={`p-2 border rounded ${d.is_signature? "bg-amber-50" : ""}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{d.name}</div>
+                      <div className="text-xs text-neutral-500">Rank: {d.panel_rank ?? "—"}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      {[1,2,3].map(n => (
+                        <button key={n}
+                          className={`px-2 py-1 rounded border ${d.panel_rank===n ? "bg-amber-200" : ""}`}
+                          onClick={()=>assignDish(d, n)}
+                        >Top {n}</button>
+                      ))}
+                      <button className="px-2 py-1 rounded border" onClick={()=>assignDish(d, null)}>Clear</button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button className="text-blue-600 hover:underline" onClick={()=>setEditingRest(r)}>Edit</button>
-                    <button className="text-red-600 hover:underline" onClick={()=>{ if(confirm(`Delete "${r.name}"?`)) delRest.mutate(r.id); }}>Delete</button>
-                  </div>
-                </div>
-               ))}
-            </div>
-
-            <div className="border rounded-lg p-3 space-y-2">
-              <div className="font-medium">{editingRest.id ? `Editing: #${editingRest.id}` : 'Create restaurant'}</div>
-              <label className="block text-sm">Municipality</label>
-              <select className="border rounded px-2 py-1 w-full"
-                value={editingRest.municipality_id ?? ''} onChange={e=>setEditingRest(v=>({...v, municipality_id: e.target.value?Number(e.target.value):undefined}))}>
-                <option value="">Select…</option>
-                {(muni.data||[]).map(m => <option key={m.id} value={m.id}>{m.name} ({m.slug})</option>)}
-              </select>
-              <input className="border rounded px-2 py-1 w-full" placeholder="Name"
-                value={editingRest.name ?? ''} onChange={e=>setEditingRest(v=>({...v, name:e.target.value}))}/>
-              <input className="border rounded px-2 py-1 w-full" placeholder="Slug (auto if empty)"
-                value={editingRest.slug ?? ''} onChange={e=>setEditingRest(v=>({...v, slug:e.target.value}))}/>
-              <input className="border rounded px-2 py-1 w-full" placeholder="Kind (restaurant, stall, market…)"
-                value={editingRest.kind ?? ''} onChange={e=>setEditingRest(v=>({...v, kind:e.target.value}))}/>
-              <textarea className="border rounded px-2 py-1 w-full" placeholder="Description"
-                value={editingRest.description ?? ''} onChange={e=>setEditingRest(v=>({...v, description:e.target.value}))}/>
-              <input className="border rounded px-2 py-1 w-full" placeholder="Address"
-                value={editingRest.address ?? ''} onChange={e=>setEditingRest(v=>({...v, address:e.target.value}))}/>
-              <div className="grid grid-cols-2 gap-2">
-                <input className="border rounded px-2 py-1" placeholder="Latitude"
-                  value={editingRest.lat ?? ''} onChange={e=>setEditingRest(v=>({...v, lat:e.target.value?Number(e.target.value):undefined}))}/>
-                <input className="border rounded px-2 py-1" placeholder="Longitude"
-                  value={editingRest.lng ?? ''} onChange={e=>setEditingRest(v=>({...v, lng:e.target.value?Number(e.target.value):undefined}))}/>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={()=>saveRest.mutate(editingRest)}
-                  className="px-3 py-1.5 rounded bg-neutral-900 text-white">
-                  {editingRest.id ? 'Save changes' : 'Create'}
-                </button>
-                {editingRest.id && (
-                  <button onClick={()=>setEditingRest({ kind:'restaurant' })}
-                    className="px-3 py-1.5 rounded border">
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </div>
+                </li>
+              ))}
+              {sortedD.length===0 && <div className="text-sm text-neutral-500 p-2">No dishes.</div>}
+            </ul>
           </div>
-        </Section>
-      )}
 
-      {tab==='curation' && (
-        <Section title="Curation — Top 3 & Flags">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="font-medium">Dishes / Delicacies</div>
-                <span className="text-xs text-neutral-500">Filter: {muniName(dishMuni)}</span>
-                <select className="border rounded px-2 py-1 ml-auto"
-                  value={dishMuni ?? ''} onChange={e=>setDishMuni(e.target.value?Number(e.target.value):null)}>
-                  <option value="">All</option>
-                  {(muni.data||[]).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              </div>
-              <div className="border rounded-lg max-h-[520px] overflow-auto">
-                {(dishes.data||[]).map(d=>(
-                  <div key={d.id} className="flex items-center justify-between border-b px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{d.name}</div>
-                      <div className="text-[11px] text-neutral-500">{d.category}</div>
+          <div className="bg-white border rounded-lg p-3">
+            <div className="font-semibold mb-2">Restaurants</div>
+            <ul className="space-y-2 max-h-96 overflow-auto">
+              {sortedR.map((r)=>(
+                <li key={r.id} className={`p-2 border rounded ${r.featured? "bg-sky-50" : ""}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{r.name}</div>
+                      <div className="text-xs text-neutral-500">Rank: {r.featured_rank ?? "—"}</div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <select className="border rounded px-2 py-1 text-sm"
-                        value={d.panel_rank ?? ''} onChange={e=>setDishCur.mutate({id:d.id, panel_rank: e.target.value?Number(e.target.value):null})}>
-                        <option value="">rank: –</option>
-                        {[1,2,3].map(n=><option key={n} value={n}>{n}</option>)}
-                      </select>
-                      <label className="text-sm flex items-center gap-1">
-                        <input type="checkbox" checked={!!d.is_signature} onChange={e=>setDishCur.mutate({id:d.id, is_signature: e.target.checked?1:0})}/>
-                        signature
-                      </label>
+                    <div className="flex gap-2">
+                      {[1,2,3].map(n => (
+                        <button key={n}
+                          className={`px-2 py-1 rounded border ${r.featured_rank===n ? "bg-sky-200" : ""}`}
+                          onClick={()=>assignRest(r, n)}
+                        >Top {n}</button>
+                      ))}
+                      <button className="px-2 py-1 rounded border" onClick={()=>assignRest(r, null)}>Clear</button>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="font-medium">Restaurants</div>
-                <span className="text-xs text-neutral-500">Filter: {muniName(restMuni)}</span>
-                <select className="border rounded px-2 py-1 ml-auto"
-                  value={restMuni ?? ''} onChange={e=>setRestMuni(e.target.value?Number(e.target.value):null)}>
-                  <option value="">All</option>
-                  {(muni.data||[]).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              </div>
-              <div className="border rounded-lg max-h-[520px] overflow-auto">
-                {(restaurants.data||[]).map(r=>(
-                  <div key={r.id} className="flex items-center justify-between border-b px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{r.name}</div>
-                      <div className="text-[11px] text-neutral-500">{r.kind || 'restaurant'}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <select className="border rounded px-2 py-1 text-sm"
-                        value={r.featured_rank ?? ''} onChange={e=>setRestCur.mutate({id:r.id, featured_rank: e.target.value?Number(e.target.value):null})}>
-                        <option value="">rank: –</option>
-                        {[1,2,3].map(n=><option key={n} value={n}>{n}</option>)}
-                      </select>
-                      <label className="text-sm flex items-center gap-1">
-                        <input type="checkbox" checked={!!r.featured} onChange={e=>setRestCur.mutate({id:r.id, featured: e.target.checked?1:0})}/>
-                        featured
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+                </li>
+              ))}
+              {sortedR.length===0 && <div className="text-sm text-neutral-500 p-2">No restaurants.</div>}
+            </ul>
           </div>
-        </Section>
+        </div>
       )}
+    </div>
+  );
+}
 
-      {tab==='linking' && (
-        <Section title="Linking — Dish ⇄ Restaurants">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <div className="font-medium">Pick a dish</div>
-              <div className="border rounded max-h-80 overflow-auto">
-                {(dishes.data||[]).map(d=>(
-                  <button key={d.id} onClick={()=>setLinkDishId(d.id)}
-                    className={`block w-full text-left px-3 py-2 border-b hover:bg-neutral-50 ${linkDishId===d.id?'bg-neutral-100':''}`}>
-                    <div className="font-medium">{d.name}</div>
-                    <div className="text-[11px] text-neutral-500">{d.category}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <div className="font-medium">Restaurants {linkDishId ? <span className="text-xs text-neutral-500">linked to dish #{linkDishId}</span>:null}</div>
-              {!linkDishId ? <div className="text-sm text-neutral-500">Select a dish first.</div> : (
-                <div className="border rounded max-h-96 overflow-auto">
-                  {(restaurants.data||[]).map(r=>{
-                    const linked = (linkedForDish.data||[]).some(x=>x.id===r.id);
-                    return (
-                      <label key={r.id} className="flex items-center justify-between px-3 py-2 border-b hover:bg-neutral-50">
-                        <div className="min-w-0">
-                          <div className="font-medium truncate">{r.name}</div>
-                          <div className="text-[11px] text-neutral-500">{r.kind || 'restaurant'}</div>
-                        </div>
-                        <input type="checkbox" checked={linked} onChange={()=>toggleLink.mutate({restaurant_id:r.id, linked})}/>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+// ========== Linking ==========
+function LinkingPanel() {
+  const qc = useQueryClient();
+  const [muniId, setMuniId] = useLocalStorage<number | null>("adm:link:muni", null);
+  const [cat, setCat] = useLocalStorage<""|"food"|"delicacy"|"drink">("adm:link:cat", "");
+  const [qDish, setQDish] = useState("");
+  const [qRest, setQRest] = useState("");
+  const dishQ = useQuery({
+    queryKey: ["link:dishes", muniId, cat, qDish],
+    queryFn: () => listDishes({ municipalityId: muniId ?? undefined, category: cat || undefined, q: qDish || undefined }),
+  });
+  const restQ = useQuery({
+    queryKey: ["link:restaurants", muniId, qRest],
+    queryFn: () => listRestaurants({ municipalityId: muniId ?? undefined, q: qRest || undefined }),
+  });
+
+  const [selectedDish, setSelectedDish] = useState<Dish | null>(null);
+  const linkedRestQ = useQuery({
+    queryKey: ["link:linked-rest", selectedDish?.id],
+    queryFn: () => listRestaurantsForDish(selectedDish!.id),
+    enabled: !!selectedDish
+  });
+
+  const toggleLink = async (r: Restaurant) => {
+    if (!selectedDish) return;
+    const linked = linkedRestQ.data ?? [];
+    const isLinked = linked.some(x => x.id === r.id);
+    if (isLinked) {
+      if (window.confirm(`Unlink ${r.name} from ${selectedDish.name}?`)) {
+        await unlinkDishRestaurant(selectedDish.id, r.id);
+        await qc.invalidateQueries({ queryKey: ["link:linked-rest", selectedDish.id] });
+        alert("Unlinked.");
+      }
+    } else {
+      await linkDishRestaurant(selectedDish.id, r.id);
+      await qc.invalidateQueries({ queryKey: ["link:linked-rest", selectedDish.id] });
+      alert("Linked.");
+    }
+  };
+
+  const linkedSet = new Set((linkedRestQ.data ?? []).map(r => r.id));
+  const restaurants = (restQ.data ?? []).slice().sort((a,b) => {
+    const A = linkedSet.has(a.id) ? 0 : 1;
+    const B = linkedSet.has(b.id) ? 0 : 1;
+    return A - B || a.name.localeCompare(b.name);
+  });
+
+  return (
+    <div className="grid md:grid-cols-2 gap-4">
+      {/* Dishes list */}
+      <div className="bg-white border rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <MunicipalitySelect value={muniId} onChange={setMuniId} />
+          <select className="border rounded px-2 py-1" value={cat} onChange={(e)=>setCat(e.target.value as any)}>
+            <option value="">All categories</option>
+            <option value="food">Food</option>
+            <option value="delicacy">Delicacy</option>
+            <option value="drink">Drink</option>
+          </select>
+          <input className="border rounded px-2 py-1 flex-1" placeholder="Search dishes…" value={qDish} onChange={(e)=>setQDish(e.target.value)} />
+        </div>
+        <ul className="max-h-96 overflow-auto divide-y">
+          {(dishQ.data ?? []).map((d)=>(
+            <li key={d.id}>
+              <button
+                className={`w-full text-left px-2 py-2 hover:bg-neutral-50 ${selectedDish?.id===d.id ? "bg-amber-50" : ""}`}
+                onClick={() => setSelectedDish(d)}
+              >
+                <div className="font-medium">{d.name}</div>
+                <div className="text-xs text-neutral-500">{d.category} • {d.slug}</div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Restaurants list with link toggles */}
+      <div className="bg-white border rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <input className="border rounded px-2 py-1 flex-1" placeholder="Search restaurants…" value={qRest} onChange={(e)=>setQRest(e.target.value)} />
+          <div className="text-sm text-neutral-500">
+            {selectedDish ? <span>Linking to: <b>{selectedDish.name}</b></span> : "Select a dish to start linking"}
           </div>
-        </Section>
-      )}
+        </div>
+        <ul className="max-h-96 overflow-auto divide-y">
+          {restaurants.map((r)=>(
+            <li key={r.id} className="flex items-center justify-between px-2 py-2">
+              <div>
+                <div className="font-medium">{r.name}</div>
+                <div className="text-xs text-neutral-500">{r.slug} • {r.address}</div>
+                {linkedSet.has(r.id) && <span className="inline-block text-xs mt-1 px-2 py-0.5 rounded bg-green-50 border text-green-700">Linked</span>}
+              </div>
+              <button
+                className={`px-3 py-1.5 rounded border ${linkedSet.has(r.id) ? "bg-green-600 text-white" : ""}`}
+                disabled={!selectedDish}
+                onClick={()=>toggleLink(r)}
+              >{linkedSet.has(r.id) ? "Unlink" : "Link"}</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// ========== Main Admin Page (Tabs) ==========
+export default function AdminDashboard() {
+  const [tab, setTab] = useLocalStorage<"analytics"|"dishes"|"restaurants"|"curation"|"linking">("adm:tab","analytics");
+
+  return (
+    <div className="space-y-4">
+      <div className="sticky top-0 bg-neutral-50/70 backdrop-blur z-10 py-2">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-bold mr-4">Admin Dashboard</h1>
+          {(["analytics","dishes","restaurants","curation","linking"] as const).map(t => (
+            <button
+              key={t}
+              className={`px-3 py-1.5 rounded border ${tab===t ? "bg-black text-white" : ""}`}
+              onClick={()=>setTab(t)}
+            >
+              {t[0].toUpperCase()+t.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab==="analytics" && <AnalyticsPanel />}
+      {tab==="dishes" && <DishesPanel />}
+      {tab==="restaurants" && <RestaurantsPanel />}
+      {tab==="curation" && <CurationPanel />}
+      {tab==="linking" && <LinkingPanel />}
     </div>
   );
 }
