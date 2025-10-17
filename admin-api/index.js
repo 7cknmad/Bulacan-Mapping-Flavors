@@ -1,149 +1,155 @@
-// admin-api/index.js
+// admin-api/index.js — full drop‑in (with auth + CORS)
+// Works behind Cloudflare Tunnel and GH Pages frontend.
+// Paste your existing /api/* and /admin/* route handlers where indicated.
+
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
-import express from "express";
-import jwt from "jsonwebtoken";
-import cookieParser from "cookie-parser";
-dotenv.config();
+import cookieParser from 'cookie-parser';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import morgan from 'morgan';
 
+/* --------------------------------------------------------------------------
+   App setup
+----------------------------------------------------------------------------*/
 const app = express();
-
-/* ---------------- CORS ---------------- */
-app.use(express.json());
+app.set('trust proxy', 1); // so Secure cookies work behind proxies (Cloudflare)
+app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
-app.use(cors({
-  origin: "https://7cknmad.github.io", // your GH Pages origin
-  credentials: true,
-}));
+app.use(morgan('tiny'));
 
-const baseAllowed = new Set([
+/* --------------------------------------------------------------------------
+   CORS — allow GH Pages + local dev + optional extra origins via env
+   - Your frontend uses credentials: 'include', so we must return
+     Access-Control-Allow-Credentials: true and a specific origin.
+----------------------------------------------------------------------------*/
+const DEFAULT_FRONTEND = process.env.GH_PAGES_ORIGIN || 'https://7cknmad.github.io';
+const allowOrigins = new Set([
+  DEFAULT_FRONTEND,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
-  'http://localhost:4173',
-  'https://7cknmad.github.io'
+  'http://localhost:4173', // vite preview
 ]);
 if (process.env.ALLOWED_ORIGINS) {
-  for (const o of process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)) {
-    baseAllowed.add(o);
-  }
-}
-function isAllowedOrigin(origin) {
-  if (!origin) return true; // curl/postman
-  if (baseAllowed.has(origin)) return true;
-  try {
-    const u = new URL(origin);
-    if (u.hostname.endsWith('.trycloudflare.com')) return true;
-  } catch {}
-  return false;
+  process.env.ALLOWED_ORIGINS
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .forEach((o) => allowOrigins.add(o));
 }
 
-const corsOptions = {
-  origin: (origin, cb) => isAllowedOrigin(origin) ? cb(null, true) : cb(new Error(`Not allowed by CORS: ${origin}`)),
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false,
+const corsOrigin = (origin, cb) => {
+  if (!origin) return cb(null, true); // curl/health checks
+  try {
+    const url = new URL(origin);
+    const ok = allowOrigins.has(origin) || url.hostname.endsWith('.trycloudflare.com');
+    return cb(ok ? null : new Error(`Not allowed by CORS: ${origin}`), ok);
+  } catch {
+    return cb(new Error('Invalid Origin'), false);
+  }
 };
 
-app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions));
-app.use(express.json());
-app.use(cors({
-  origin: (origin, cb) => {
-    const allow = [
-      "https://7cknmad.github.io", // GH Pages origin
-      "http://localhost:5173",             // optional: local dev
-    ];
-    if (!origin) return cb(null, true);
-    cb(allow.includes(origin) ? null : new Error("CORS"), allow.includes(origin));
-  },
+const corsConfig = {
+  origin: corsOrigin,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-}));
-/* ------------- JWT Auth -------------- */
+};
+app.use(cors(corsConfig));
+app.options('*', cors(corsConfig));
 
+/* --------------------------------------------------------------------------
+   Health (quick sanity endpoint)
+----------------------------------------------------------------------------*/
+app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+/* --------------------------------------------------------------------------
+   Auth (JWT in HttpOnly cookie) — /auth/login, /auth/me, /auth/logout
+----------------------------------------------------------------------------*/
 const {
-  ADMIN_JWT_SECRET = "dev-secret-change-me",
-  ADMIN_EMAIL = "bmff_admin@bulsu.edu.ph",
-  ADMIN_PASSWORD_HASH = "$2b$10$Df5VhdSTV9QCV9WCAdOOl.vHkwBBwiIbzrwnLBjLNQiIRUO.sG90m",
+  ADMIN_JWT_SECRET = 'dev-secret-change-me',
+  ADMIN_EMAIL = 'admin@example.com',
+  ADMIN_PASSWORD_HASH = '', // set a bcrypt hash in env for production
+  ADMIN_PASSWORD, // fallback for first-time bootstrap (optional)
 } = process.env;
 
 function sign(user) {
-  return jwt.sign({ uid: user.id, email: user.email, role: "admin" }, ADMIN_JWT_SECRET, { expiresIn: "7d" });
+  return jwt.sign({ uid: user.id, email: user.email, role: 'admin' }, ADMIN_JWT_SECRET, { expiresIn: '7d' });
 }
 function setAuthCookie(res, token) {
-  res.cookie("bmf_admin", token, {
+  res.cookie('bmf_admin', token, {
     httpOnly: true,
-    secure: true,     // HTTPS required for SameSite=None
-    sameSite: "none", // GH Pages (frontend) → Tunnel (API)
-    path: "/",
+    secure: true, // required for SameSite=None
+    sameSite: 'none', // cross-site (GH Pages -> tunnel)
+    path: '/',
     maxAge: 7 * 24 * 3600 * 1000,
   });
 }
 function authRequired(req, res, next) {
   const t = req.cookies?.bmf_admin;
-  if (!t) return res.status(401).json({ error: "unauthorized" });
+  if (!t) return res.status(401).json({ error: 'unauthorized' });
   try {
     req.user = jwt.verify(t, ADMIN_JWT_SECRET);
     next();
   } catch {
-    res.status(401).json({ error: "invalid_token" });
+    res.status(401).json({ error: 'invalid_token' });
   }
 }
 
-/* --------------- DB ------------------- */
-const cfg = {
-  host: process.env.DB_HOST || '127.0.0.1',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD ?? process.env.DB_PASS ?? '',
-  database: process.env.DB_NAME || 'bulacan_flavors',
-  waitForConnections: true,
-  connectionLimit: 10,
-  decimalNumbers: true,
-};
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
+  if (String(email).toLowerCase() !== String(ADMIN_EMAIL).toLowerCase()) {
+    return res.status(401).json({ error: 'invalid_credentials' });
+  }
+  if (ADMIN_PASSWORD_HASH) {
+    const ok = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+  } else if (ADMIN_PASSWORD) {
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'invalid_credentials' });
+  } else {
+    return res.status(500).json({ error: 'server_not_configured' });
+  }
+  const token = sign({ id: 'admin', email });
+  setAuthCookie(res, token);
+  res.json({ ok: true, user: { id: 'admin', email, name: 'Administrator', role: 'admin' } });
+});
 
-let pool;
-const schema = { dishes: new Set(), restaurants: new Set() };
-const hasD = c => schema.dishes.has(c);
-const hasR = c => schema.restaurants.has(c);
+app.post('/auth/logout', (_req, res) => {
+  res.clearCookie('bmf_admin', { path: '/', sameSite: 'none', secure: true });
+  res.json({ ok: true });
+});
 
-async function loadSchemaInfo() {
-  const [rowsD] = await pool.query(
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-     WHERE TABLE_SCHEMA=? AND TABLE_NAME='dishes'`, [cfg.database]);
-  schema.dishes = new Set(rowsD.map(r => r.COLUMN_NAME));
+app.get('/auth/me', (req, res) => {
+  const t = req.cookies?.bmf_admin;
+  if (!t) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const p = jwt.verify(t, ADMIN_JWT_SECRET);
+    res.json({ user: { id: p.uid || 'admin', email: p.email, name: 'Administrator', role: 'admin' } });
+  } catch {
+    res.status(401).json({ error: 'invalid_token' });
+  }
+});
 
-  const [rowsR] = await pool.query(
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-     WHERE TABLE_SCHEMA=? AND TABLE_NAME='restaurants'`, [cfg.database]);
-  schema.restaurants = new Set(rowsR.map(r => r.COLUMN_NAME));
+/* --------------------------------------------------------------------------
+   Public routes — keep these OPEN
+   Paste your existing /api/* endpoints below (unchanged)
+----------------------------------------------------------------------------*/
+// Example:
+// app.get('/api/municipalities', async (req, res) => { ... });
+// app.get('/api/dishes', async (req, res) => { ... });
+// app.get('/api/restaurants', async (req, res) => { ... });
 
-  console.log('🧭 Admin schema:', { dishes: [...schema.dishes], restaurants: [...schema.restaurants] });
-}
+/* --------------------------------------------------------------------------
+   Protect ALL /admin/* routes
+   Put this BEFORE you define or mount your /admin handlers.
+----------------------------------------------------------------------------*/
+app.use('/admin', authRequired);
 
-(async () => {
-  pool = mysql.createPool(cfg);
-  const [[{ db }]] = await pool.query('SELECT DATABASE() AS db');
-  console.log('✅ Admin API connected to DB:', db);
-  await loadSchemaInfo();
-})().catch(e => console.error('❌ Admin API DB init error:', e));
-
-/* ------------- helpers --------------- */
-const toInt = v => (v == null ? null : Number(v));
-const jsonOrNull = v => (v == null || v === '' ? null : JSON.stringify(v));
-const parseMaybeJsonArray = (v) => {
-  if (v == null) return null;
-  if (Array.isArray(v)) return v;
-  try { const x = JSON.parse(v); return Array.isArray(x) ? x : null; } catch { return null; }
-};
-const slugify = (s) => String(s || '')
-  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-  .toLowerCase().replace(/[^a-z0-9]+/g, '-')
-  .replace(/(^-|-$)+/g, '').slice(0, 100);
-
-
-app.use("/admin", authRequired);
-/* ------------- health + lookups ------ */
+/* --------------------------------------------------------------------------
+   Admin routes — keep your existing handlers here
+----------------------------------------------------------------------------*/
 app.get('/admin/health', async (_req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
@@ -547,6 +553,13 @@ app.patch('/admin/curate/restaurants/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ------------- start ----------------- */
+/* --------------------------------------------------------------------------
+   404 + server start
+----------------------------------------------------------------------------*/
+app.use((req, res) => res.status(404).json({ error: 'not_found' }));
+
 const PORT = process.env.PORT || 3002;
-app.listen(PORT, () => console.log(`🛠️ Admin API running at http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Admin API listening on ${PORT}`);
+  console.log(`Allowed origins: ${[...allowOrigins].join(', ')}`);
+});
