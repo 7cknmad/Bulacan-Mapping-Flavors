@@ -13,7 +13,7 @@ const app = express();
 const allowedOrigins = new Set([
   'http://localhost:5173', // Vite dev
   'https://7cknmad.github.io', // GitHub Pages origin (path is ignored)
-  'https://pollution-spatial-thumbzilla-basketball.trycloudflare.com',
+  'https://fly-abraham-attraction-vector.trycloudflare.com',
 ]);
 
 const corsOptions = {
