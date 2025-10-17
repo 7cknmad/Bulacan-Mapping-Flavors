@@ -1,154 +1,128 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import cookieParser from 'cookie-parser';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
-import morgan from 'morgan';
+// admin-api/index.js
+import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
+import morgan from "morgan";
+import { createProxyMiddleware } from "http-proxy-middleware";
 
-/* --------------------------------------------------------------------------
-   App setup
-----------------------------------------------------------------------------*/
-const app = express();
-app.set('trust proxy', 1);
-app.use(cors({ origin: 'https://7cknmad.github.io', credentials: true }));
-app.use(express.json({ limit: '1mb' }));
-app.use(cookieParser());
-app.use(morgan('tiny'));
-app.get('/whoami', (_req, res) => res.json({ service: 'admin-api', hasAuth: true }));
-
-/* --------------------------------------------------------------------------
-   CORS — allow GH Pages + local dev + optional extra origins via env
-   - Your frontend uses credentials: 'include', so we must return
-     Access-Control-Allow-Credentials: true and a specific origin.
-----------------------------------------------------------------------------*/
-const DEFAULT_FRONTEND = process.env.GH_PAGES_ORIGIN || 'https://7cknmad.github.io';
-const allowOrigins = new Set([
-  DEFAULT_FRONTEND,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:4173', // vite preview
-]);
-if (process.env.ALLOWED_ORIGINS) {
-  process.env.ALLOWED_ORIGINS
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .forEach((o) => allowOrigins.add(o));
-}
-
-const corsOrigin = (origin, cb) => {
-  if (!origin) return cb(null, true); // curl/health checks
-  try {
-    const url = new URL(origin);
-    const ok = allowOrigins.has(origin) || url.hostname.endsWith('.trycloudflare.com');
-    return cb(ok ? null : new Error(`Not allowed by CORS: ${origin}`), ok);
-  } catch {
-    return cb(new Error('Invalid Origin'), false);
-  }
-};
-
-const corsConfig = {
-  origin: corsOrigin,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-};
-app.use(cors(corsConfig));
-app.options('*', cors(corsConfig));
-
-/* --------------------------------------------------------------------------
-   Health (quick sanity endpoint)
-----------------------------------------------------------------------------*/
-app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
-
-/* --------------------------------------------------------------------------
-   Auth (JWT in HttpOnly cookie) — /auth/login, /auth/me, /auth/logout
-----------------------------------------------------------------------------*/
 const {
-  ADMIN_JWT_SECRET = 'dev-secret-change-me',
-  ADMIN_EMAIL = 'admin@example.com',
-  ADMIN_PASSWORD_HASH = '',
-  ADMIN_PASSWORD, 
+  PORT = 3002,
+  PUBLIC_API_ORIGIN = "http://localhost:3001", // your public API port
+  GH_PAGES_ORIGIN = "https://7cknmad.github.io",
+  ADMIN_JWT_SECRET = "dev-secret-change-me",
+  ADMIN_EMAIL = "admin@example.com",
+  ADMIN_PASSWORD_HASH = "", // bcrypt hash (preferred)
+  ADMIN_PASSWORD,           // plain text fallback for bootstrap (optional)
 } = process.env;
 
-function sign(user) {
-  return jwt.sign({ uid: user.id, email: user.email, role: 'admin' }, ADMIN_JWT_SECRET, { expiresIn: '7d' });
+const app = express();
+app.set("trust proxy", 1);
+app.use(morgan("dev"));
+app.use(express.json());
+app.use(cookieParser());
+
+// CORS: allow GH Pages and local dev UI
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      const allow = new Set([GH_PAGES_ORIGIN, "http://localhost:5173"]);
+      if (!origin) return cb(null, true);
+      cb(null, allow.has(origin));
+    },
+    credentials: true,
+  })
+);
+
+// Health/fingerprint
+app.get("/health", (_req, res) =>
+  res.json({ ok: true, service: "admin-api+proxy", port: Number(PORT) })
+);
+app.get("/whoami", (_req, res) =>
+  res.json({ service: "admin-api", hasAuth: true, port: Number(PORT) })
+);
+
+// -------- Proxy public API under /api/* to PUBLIC_API_ORIGIN --------
+app.use(
+  "/api",
+  createProxyMiddleware({
+    target: PUBLIC_API_ORIGIN,
+    changeOrigin: true,
+    xfwd: true,
+    // preserve /api prefix; uncomment to rewrite if your public API has no /api
+    // pathRewrite: { "^/api": "/api" },
+    onProxyReq(proxyReq) {
+      // never forward admin cookie to public API
+      proxyReq.removeHeader("cookie");
+    },
+  })
+);
+
+// ----------------------------- Auth helpers ------------------------------
+function sign(payload) {
+  return jwt.sign(payload, ADMIN_JWT_SECRET, { expiresIn: "7d" });
 }
 function setAuthCookie(res, token) {
-  res.cookie('bmf_admin', token, {
-  httpOnly: true,
-  secure: true,      // required with SameSite=None
-  sameSite: 'none',  // cross-site (GH Pages -> tunnel)
-  partitioned: true, // <-- IMPORTANT on modern Chrome
-  path: '/',
-  maxAge: 7 * 24 * 3600 * 1000,
-});
+  res.cookie("bmf_admin", token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    partitioned: true, // critical for GH Pages -> tunnel cross-site
+    path: "/",
+    maxAge: 7 * 24 * 3600 * 1000,
+  });
 }
 function authRequired(req, res, next) {
   const t = req.cookies?.bmf_admin;
-  if (!t) return res.status(401).json({ error: 'unauthorized' });
+  if (!t) return res.status(401).json({ error: "unauthorized" });
   try {
     req.user = jwt.verify(t, ADMIN_JWT_SECRET);
     next();
   } catch {
-    res.status(401).json({ error: 'invalid_token' });
+    return res.status(401).json({ error: "invalid_token" });
   }
 }
 
-app.post('/auth/login', async (req, res) => {
+// ------------------------------- Auth routes ------------------------------
+app.post("/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
-  if (String(email).toLowerCase() !== String(ADMIN_EMAIL).toLowerCase()) {
-    return res.status(401).json({ error: 'invalid_credentials' });
-  }
+  if (!email || !password) return res.status(400).json({ error: "missing_credentials" });
+  if (String(email).toLowerCase() !== String(ADMIN_EMAIL).toLowerCase())
+    return res.status(401).json({ error: "invalid_credentials" });
+
   if (ADMIN_PASSWORD_HASH) {
     const ok = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
-    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
-  } else if (ADMIN_PASSWORD) {
-    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'invalid_credentials' });
+    if (!ok) return res.status(401).json({ error: "invalid_credentials" });
   } else {
-    return res.status(500).json({ error: 'server_not_configured' });
+    if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD)
+      return res.status(401).json({ error: "invalid_credentials" });
   }
-  const token = sign({ id: 'admin', email });
+
+  const token = sign({ uid: "admin", email });
   setAuthCookie(res, token);
-  res.json({ ok: true, user: { id: 'admin', email, name: 'Administrator', role: 'admin' } });
+  res.json({ ok: true, user: { id: "admin", email, name: "Administrator", role: "admin" } });
 });
 
-app.post('/auth/logout', (_req, res) => {
-  res.clearCookie('bmf_admin', { path: '/', sameSite: 'none', secure: true });
+app.post("/auth/logout", (req, res) => {
+  res.clearCookie("bmf_admin", { path: "/", sameSite: "none", secure: true, partitioned: true });
   res.json({ ok: true });
 });
 
-app.get('/auth/me', (req, res) => {
+app.get("/auth/me", (req, res) => {
   const t = req.cookies?.bmf_admin;
-  if (!t) return res.status(401).json({ error: 'unauthorized' });
+  if (!t) return res.status(401).json({ error: "unauthorized" });
   try {
     const p = jwt.verify(t, ADMIN_JWT_SECRET);
-    res.json({ user: { id: p.uid || 'admin', email: p.email, name: 'Administrator', role: 'admin' } });
+    res.json({ user: { id: p.uid || "admin", email: p.email, name: "Administrator", role: "admin" } });
   } catch {
-    res.status(401).json({ error: 'invalid_token' });
+    res.status(401).json({ error: "invalid_token" });
   }
 });
 
-/* --------------------------------------------------------------------------
-   Public routes — keep these OPEN
-   Paste your existing /api/* endpoints below (unchanged)
-----------------------------------------------------------------------------*/
-// Example:
-// app.get('/api/municipalities', async (req, res) => { ... });
-// app.get('/api/dishes', async (req, res) => { ... });
-// app.get('/api/restaurants', async (req, res) => { ... });
+// ---------------------- Guard ALL /admin/* endpoints ----------------------
+app.use("/admin", authRequired);
 
-/* --------------------------------------------------------------------------
-   Protect ALL /admin/* routes
-   Put this BEFORE you define or mount your /admin handlers.
-----------------------------------------------------------------------------*/
-app.use('/admin', authRequired);
-
-/* --------------------------------------------------------------------------
-   Admin routes — keep your existing handlers here
-----------------------------------------------------------------------------*/
 app.get('/admin/health', async (_req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
@@ -560,10 +534,10 @@ app.patch('/admin/curate/restaurants/:id', async (req, res) => {
 /* --------------------------------------------------------------------------
    404 + server start
 ----------------------------------------------------------------------------*/
-app.use((req, res) => res.status(404).json({ error: 'not_found' }));
+app.use((req, res) => res.status(404).json({ error: "not_found", path: req.path }));
 
-const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
-  console.log(`Admin API listening on ${PORT}`);
-  console.log(`Allowed origins: ${[...allowOrigins].join(', ')}`);
+  console.log("Admin API (with /api proxy) listening on", PORT);
+  console.log("Proxying /api/* ->", PUBLIC_API_ORIGIN);
+  console.log("Allowed origin:", GH_PAGES_ORIGIN);
 });
