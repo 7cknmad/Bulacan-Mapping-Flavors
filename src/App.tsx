@@ -13,6 +13,7 @@ import DishesPage from "./pages/DishesPage";
 import DishDetails from "./pages/DishDetails";
 import RestaurantList from "./pages/RestaurantList";
 import RestaurantDetails from "./pages/RestaurantDetails";
+import AuthGate from "./components/AuthGate";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 const queryClient = new QueryClient();
 
@@ -26,7 +27,7 @@ function Routed() {
         <Route path="/dishes" element={<PageTransition><DishesPage /></PageTransition>} />
         <Route path="/dish/:slug" element={<PageTransition><DishDetails /></PageTransition>} />
         <Route path="/restaurants" element={<PageTransition><RestaurantList /></PageTransition>} />
-        <Route path="/admin/*" element={<PageTransition><AdminDashboard /></PageTransition>} />
+        <Route path="/admin" element={<AuthGate><AdminDashboard /></AuthGate>} />
         <Route path="/restaurant/:slug" element={<PageTransition><RestaurantDetails /></PageTransition>} />
         {/* Admin temporarily removed while we rebuild it in a separate app */}
       </Routes>

@@ -3,7 +3,12 @@ import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
-
+import express from "express";
+import jwt from "jsonwebtoken";
+import cookieParser from "cookie-parser";
+app.use("/admin", authRequired);
+app.use(express.json());
+app.use(cookieParser());
 dotenv.config();
 
 const app = express();
@@ -38,6 +43,48 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
+app.use(cors({
+  origin: (origin, cb) => {
+    const allow = [
+      "https://7cknmad.github.io", // GH Pages origin
+      "http://localhost:5173",             // optional: local dev
+    ];
+    if (!origin) return cb(null, true);
+    cb(allow.includes(origin) ? null : new Error("CORS"), allow.includes(origin));
+  },
+  credentials: true,
+}));
+
+/* ------------- JWT Auth -------------- */
+
+const {
+  ADMIN_JWT_SECRET = "dev-secret-change-me",
+  ADMIN_EMAIL = "bmff_admin@bulsu.edu.ph",
+  ADMIN_PASSWORD_HASH = "$2b$10$Df5VhdSTV9QCV9WCAdOOl.vHkwBBwiIbzrwnLBjLNQiIRUO.sG90m",
+} = process.env;
+
+function sign(user) {
+  return jwt.sign({ uid: user.id, email: user.email, role: "admin" }, ADMIN_JWT_SECRET, { expiresIn: "7d" });
+}
+function setAuthCookie(res, token) {
+  res.cookie("bmf_admin", token, {
+    httpOnly: true,
+    secure: true,     // HTTPS required for SameSite=None
+    sameSite: "none", // GH Pages (frontend) → Tunnel (API)
+    path: "/",
+    maxAge: 7 * 24 * 3600 * 1000,
+  });
+}
+function authRequired(req, res, next) {
+  const t = req.cookies?.bmf_admin;
+  if (!t) return res.status(401).json({ error: "unauthorized" });
+  try {
+    req.user = jwt.verify(t, ADMIN_JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ error: "invalid_token" });
+  }
+}
 
 /* --------------- DB ------------------- */
 const cfg = {
@@ -157,7 +204,43 @@ app.get('/admin/analytics/summary', async (_req, res) => {
   }
 });
 
-// New: the endpoints your UI was calling
+// New: the endpoints your UI was callinga
+app.post("/auth/login", async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: "missing_credentials" });
+  if (String(email).toLowerCase() !== String(ADMIN_EMAIL).toLowerCase())
+    return res.status(401).json({ error: "invalid_credentials" });
+
+  if (!ADMIN_PASSWORD_HASH) {
+    // temporary bootstrap path (set ADMIN_PASSWORD in env if you want to use this)
+    if (password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ error: "invalid_credentials" });
+    }
+  } else {
+    const ok = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+    if (!ok) return res.status(401).json({ error: "invalid_credentials" });
+  }
+
+  const token = sign({ id: "admin", email });
+  setAuthCookie(res, token);
+  res.json({ ok: true, user: { id: "admin", email, name: "Administrator", role: "admin" } });
+});
+
+app.post("/auth/logout", (_req, res) => {
+  res.clearCookie("bmf_admin", { path: "/", sameSite: "none", secure: true });
+  res.json({ ok: true });
+});
+
+app.get("/auth/me", (req, res) => {
+  const t = req.cookies?.bmf_admin;
+  if (!t) return res.status(401).json({ error: "unauthorized" });
+  try {
+    const p = jwt.verify(t, ADMIN_JWT_SECRET);
+    res.json({ user: { id: p.uid || "admin", email: p.email, name: "Administrator", role: "admin" } });
+  } catch {
+    res.status(401).json({ error: "invalid_token" });
+  }
+});
 app.get('/admin/analytics/municipality-counts', async (_req, res) => {
   try { res.json(await buildPerMunicipalityCounts()); }
   catch (e) { res.status(500).json({ error: 'Failed per-municipality', detail: String(e?.message || e) }); }
