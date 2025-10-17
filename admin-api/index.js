@@ -18,6 +18,7 @@ app.set('trust proxy', 1); // so Secure cookies work behind proxies (Cloudflare)
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(morgan('tiny'));
+app.get('/whoami', (_req, res) => res.json({ service: 'admin-api', hasAuth: true }));
 
 /* --------------------------------------------------------------------------
    CORS — allow GH Pages + local dev + optional extra origins via env

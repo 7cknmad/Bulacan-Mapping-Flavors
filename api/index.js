@@ -50,6 +50,7 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
+app.get('/whoami', (_req, res) => res.json({ service: 'public-api', hasAuth: false }));
 
 /* ---------------------------
    MySQL pool + schema probe
