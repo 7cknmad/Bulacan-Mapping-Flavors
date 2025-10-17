@@ -1,9 +1,18 @@
+const env = (import.meta as any).env || {};
+export const ADMIN_BASE = (
+  env.VITE_ADMIN_API_URL ||
+  env.VITE_API_URL ||
+  "http://localhost:3002"
+).replace(/\/+$/, "");
 
-export const ADMIN = (import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:3002").replace(/\/+$/, "");
+// Visible warning if the build forgot to inject the admin URL
+if (!env.VITE_ADMIN_API_URL) {
+  console.warn("[adminApi] VITE_ADMIN_API_URL not set; using", ADMIN_BASE);
+}
 
 /** fetch JSON (throws a nice error message on non-2xx) */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = path.startsWith("http") ? path : `${ADMIN}${path}`;
+  const url = path.startsWith("http") ? path : `${ADMIN_BASE}${path}`;
   const res = await fetch(url, {
     ...init,
     headers: {
