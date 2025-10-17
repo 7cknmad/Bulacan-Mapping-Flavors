@@ -18,8 +18,9 @@ jobs:
         with: { node-version: 20 }
       - run: npm ci
       - run: npm run build
-        env:
+        env: 
           VITE_ADMIN_API_URL: ${{ secrets.ADMIN_API_URL }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
       - run: cp dist/index.html dist/404.html
       - uses: actions/upload-pages-artifact@v3
         with:
