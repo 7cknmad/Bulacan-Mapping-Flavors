@@ -46,7 +46,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// Express 5: avoid "/api/*" string — use a regex
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
