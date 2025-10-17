@@ -5,7 +5,6 @@ export const ADMIN_BASE = (
   "http://localhost:3002"
 ).replace(/\/+$/, "");
 
-// Visible warning if the build forgot to inject the admin URL
 if (!env.VITE_ADMIN_API_URL) {
   console.warn("[adminApi] VITE_ADMIN_API_URL not set; using", ADMIN_BASE);
 }
@@ -14,15 +13,17 @@ if (!env.VITE_ADMIN_API_URL) {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = path.startsWith("http") ? path : `${ADMIN_BASE}${path}`;
   const res = await fetch(url, {
-    ...init,
+    credentials: "include",          // 🔴 was "omit" — MUST be "include" for auth cookie
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-    credentials: "omit", // admin API is open for now (no login), per your request
+    ...init,
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url}\n${text.slice(0, 300)}`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url}\n${text.slice(0, 300)}`);
+  }
   return text ? (JSON.parse(text) as T) : (null as T);
 }
 

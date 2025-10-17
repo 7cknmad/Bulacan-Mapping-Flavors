@@ -10,7 +10,8 @@ import morgan from 'morgan';
    App setup
 ----------------------------------------------------------------------------*/
 const app = express();
-app.set('trust proxy', 1); // so Secure cookies work behind proxies (Cloudflare)
+app.set('trust proxy', 1);
+app.use(cors({ origin: 'https://7cknmad.github.io', credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(morgan('tiny'));
