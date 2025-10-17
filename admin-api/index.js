@@ -6,14 +6,18 @@ import dotenv from 'dotenv';
 import express from "express";
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
-app.use("/admin", authRequired);
-app.use(express.json());
-app.use(cookieParser());
 dotenv.config();
 
 const app = express();
 
 /* ---------------- CORS ---------------- */
+app.use(express.json());
+app.use(cookieParser());
+app.use(cors({
+  origin: "https://7cknmad.github.io", // your GH Pages origin
+  credentials: true,
+}));
+
 const baseAllowed = new Set([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -34,12 +38,14 @@ function isAllowedOrigin(origin) {
   } catch {}
   return false;
 }
+
 const corsOptions = {
   origin: (origin, cb) => isAllowedOrigin(origin) ? cb(null, true) : cb(new Error(`Not allowed by CORS: ${origin}`)),
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: false,
 };
+
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
@@ -54,7 +60,6 @@ app.use(cors({
   },
   credentials: true,
 }));
-
 /* ------------- JWT Auth -------------- */
 
 const {
@@ -136,6 +141,8 @@ const slugify = (s) => String(s || '')
   .toLowerCase().replace(/[^a-z0-9]+/g, '-')
   .replace(/(^-|-$)+/g, '').slice(0, 100);
 
+
+app.use("/admin", authRequired);
 /* ------------- health + lookups ------ */
 app.get('/admin/health', async (_req, res) => {
   try {
