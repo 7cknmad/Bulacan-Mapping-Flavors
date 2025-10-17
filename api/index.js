@@ -241,5 +241,5 @@ app.get('/api/restaurants', async (req, res) => {
 /* ---------------------------
    Start server
    --------------------------- */
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`API running at http://localhost:${PORT}`));
