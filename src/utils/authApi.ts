@@ -1,6 +1,9 @@
-// src/utils/authApi.ts
-const BASE = (import.meta as any).env?.VITE_ADMIN_API_URL?.replace(/\/$/, "") || "";
-
+const env = (import.meta as any).env || {};
+const BASE =
+  (env.VITE_ADMIN_API_URL && env.VITE_ADMIN_API_URL.replace(/\/$/, "")) ||
+  (env.VITE_API_URL && env.VITE_API_URL.replace(/\/$/, "")) ||
+  "";
+if (!BASE) console.error("[authApi] VITE_ADMIN_API_URL/VITE_API_URL is empty; requests will hit the page origin.");
 async function http(path: string, init: RequestInit = {}) {
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
