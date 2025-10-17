@@ -1,28 +1,34 @@
 // index.js — unified server for Public API (/api/*) and Admin API (/admin/*)
-// No login. One port, one tunnel.
+// One port, one tunnel. Header-based JWT auth (no cookies).
 //
-// Requires: express, cors, mysql2, dotenv
-//   npm i express cors mysql2 dotenv
+// Install: npm i express cors mysql2 dotenv jsonwebtoken bcryptjs
 //
-// ENV (example):
+// ENV:
 //   PORT=3002
 //   DB_HOST=127.0.0.1
 //   DB_USER=root
+//   DB_PASSWORD=            # or DB_PASS
 //   DB_PASS=
-//   DB_PASSWORD=           (either DB_PASS or DB_PASSWORD can be used)
 //   DB_NAME=bulacan_flavors
 //   ALLOWED_ORIGINS=https://7cknmad.github.io
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
+//   ADMIN_JWT_SECRET=change_this_long_random_secret
+//   ADMIN_EMAIL=admin@example.com
+//   # Choose ONE for password check:
+//   ADMIN_PASSWORD=bootstrap_pw           # simple bootstrap
+//   # or
+//   # ADMIN_PASSWORD_HASH=$2a$10$...     # bcrypt hash
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
 const app = express();
 
-/* ---------------- CORS (single host for both UIs) ---------------- */
-const baseAllowed = new Set([
+/* ---------------- CORS (GH Pages + local + tunnel) ---------------- */
+const allowed = new Set([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:4173',
@@ -30,12 +36,12 @@ const baseAllowed = new Set([
 ]);
 if (process.env.ALLOWED_ORIGINS) {
   for (const o of process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)) {
-    baseAllowed.add(o);
+    allowed.add(o);
   }
 }
 function isAllowedOrigin(origin) {
   if (!origin) return true; // curl/postman
-  if (baseAllowed.has(origin)) return true;
+  if (allowed.has(origin)) return true;
   try {
     const u = new URL(origin);
     if (u.hostname.endsWith('.trycloudflare.com')) return true;
@@ -43,21 +49,22 @@ function isAllowedOrigin(origin) {
   return false;
 }
 const corsOptions = {
-  origin: (origin, cb) => isAllowedOrigin(origin) ? cb(null, true) : cb(new Error(`Not allowed by CORS: ${origin}`)),
+  origin: (origin, cb) => isAllowedOrigin(origin) ? cb(null, true) : cb(new Error(`CORS: ${origin}`)),
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false,
+  credentials: false, // no cookies needed
 };
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 app.set('trust proxy', 1);
-// ===== Header-based auth (no cookies) =====
+
+/* ---------------- Header-based auth (no cookies) ---------------- */
 const {
   ADMIN_JWT_SECRET = 'dev-secret-change-me',
-  ADMIN_EMAIL = 'admin@example.com',
+  ADMIN_EMAIL = 'adminbmf',
   ADMIN_PASSWORD_HASH = '',
-  ADMIN_PASSWORD = 'admin12345',
+  ADMIN_PASSWORD =  'password',
 } = process.env;
 
 function sign(payload) {
@@ -79,7 +86,7 @@ function authRequired(req, res, next) {
   }
 }
 
-// --- Auth endpoints ---
+// Auth endpoints (unguarded)
 app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
@@ -108,9 +115,6 @@ app.get('/auth/me', (req, res) => {
     res.status(401).json({ error: 'invalid_token' });
   }
 });
-
-// --- Guard ALL admin endpoints below ---
-app.use('/admin', authRequired);
 
 /* ---------------- MySQL pool + schema probe ---------------- */
 const cfg = {
@@ -203,7 +207,6 @@ app.get('/api/dishes', async (req, res) => {
     }
     if (category) { where.push('c.code = ?'); params.push(String(category)); }
     if (q) {
-      // use MATCH if available; LIKE as fallback
       where.push('(MATCH(d.name, d.description) AGAINST(? IN NATURAL LANGUAGE MODE) OR d.name LIKE ?)');
       params.push(String(q), `%${String(q)}%`);
     }
@@ -303,6 +306,9 @@ app.get('/api/restaurants', async (req, res) => {
 /* ========================================================================== */
 /*                              ADMIN API (/admin)                             */
 /* ========================================================================== */
+
+// Guard ALL admin routes (Bearer JWT)
+app.use('/admin', authRequired);
 
 app.get('/admin/health', async (_req, res) => {
   try {
@@ -643,7 +649,7 @@ app.delete('/admin/dish-restaurants', async (req, res) => {
   await pool.query(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [dish_id, restaurant_id]);
   res.json({ ok: true });
 });
-// Aliases for your client’s preferred endpoints:
+// Aliases commonly used by previous admin client:
 app.post('/admin/links', async (req, res) => {
   const { dishId, restaurantId, price_note=null, availability='regular' } = req.body || {};
   if (!dishId || !restaurantId) return res.status(400).json({ error: 'dishId and restaurantId are required' });
@@ -697,9 +703,11 @@ app.patch('/admin/curate/restaurants/:id', async (req, res) => {
   await pool.query(`UPDATE restaurants SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
   res.json({ ok: true });
 });
-// Aliases "/curation/*"
-app.patch('/admin/curation/dishes/:id', (req, res) => app._router.handle(req, res, () => {}, 'PATCH', '/admin/curate/dishes/:id'));
-app.patch('/admin/curation/restaurants/:id', (req, res) => app._router.handle(req, res, () => {}, 'PATCH', '/admin/curate/restaurants/:id'));
+// Aliases "/curation/*" via same handlers:
+app.patch('/admin/curation/dishes/:id', (req, res) =>
+  app._router.handle({ ...req, url: `/admin/curate/dishes/${req.params.id}`, method: 'PATCH' }, res));
+app.patch('/admin/curation/restaurants/:id', (req, res) =>
+  app._router.handle({ ...req, url: `/admin/curate/restaurants/${req.params.id}`, method: 'PATCH' }, res));
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 3002;
