@@ -1,8 +1,7 @@
-const env2 = (import.meta as any).env || {};
+const env = (import.meta as any).env || {};
 export const API = (
-  env2.VITE_ADMIN_API_URL ||   // if admin build, stick to admin host
-  env2.VITE_API_URL || 
-  "http://localhost:3001"
+  env.VITE_ADMIN_API_URL ||  // prefer admin base in admin build
+  env.VITE_API_URL || "http://localhost:3001"
 ).replace(/\/+$/, "");
 
 

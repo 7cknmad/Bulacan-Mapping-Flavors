@@ -1,7 +1,3 @@
-// admin-api/index.js — full drop‑in (with auth + CORS)
-// Works behind Cloudflare Tunnel and GH Pages frontend.
-// Paste your existing /api/* and /admin/* route handlers where indicated.
-
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -80,12 +76,13 @@ function sign(user) {
 }
 function setAuthCookie(res, token) {
   res.cookie('bmf_admin', token, {
-    httpOnly: true,
-    secure: true, // required for SameSite=None
-    sameSite: 'none', // cross-site (GH Pages -> tunnel)
-    path: '/',
-    maxAge: 7 * 24 * 3600 * 1000,
-  });
+  httpOnly: true,
+  secure: true,      // required with SameSite=None
+  sameSite: 'none',  // cross-site (GH Pages -> tunnel)
+  partitioned: true, // <-- IMPORTANT on modern Chrome
+  path: '/',
+  maxAge: 7 * 24 * 3600 * 1000,
+});
 }
 function authRequired(req, res, next) {
   const t = req.cookies?.bmf_admin;
@@ -241,7 +238,12 @@ app.post("/auth/login", async (req, res) => {
 });
 
 app.post("/auth/logout", (_req, res) => {
-  res.clearCookie("bmf_admin", { path: "/", sameSite: "none", secure: true });
+  res.clearCookie('bmf_admin', {
+  path: '/',
+  sameSite: 'none',
+  secure: true,
+  partitioned: true, // keep attributes consistent
+});
   res.json({ ok: true });
 });
 
