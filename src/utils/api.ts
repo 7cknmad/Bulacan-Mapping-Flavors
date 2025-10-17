@@ -3,7 +3,7 @@
 // Prefer admin base first so the admin build never crosses hosts.
 // Fall back to public base, then local 3001 (public API).
 const env = (import.meta as any).env || {};
-export const API_BASE = (
+export const API = (
   env.VITE_ADMIN_API_URL ||
   env.VITE_API_URL ||
   "http://localhost:3001"
@@ -21,7 +21,7 @@ function needsCreds(path: string) {
 
 // Core fetch helper with good error text
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  const url = path.startsWith("http") ? path : `${API}${path}`;
   const res = await fetch(url, {
     credentials: needsCreds(path) ? "include" : "omit",
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
