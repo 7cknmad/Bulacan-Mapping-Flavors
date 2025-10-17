@@ -12,7 +12,8 @@
 //   DB_PASSWORD=           (either DB_PASS or DB_PASSWORD can be used)
 //   DB_NAME=bulacan_flavors
 //   ALLOWED_ORIGINS=https://7cknmad.github.io
-
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -45,14 +46,71 @@ const corsOptions = {
   origin: (origin, cb) => isAllowedOrigin(origin) ? cb(null, true) : cb(new Error(`Not allowed by CORS: ${origin}`)),
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  // No login → cookies not needed. If any old client still sends credentials: 'include',
-  // set credentials:true here; otherwise keep false for simpler CORS.
   credentials: false,
 };
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 app.set('trust proxy', 1);
+// ===== Header-based auth (no cookies) =====
+const {
+  ADMIN_JWT_SECRET = 'dev-secret-change-me',
+  ADMIN_EMAIL = 'admin@example.com',
+  ADMIN_PASSWORD_HASH = '',
+  ADMIN_PASSWORD, // used only if no hash
+} = process.env;
+
+function sign(payload) {
+  return jwt.sign(payload, ADMIN_JWT_SECRET, { expiresIn: '7d' });
+}
+function readBearer(req) {
+  const h = req.headers.authorization || '';
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return m ? m[1] : null;
+}
+function authRequired(req, res, next) {
+  const token = readBearer(req);
+  if (!token) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    req.user = jwt.verify(token, ADMIN_JWT_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'invalid_token' });
+  }
+}
+
+// --- Auth endpoints ---
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
+  if (String(email).toLowerCase() !== String(ADMIN_EMAIL).toLowerCase())
+    return res.status(401).json({ error: 'invalid_credentials' });
+
+  if (ADMIN_PASSWORD_HASH) {
+    const ok = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+  } else {
+    if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD)
+      return res.status(401).json({ error: 'invalid_credentials' });
+  }
+
+  const token = sign({ uid: 'admin', email });
+  res.json({ ok: true, token, user: { id: 'admin', email, name: 'Administrator', role: 'admin' } });
+});
+
+app.get('/auth/me', (req, res) => {
+  const token = readBearer(req);
+  if (!token) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const p = jwt.verify(token, ADMIN_JWT_SECRET);
+    res.json({ user: { id: p.uid || 'admin', email: p.email, name: 'Administrator', role: 'admin' } });
+  } catch {
+    res.status(401).json({ error: 'invalid_token' });
+  }
+});
+
+// --- Guard ALL admin endpoints below ---
+app.use('/admin', authRequired);
 
 /* ---------------- MySQL pool + schema probe ---------------- */
 const cfg = {
