@@ -57,7 +57,7 @@ const {
   ADMIN_JWT_SECRET = 'dev-secret-change-me',
   ADMIN_EMAIL = 'admin@example.com',
   ADMIN_PASSWORD_HASH = '',
-  ADMIN_PASSWORD, // used only if no hash
+  ADMIN_PASSWORD = 'admin12345',
 } = process.env;
 
 function sign(payload) {
