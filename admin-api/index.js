@@ -71,8 +71,8 @@ app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOStri
 const {
   ADMIN_JWT_SECRET = 'dev-secret-change-me',
   ADMIN_EMAIL = 'admin@example.com',
-  ADMIN_PASSWORD_HASH = '', // set a bcrypt hash in env for production
-  ADMIN_PASSWORD, // fallback for first-time bootstrap (optional)
+  ADMIN_PASSWORD_HASH = '',
+  ADMIN_PASSWORD, 
 } = process.env;
 
 function sign(user) {

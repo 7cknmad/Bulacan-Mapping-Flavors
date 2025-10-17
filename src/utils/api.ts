@@ -1,12 +1,14 @@
-// src/utils/api.ts
-// Trim trailing slashes so `${API}/api/...` is clean
+
+const env = (import.meta as any).env || {};
 export const API = (
-  import.meta.env.VITE_API_URL ?? "http://localhost:3001"
+  env.VITE_ADMIN_API_URL || env.VITE_API_URL || "http://localhost:3001"
 ).replace(/\/+$/, "");
+
 
 /** Fetch a URL (absolute) and parse JSON with helpful error messages */
 async function getJSONAbsolute<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: 'omit' }); // ← omit
+  // Keep omit here — public endpoints don't need cookies
+  const res = await fetch(url, { credentials: "omit" });
   const text = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}: ${text.slice(0, 200)}`);
   return JSON.parse(text) as T;
@@ -17,7 +19,6 @@ async function getPath<T>(path: string): Promise<T> {
   const url = path.startsWith("http") ? path : `${API}${path}`;
   return getJSONAbsolute<T>(url);
 }
-
 /* ================== Types ================== */
 export type Municipality = {
   id: number;
