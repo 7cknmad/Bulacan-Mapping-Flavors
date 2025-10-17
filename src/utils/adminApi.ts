@@ -138,25 +138,56 @@ export async function deleteRestaurant(id: number): Promise<{ ok: true }> {
 }
 
 /* ------------------------------ Analytics API ----------------------------- */
+// ---------- replace getAnalyticsSummary ----------
 export async function getAnalyticsSummary(): Promise<{ dishes: number; restaurants: number; municipalities: number }> {
   const raw = await http(`/admin/analytics/summary`);
-  const d: any = raw || {};
-  return {
-    dishes: d.dishes ?? d.dish_count ?? d.dishTotal ?? 0,
-    restaurants: d.restaurants ?? d.restaurant_count ?? d.restaurantTotal ?? 0,
-    municipalities: d.municipalities ?? d.municipality_count ?? d.muniTotal ?? 0,
-  };
+  const payload = raw ?? {};
+
+  // server may return { counts: { ... }, ... } or top-level fields
+  const countsSource: any = payload.counts ?? payload;
+
+  const dishes = Number(countsSource.dishes ?? countsSource.dishCount ?? countsSource.dish_count ?? countsSource.dish ?? 0);
+  const restaurants = Number(countsSource.restaurants ?? countsSource.restCount ?? countsSource.rest_count ?? countsSource.restaurant ?? 0);
+  const municipalities = Number(countsSource.municipalities ?? countsSource.muniCount ?? countsSource.muni_count ?? countsSource.municipality ?? 0);
+
+  return { dishes, restaurants, municipalities };
 }
 
+// ---------- replace getPerMunicipalityCounts ----------
 export async function getPerMunicipalityCounts(): Promise<Array<{ municipality_id: number | null; municipality_name: string; dishes: number; restaurants: number }>> {
-  const raw = await http(`/admin/analytics/per-municipality`);
-  const arr: any[] = Array.isArray(raw) ? raw : [];
-  return arr.map((r) => ({
+  // normalizer for different possible key names
+  const normalize = (r: any) => ({
     municipality_id: r.municipality_id ?? r.muni_id ?? r.id ?? null,
     municipality_name: r.municipality_name ?? r.municipality ?? r.name ?? r.slug ?? "(unknown)",
-    dishes: r.dishes ?? r.dish_count ?? r.dishTotal ?? 0,
-    restaurants: r.restaurants ?? r.restaurant_count ?? r.restTotal ?? 0,
-  }));
+    dishes: Number(r.dishes ?? r.dish_count ?? r.dishes_count ?? 0),
+    restaurants: Number(r.restaurants ?? r.restaurant_count ?? r.rest_count ?? 0),
+  });
+
+  // Try canonical endpoint first
+  try {
+    const raw = await http(`/admin/analytics/per-municipality`);
+    if (Array.isArray(raw)) return raw.map(normalize);
+  } catch (e) {
+    // ignore and try fallbacks below
+  }
+
+  // some servers return the per-municipality array inside the summary endpoint
+  try {
+    const summary = await http(`/admin/analytics/summary`);
+    const arr = summary?.perMunicipality ?? summary?.per_municipality ?? summary?.perMunicipalityCounts ?? null;
+    if (Array.isArray(arr)) return arr.map(normalize);
+  } catch (e) {
+    // ignore
+  }
+
+  // last resort: try alternate kebab/snake variants
+  try {
+    const rawAlt = await http(`/admin/analytics/municipality-counts`);
+    if (Array.isArray(rawAlt)) return rawAlt.map(normalize);
+  } catch (e) {}
+
+  // nothing found — return empty array
+  return [];
 }
 
 /* ----------------------------- Linking (M2M) ------------------------------ */
