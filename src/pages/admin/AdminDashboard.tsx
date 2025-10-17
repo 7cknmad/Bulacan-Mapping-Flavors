@@ -414,7 +414,7 @@ function CurationTab() {
   const [qDish, setQDish] = useState("");
   const [qRest, setQRest] = useState("");
   const [muniId, setMuniId] = useState<number | null>(null);
-  const [category, setCategory] = useState<"all" | "food" | "delicacy" | "drink">("all");
+  const [category, setCategory] = useState<"all" | "food" | "delicacy">("all");
 
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
   const dishesQ = useQuery({ queryKey: ["dishes", qDish, muniId, category], queryFn: () => listDishes({ q: qDish, municipalityId: muniId ?? undefined, category: category === "all" ? undefined : category }), keepPreviousData: true });
