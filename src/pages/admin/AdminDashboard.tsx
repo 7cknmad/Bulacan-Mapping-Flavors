@@ -277,11 +277,14 @@ function DishesTab() {
    ====================================================== */
 function RestaurantsTab() {
   const qc = useQueryClient();
+  const [qDish, setQDish] = useState("");
+  const [qRest, setQRest] = useState("");
   const [q, setQ] = useState("");
   const [editOpen, setEditOpen] = useState(false);
+  const [filterMuni, setFilterMuni] = useState<number | null>(null);
   const [form, setForm] = useState<any>({ name: "", slug: "", municipality_id: 0, address: "", lat: 0, lng: 0, rating: null, autoSlug: true });
   const [serverError, setServerError] = useState<string | null>(null);
-
+  const restsQ = useQuery({ queryKey: ["rests", qRest, filterMuni], queryFn: () => listRestaurants({ q: qRest, municipalityId: filterMuni ?? undefined }) });
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
   const restQ = useQuery({ queryKey: ["rests", q], queryFn: () => listRestaurants({ q }), keepPreviousData: true });
 
@@ -330,7 +333,9 @@ function RestaurantsTab() {
         </div>
       </Card>
 
-      <Card className="lg:col-span-2" toolbar={<Input placeholder="Search restaurants…" value={q} onChange={(e)=>setQ(e.target.value)} />}>
+      <Card title="Manage Restaurants" className="lg:col-span-2" 
+      toolbar={
+      <Input placeholder="SEARCH RESTAURANTS" value={q} onChange={(e)=>setQ(e.target.value)} />}>
         {!restQ.data ? (
           <div className="grid md:grid-cols-2 gap-3">
             {Array.from({length:6}).map((_,i)=> <div key={i} className="h-24 rounded-xl bg-neutral-100 animate-pulse" />)}
@@ -338,6 +343,7 @@ function RestaurantsTab() {
         ) : (restQ.data.length === 0 ? (
           <div className="text-sm text-neutral-500">No restaurants found.</div>
         ) : (
+          
           <ScrollArea height={520}>
             <div className="grid md:grid-cols-2 gap-3 pr-1">
               {(restQ.data ?? []).map((r) => (

@@ -107,7 +107,7 @@ export async function listMunicipalities(): Promise<Municipality[]> {
 }
 
 export async function listDishes(params: { q?: string; municipalityId?: number; category?: string; signature?: 0 | 1; limit?: number } = {}): Promise<Dish[]> {
-  const data = await http(`/api/dishes${qs(params)}`);
+  const data = await http(`/api/dishes${qs(params)}`) || await http(`/admin/dishes${qs(params)}`);
   return Array.isArray(data) ? data : [];
 }
 
@@ -192,30 +192,108 @@ export async function getPerMunicipalityCounts(): Promise<Array<{ municipality_i
 
 /* ----------------------------- Linking (M2M) ------------------------------ */
 export async function listRestaurantsForDish(dishId: number): Promise<Restaurant[]> {
-  try {
-    const a = await http(`/admin/links${qs({ dishId })}`);
-    if (Array.isArray(a)) {
-      if (a.length === 0) return [];
-      const sample = a[0];
-      if (typeof sample === "number") {
-        const ids = new Set(a as number[]);
-        const all = await listRestaurants({});
-        return all.filter((r) => ids.has(r.id));
+  if (!dishId) return [];
+
+  const paths = [
+    `/admin/dishes/${dishId}/restaurants`,         // canonical (returns full restaurant objects)
+    `/admin/links${qs({ dishId })}`,               // sometimes present (may return objects or ids)
+    `/admin/dish-restaurants${qs({ dish_id: dishId })}`, // may return { restaurant_id } objects
+    `/admin/links/ids${qs({ dishId })}`,           // some variants return numeric id arrays
+    `/api/restaurants${qs({ dishId })}`,           // public fallback
+  ];
+
+  let lastErr: any = null;
+  for (const p of paths) {
+    try {
+      const res: any = await http(p);
+      if (!res) continue;
+
+      // 1) array of restaurant objects
+      if (Array.isArray(res) && res.length && typeof res[0] === "object" && ("id" in res[0] || "name" in res[0])) {
+        return res as Restaurant[];
       }
-      if (sample && typeof sample === "object" && "restaurant_id" in sample && !("name" in sample)) {
-        const ids = new Set((a as any[]).map((x) => x.restaurant_id));
+
+      // 2) array of numbers (ids) -> map to restaurant objects
+      if (Array.isArray(res) && res.length && typeof res[0] === "number") {
+        const ids = new Set(res as number[]);
         const all = await listRestaurants({});
-        return all.filter((r) => ids.has(r.id));
+        return all.filter(r => ids.has(r.id));
       }
-      return a as Restaurant[];
+
+      // 3) array of { restaurant_id } objects -> map to restaurant objects
+      if (Array.isArray(res) && res.length && typeof res[0] === "object" && ("restaurant_id" in res[0])) {
+        const ids = new Set((res as any[]).map(x => x.restaurant_id));
+        const all = await listRestaurants({});
+        return all.filter(r => ids.has(r.id));
+      }
+
+      // 4) shape { restaurants: [...] }
+      if (res && Array.isArray((res as any).restaurants)) {
+        return (res as any).restaurants as Restaurant[];
+      }
+
+      // 5) empty array
+      if (Array.isArray(res) && res.length === 0) return [];
+    } catch (e) {
+      lastErr = e;
+      // try next path
     }
-  } catch (_) {}
-  try {
-    const b = await listRestaurants({ dishId });
-    return Array.isArray(b) ? b : [];
-  } catch (_) {
-    return [];
   }
+
+  // nothing found — return empty array (don't throw so UI can show empty state)
+  return [];
+}
+
+export async function listDishesForRestaurant(restId: number): Promise<Dish[]> {
+  if (!restId) return [];
+
+  const paths = [
+    `/admin/restaurants/${restId}/dishes`,        // canonical (returns full dish objects)
+    `/admin/links${qs({ restaurantId: restId })}`,// alt (may return objects or ids)
+    `/admin/dish-restaurants${qs({ restaurant_id: restId })}`, // alt shape
+    `/api/dishes${qs({ restaurantId: restId })}`, // public fallback
+  ];
+
+  let lastErr: any = null;
+  for (const p of paths) {
+    try {
+      const res: any = await http(p);
+      if (!res) continue;
+
+      // 1) array of dish objects
+      if (Array.isArray(res) && res.length && typeof res[0] === "object" && ("id" in res[0] || "name" in res[0])) {
+        return res as Dish[];
+      }
+
+      // 2) array of numbers (ids) -> map to dishes
+      if (Array.isArray(res) && res.length && typeof res[0] === "number") {
+        const ids = new Set(res as number[]);
+        const all = await listDishes({});
+        return all.filter(d => ids.has(d.id));
+      }
+
+      // 3) array of { dish_id } objects -> map to dishes
+      if (Array.isArray(res) && res.length && typeof res[0] === "object" && ("dish_id" in res[0])) {
+        const ids = new Set((res as any[]).map(x => x.dish_id));
+        const all = await listDishes({});
+        return all.filter(d => ids.has(d.id));
+      }
+
+      // 4) shape { dishes: [...] }
+      if (res && Array.isArray((res as any).dishes)) {
+        return (res as any).dishes as Dish[];
+      }
+
+      // 5) empty array
+      if (Array.isArray(res) && res.length === 0) return [];
+    } catch (e) {
+      lastErr = e;
+      // continue trying other endpoints
+    }
+  }
+
+  // nothing found — return empty array
+  return [];
 }
 
 export async function linkDishRestaurant({ dish_id, restaurant_id, dishId, restaurantId }: { dish_id?: number; restaurant_id?: number; dishId?: number; restaurantId?: number }) {
