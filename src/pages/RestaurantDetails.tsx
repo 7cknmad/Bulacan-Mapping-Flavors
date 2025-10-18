@@ -91,16 +91,23 @@ export default function RestaurantDetails() {
     staleTime: 60_000,
   });
 
-  /** Featured dish: pick 1 from linked dishes (highest popularity, then rating, then name) */
-  const featuredDish = useMemo(() => {
-    const list = dishesQ.data ? [...dishesQ.data] : [];
-    list.sort(
-      (a, b) =>
-        (Number(b.popularity ?? 0) - Number(a.popularity ?? 0)) ||
-        (Number(b.rating ?? 0) - Number(a.rating ?? 0)) ||
-        a.name.localeCompare(b.name)
-    );
-    return list[0];
+  /** Featured dishes: only include dishes marked featured or with featured_rank.
+      Sort by featured_rank ascending (lower rank = higher priority), then popularity, rating, name. */
+  const featuredDishes = useMemo(() => {
+    const all = dishesQ.data ?? [];
+    const list = all.filter((d: any) => Boolean(d.featured) || d.featured_rank != null);
+    list.sort((a: Dish & any, b: Dish & any) => {
+      const ar = a.featured_rank == null ? 999 : Number(a.featured_rank);
+      const br = b.featured_rank == null ? 999 : Number(b.featured_rank);
+      if (ar !== br) return ar - br; // ascending: rank 1 first
+      // fallback ordering within same rank: popularity, rating, name
+      const popDiff = Number(b.popularity ?? 0) - Number(a.popularity ?? 0);
+      if (popDiff !== 0) return popDiff;
+      const ratingDiff = Number(b.rating ?? 0) - Number(a.rating ?? 0);
+      if (ratingDiff !== 0) return ratingDiff;
+      return a.name.localeCompare(b.name);
+    });
+    return list;
   }, [dishesQ.data]);
 
   /** Render states */
@@ -263,7 +270,7 @@ export default function RestaurantDetails() {
 
         {/* Content */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          {/* OVERVIEW: only the featured dish */}
+          {/* OVERVIEW: show featured dishes only */}
           {tab === "overview" && (
             <div>
               <h2 className="mb-3">About {r.name}</h2>
@@ -271,7 +278,7 @@ export default function RestaurantDetails() {
 
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
-                  <UtensilsIcon size={18} /> Featured Dish
+                  <UtensilsIcon size={18} /> Featured Dishes
                 </h3>
                 <button onClick={() => setTab("menu")} className="text-sm text-primary-600 hover:text-primary-700">
                   View Full Menu →
@@ -282,11 +289,13 @@ export default function RestaurantDetails() {
                 <div className="skeleton rounded h-40 mb-8" />
               ) : dishesQ.error ? (
                 <div className="text-red-600 mb-4">Failed to load dishes for this place.</div>
-              ) : !featuredDish ? (
-                <div className="text-neutral-500">No dishes linked yet.</div>
+              ) : featuredDishes.length === 0 ? (
+                <div className="text-neutral-500">No featured dishes linked yet.</div>
               ) : (
-                <div className="max-w-3xl">
-                  <DishCard dish={featuredDish} />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl">
+                  {featuredDishes.slice(0, 3).map((fd) => (
+                    <DishCard key={fd.id} dish={fd} />
+                  ))}
                 </div>
               )}
             </div>

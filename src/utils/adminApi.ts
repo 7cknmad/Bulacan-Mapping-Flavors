@@ -106,39 +106,91 @@ export async function listMunicipalities(): Promise<Municipality[]> {
   return Array.isArray(data) ? data : [];
 }
 
-export async function listDishes(params: { q?: string; municipalityId?: number; category?: string; signature?: 0 | 1; limit?: number } = {}): Promise<Dish[]> {
-  const data = await http(`/api/dishes${qs(params)}`) || await http(`/admin/dishes${qs(params)}`);
-  return Array.isArray(data) ? data : [];
+
+// Add these API functions
+export async function listDishCategories(): Promise<any[]> {
+  const res = await fetch('/api/dish-categories');
+  if (!res.ok) throw new Error('Failed to fetch dish categories');
+  return res.json();
 }
 
-export async function listRestaurants(params: { q?: string; municipalityId?: number; dishId?: number; featured?: 0 | 1; limit?: number } = {}): Promise<Restaurant[]> {
-  const data = await http(`/api/restaurants${qs(params)}`);
-  return Array.isArray(data) ? data : [];
+export async function listDishes(filters?: { q?: string; municipality_id?: number; category?: string }): Promise<any[]> {
+  const params = new URLSearchParams();
+  if (filters?.q) params.append('q', filters.q);
+  if (filters?.municipality_id) params.append('municipality_id', filters.municipality_id.toString());
+  if (filters?.category) params.append('category', filters.category);
+  
+  const res = await fetch(`/api/dishes?${params}`);
+  if (!res.ok) throw new Error('Failed to fetch dishes');
+  return res.json();
 }
 
+export async function listRestaurants(filters?: { q?: string; municipality_id?: number; kind?: string }): Promise<any[]> {
+  const params = new URLSearchParams();
+  if (filters?.q) params.append('q', filters.q);
+  if (filters?.municipality_id) params.append('municipality_id', filters.municipality_id.toString());
+  if (filters?.kind) params.append('kind', filters.kind);
+  
+  const res = await fetch(`/api/restaurants?${params}`);
+  if (!res.ok) throw new Error('Failed to fetch restaurants');
+  return res.json();
+}
+
+export async function createDish(payload: any): Promise<any> {
+  const res = await fetch('/api/dishes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to create dish');
+  return res.json();
+}
+
+export async function updateDish(id: number, payload: any): Promise<any> {
+  const res = await fetch(`/api/dishes/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to update dish');
+  return res.json();
+}
+
+export async function deleteDish(id: number): Promise<void> {
+  const res = await fetch(`/api/dishes/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete dish');
+}
+
+export async function createRestaurant(payload: any): Promise<any> {
+  const res = await fetch('/api/restaurants', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to create restaurant');
+  return res.json();
+}
+
+export async function updateRestaurant(id: number, payload: any): Promise<any> {
+  const res = await fetch(`/api/restaurants/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to update restaurant');
+  return res.json();
+}
+
+export async function deleteRestaurant(id: number): Promise<void> {
+  const res = await fetch(`/api/restaurants/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete restaurant');
+}
 /* ---------------------------------- Admin --------------------------------- */
-export async function createDish(payload: Partial<Dish>): Promise<Dish> {
-  return http(`/admin/dishes`, { method: "POST", body: JSON.stringify(payload) });
-}
-export async function updateDish(id: number, payload: Partial<Dish>): Promise<Dish> {
-  return http(`/admin/dishes/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-export async function deleteDish(id: number): Promise<{ ok: true }> {
-  return http(`/admin/dishes/${id}`, { method: "DELETE" });
-}
 
-export async function createRestaurant(payload: Partial<Restaurant>): Promise<Restaurant> {
-  return http(`/admin/restaurants`, { method: "POST", body: JSON.stringify(payload) });
-}
-export async function updateRestaurant(id: number, payload: Partial<Restaurant>): Promise<Restaurant> {
-  return http(`/admin/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-export async function deleteRestaurant(id: number): Promise<{ ok: true }> {
-  return http(`/admin/restaurants/${id}`, { method: "DELETE" });
-}
+
+
 
 /* ------------------------------ Analytics API ----------------------------- */
-// ---------- replace getAnalyticsSummary ----------
 export async function getAnalyticsSummary(): Promise<{ dishes: number; restaurants: number; municipalities: number }> {
   const raw = await http(`/admin/analytics/summary`);
   const payload = raw ?? {};
@@ -190,7 +242,10 @@ export async function getPerMunicipalityCounts(): Promise<Array<{ municipality_i
   return [];
 }
 
+// ----------------------------- getting debugged ---------------------------- //
 /* ----------------------------- Linking (M2M) ------------------------------ */
+
+
 export async function listRestaurantsForDish(dishId: number): Promise<Restaurant[]> {
   if (!dishId) return [];
 
@@ -296,6 +351,7 @@ export async function listDishesForRestaurant(restId: number): Promise<Dish[]> {
   return [];
 }
 
+
 export async function linkDishRestaurant({ dish_id, restaurant_id, dishId, restaurantId }: { dish_id?: number; restaurant_id?: number; dishId?: number; restaurantId?: number }) {
   const d = dishId ?? dish_id; const r = restaurantId ?? restaurant_id;
   if (d == null || r == null) throw new Error("dishId and restaurantId are required");
@@ -325,22 +381,18 @@ export async function setDishCuration(id: number, payload: { panel_rank: number 
   try {
     return await http(`/admin/curation/dishes/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
   } catch (_) {
-    try {
-      return await http(`/admin/curation`, { method: "POST", body: JSON.stringify({ kind: "dish", id, ...payload }) });
-    } catch {
-      return await http(`/admin/dishes/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-    }
+    // Fallback to regular dish update endpoint
+    return await http(`/admin/dishes/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
   }
 }
+
+
 
 export async function setRestaurantCuration(id: number, payload: { featured_rank: number | null; featured: 0 | 1 | boolean }) {
   try {
     return await http(`/admin/curation/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
   } catch (_) {
-    try {
-      return await http(`/admin/curation`, { method: "POST", body: JSON.stringify({ kind: "restaurant", id, ...payload }) });
-    } catch {
-      return await http(`/admin/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-    }
+    // Fallback to regular restaurant update endpoint
+    return await http(`/admin/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
   }
 }

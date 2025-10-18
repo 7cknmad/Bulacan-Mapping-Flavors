@@ -1,22 +1,4 @@
-// index.js — unified server for Public API (/api/*) and Admin API (/admin/*)
-// One port, one tunnel. Header-based JWT auth (no cookies).
-//
-// Install: npm i express cors mysql2 dotenv jsonwebtoken bcryptjs
-//
-// ENV:
-//   PORT=3002
-//   DB_HOST=127.0.0.1
-//   DB_USER=root
-//   DB_PASSWORD=            # or DB_PASS
-//   DB_PASS=
-//   DB_NAME=bulacan_flavors
-//   ALLOWED_ORIGINS=https://7cknmad.github.io
-//   ADMIN_JWT_SECRET=change_this_long_random_secret
-//   ADMIN_EMAIL=admin@example.com
-//   # Choose ONE for password check:
-//   ADMIN_PASSWORD=bootstrap_pw           # simple bootstrap
-//   # or
-//   # ADMIN_PASSWORD_HASH=$2a$10$...     # bcrypt hash
+
 
 import 'dotenv/config';
 import express from 'express';
@@ -24,7 +6,6 @@ import cors from 'cors';
 import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-
 const app = express();
 
 /* ---------------- CORS (GH Pages + local + tunnel) ---------------- */
@@ -245,7 +226,6 @@ app.get('/api/dishes', async (req, res) => {
   }
 });
 
-/** GET /api/restaurants?municipalityId=&dishId=&q=&featured=&limit=&kind= */
 app.get('/api/restaurants', async (req, res) => {
   try {
     const { municipalityId, dishId, q, featured, limit, kind } = req.query;
@@ -303,6 +283,26 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
+app.get('/api/restaurants/:id/dishes', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    const [rows] = await pool.query(`
+      SELECT d.*, dr.price_note, dr.availability
+      FROM dish_restaurants dr
+      JOIN dishes d ON d.id = dr.dish_id
+      WHERE dr.restaurant_id = ?
+      ORDER BY d.name
+    `, [id]);
+
+    res.json(rows);
+  } catch (e) {
+    console.error('PUBLIC /api/restaurants/:id/dishes ERROR:', e);
+    res.status(500).json({ error: 'Failed to fetch dishes for restaurant', detail: String(e?.message || e) });
+  }
+});
+
 /* ========================================================================== */
 /*                              ADMIN API (/admin)                             */
 /* ========================================================================== */
@@ -345,7 +345,6 @@ app.get('/admin/analytics/summary', async (_req, res) => {
     const [[{ restCount }]] = await pool.query(`SELECT COUNT(*) AS restCount FROM restaurants`);
     const [[{ muniCount }]] = await pool.query(`SELECT COUNT(*) AS muniCount FROM municipalities`);
     const perMunicipality = await buildPerMunicipalityCounts();
-
     const topDishSql = `
       SELECT d.id, d.name, d.slug, ${hasD('panel_rank')?'d.panel_rank,':'NULL AS panel_rank,'}
              ${hasD('is_signature')?'d.is_signature,':'NULL AS is_signature,'}
@@ -354,7 +353,6 @@ app.get('/admin/analytics/summary', async (_req, res) => {
       ORDER BY ${hasD('panel_rank')?'COALESCE(d.panel_rank,999),':''} d.popularity DESC, d.name
       LIMIT 3`;
     const [topDishes] = await pool.query(topDishSql);
-
     const topRestSql = `
       SELECT r.id, r.name, r.slug, r.rating,
              ${hasR('featured')?'r.featured,':'NULL AS featured,'}
@@ -455,13 +453,16 @@ app.patch('/admin/dishes/:id', async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
 
-    const up = {};
     const allow = [
       'municipality_id','name','slug','description','image_url',
       'popularity','rating','flavor_profile','ingredients'
     ];
     if (hasD('is_signature')) allow.push('is_signature');
     if (hasD('panel_rank')) allow.push('panel_rank');
+
+    // NEW: allow editing 'featured' flags on dishes when columns exist
+    if (hasD('featured')) allow.push('featured');
+    if (hasD('featured_rank')) allow.push('featured_rank');
 
     for (const k of allow) {
       if (k in req.body) {
@@ -622,6 +623,7 @@ app.get('/admin/dishes/:id/restaurants', async (req, res) => {
     JOIN restaurants r ON r.id=dr.restaurant_id
     WHERE dr.dish_id=? ORDER BY r.name`, [id]);
   res.json(rows);
+  
 });
 app.get('/admin/restaurants/:id/dishes', async (req, res) => {
   const id = Number(req.params.id);
@@ -632,6 +634,7 @@ app.get('/admin/restaurants/:id/dishes', async (req, res) => {
     WHERE dr.restaurant_id=? ORDER BY d.name`, [id]);
   res.json(rows);
 });
+
 app.post('/admin/dish-restaurants', async (req, res) => {
   const { dish_id, restaurant_id, price_note=null, availability='regular' } = req.body || {};
   if (!dish_id || !restaurant_id) return res.status(400).json({ error: 'dish_id and restaurant_id are required' });
@@ -648,6 +651,7 @@ app.delete('/admin/dish-restaurants', async (req, res) => {
   if (!dish_id || !restaurant_id) return res.status(400).json({ error: 'dish_id & restaurant_id are required' });
   await pool.query(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [dish_id, restaurant_id]);
   res.json({ ok: true });
+
 });
 // Aliases commonly used by previous admin client:
 app.post('/admin/links', async (req, res) => {
@@ -667,7 +671,7 @@ app.delete('/admin/links', async (req, res) => {
   await pool.query(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [dishId, restaurantId]);
   res.json({ ok: true });
 });
-app.post('/admin/links/unlink', async (req, res) => {
+app.post('/api/restaurants/unlink', async (req, res) => {
   const { dishId, restaurantId } = req.body || {};
   if (!dishId || !restaurantId) return res.status(400).json({ error: 'dishId & restaurantId are required' });
   await pool.query(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [dishId, restaurantId]);
@@ -682,32 +686,110 @@ app.post('/admin/dish-restaurants/unlink', async (req, res) => {
 
 // Curation (provide both "/curate" and "/curation" aliases)
 app.patch('/admin/curate/dishes/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  const { is_signature, panel_rank } = req.body || {};
-  const up = {};
-  if (hasD('is_signature') && is_signature != null) up.is_signature = is_signature ? 1 : 0;
-  if (hasD('panel_rank')) up.panel_rank = panel_rank == null ? null : Number(panel_rank);
-  const sets = Object.keys(up).map(k => `${k}=?`); const vals = Object.keys(up).map(k => up[k]);
-  if (!sets.length) return res.json({ ok: true });
-  await pool.query(`UPDATE dishes SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
-  res.json({ ok: true });
+  try {
+    const id = Number(req.params.id);
+    const { is_signature, panel_rank, featured, featured_rank } = req.body || {};
+    const up = {};
+    
+    // Use the schema checking functions properly
+    if (req.body.is_signature !== undefined && hasD('is_signature')) 
+      up.is_signature = is_signature ? 1 : 0;
+    if (req.body.panel_rank !== undefined && hasD('panel_rank')) 
+      up.panel_rank = panel_rank == null ? null : Number(panel_rank);
+    if (req.body.featured !== undefined && hasD('featured')) 
+      up.featured = featured ? 1 : 0;
+    if (req.body.featured_rank !== undefined && hasD('featured_rank')) 
+      up.featured_rank = featured_rank == null ? null : Number(featured_rank);
+
+    const sets = Object.keys(up).map(k => `${k}=?`); 
+    const vals = Object.keys(up).map(k => up[k]);
+    if (!sets.length) return res.json({ ok: true });
+    
+    await pool.query(`UPDATE dishes SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error updating dish curation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
+
+
 app.patch('/admin/curate/restaurants/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  const { featured, featured_rank } = req.body || {};
-  const up = {};
-  if (hasR('featured') && featured != null) up.featured = featured ? 1 : 0;
-  if (hasR('featured_rank')) up.featured_rank = featured_rank == null ? null : Number(featured_rank);
-  const sets = Object.keys(up).map(k => `${k}=?`); const vals = Object.keys(up).map(k => up[k]);
-  if (!sets.length) return res.json({ ok: true });
-  await pool.query(`UPDATE restaurants SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
-  res.json({ ok: true });
+  try {
+    const id = Number(req.params.id);
+    const { featured, featured_rank } = req.body || {};
+    const up = {};
+    
+    if (req.body.featured !== undefined && hasR('featured')) 
+      up.featured = featured ? 1 : 0;
+    if (req.body.featured_rank !== undefined && hasR('featured_rank')) 
+      up.featured_rank = featured_rank == null ? null : Number(featured_rank);
+    
+    const sets = Object.keys(up).map(k => `${k}=?`); 
+    const vals = Object.keys(up).map(k => up[k]);
+    if (!sets.length) return res.json({ ok: true });
+    
+    await pool.query(`UPDATE restaurants SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error updating restaurant curation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
+
+
 // Aliases "/curation/*" via same handlers:
-app.patch('/admin/curation/dishes/:id', (req, res) =>
-  app._router.handle({ ...req, url: `/admin/curate/dishes/${req.params.id}`, method: 'PATCH' }, res));
-app.patch('/admin/curation/restaurants/:id', (req, res) =>
-  app._router.handle({ ...req, url: `/admin/curate/restaurants/${req.params.id}`, method: 'PATCH' }, res));
+app.patch('/admin/curation/dishes/:id', async (req, res) => {
+  // Forward to the actual handler logic
+  try {
+    const id = Number(req.params.id);
+    const { is_signature, panel_rank, featured, featured_rank } = req.body || {};
+    const up = {};
+    
+    if (req.body.is_signature !== undefined && hasD('is_signature')) 
+      up.is_signature = is_signature ? 1 : 0;
+    if (req.body.panel_rank !== undefined && hasD('panel_rank')) 
+      up.panel_rank = panel_rank == null ? null : Number(panel_rank);
+    if (req.body.featured !== undefined && hasD('featured')) 
+      up.featured = featured ? 1 : 0;
+    if (req.body.featured_rank !== undefined && hasD('featured_rank')) 
+      up.featured_rank = featured_rank == null ? null : Number(featured_rank);
+
+    const sets = Object.keys(up).map(k => `${k}=?`); 
+    const vals = Object.keys(up).map(k => up[k]);
+    if (!sets.length) return res.json({ ok: true });
+    
+    await pool.query(`UPDATE dishes SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error updating dish curation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.patch('/admin/curation/restaurants/:id', async (req, res) => {
+  // Forward to the actual handler logic
+  try {
+    const id = Number(req.params.id);
+    const { featured, featured_rank } = req.body || {};
+    const up = {};
+    
+    if (req.body.featured !== undefined && hasR('featured')) 
+      up.featured = featured ? 1 : 0;
+    if (req.body.featured_rank !== undefined && hasR('featured_rank')) 
+      up.featured_rank = featured_rank == null ? null : Number(featured_rank);
+    
+    const sets = Object.keys(up).map(k => `${k}=?`); 
+    const vals = Object.keys(up).map(k => up[k]);
+    if (!sets.length) return res.json({ ok: true });
+    
+    await pool.query(`UPDATE restaurants SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error updating restaurant curation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 /* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 3002;
