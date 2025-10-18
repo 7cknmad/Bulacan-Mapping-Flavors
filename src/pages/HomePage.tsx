@@ -1,5 +1,5 @@
 // src/pages/HomePage.tsx
-import React from "react";
+import React, { lazy, Suspense, useMemo, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -15,7 +15,6 @@ import RestaurantCard from "../components/cards/RestaurantCard";
 import { fetchDishes, fetchRestaurants, type Dish, type Restaurant } from "../utils/api";
 
 export default function HomePage() {
-  // Top dishes: sort by popularity then rating, take 3
   const topDishesQ = useQuery<Dish[]>({
     queryKey: ["top-dishes-home"],
     queryFn: () => fetchDishes(),
