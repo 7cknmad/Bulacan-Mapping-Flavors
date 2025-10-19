@@ -1,6 +1,3 @@
-// src/utils/adminApi.ts
-// Admin client for Bulacan-Mapping-Flavors (single tunnel).
-// Now supports header-based JWT (no cookies): login/me/logout + auto Bearer header.
 
 const BASE = (import.meta as any).env?.VITE_ADMIN_API_URL?.replace(/\/$/, "") || "";
 

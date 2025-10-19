@@ -81,22 +81,38 @@ export default function MunicipalityCard({ municipality, onClose }: Municipality
     onClose?.(); setTimeout(() => navigate(url), 200);
   };
 
-  function sortAndSlice<T extends Dish | Restaurant>(list: T[], { forDish }: { forDish: boolean }, limit = 3): T[] {
-    const isFeatured = (x: any) => Number(x.signature ?? x.featured ?? 0) > 0 || Number(x.panel_rank ?? 0) > 0;
-    return [...list]
-      .sort((a: any, b: any) => {
-        const af = isFeatured(a) ? 1 : 0;
-        const bf = isFeatured(b) ? 1 : 0;
-        if (bf !== af) return bf - af; // featured first
-        const ar = Number(a.panel_rank ?? 999);
-        const br = Number(b.panel_rank ?? 999);
-        if (ar !== br) return ar - br; // rank next
-        return forDish
-          ? Number(b.popularity ?? 0) - Number(a.popularity ?? 0)
-          : Number(b.rating ?? 0) - Number(a.rating ?? 0);
-      })
-      .slice(0, limit);
-  }
+function sortAndSlice<T extends Dish | Restaurant>(
+  list: T[], 
+  { forDish }: { forDish: boolean }, 
+  limit = 3
+): T[] {
+  // First filter: only include items that are explicitly marked as featured/top
+  const featuredItems = list.filter((item: any) => {
+    const isFeatured = Number(item.signature ?? item.featured ?? 0) > 0;
+    const hasPanelRank = Number(item.panel_rank ?? 0) > 0;
+    return isFeatured || hasPanelRank;
+  });
+
+  // Then sort by your ranking system
+  return featuredItems
+    .sort((a: any, b: any) => {
+      // Primary sort: panel_rank (lower number = higher rank)
+      const aRank = Number(a.panel_rank ?? 999);
+      const bRank = Number(b.panel_rank ?? 999);
+      if (aRank !== bRank) return aRank - bRank;
+      
+      // Secondary sort: signature/featured status
+      const aFeatured = Number(a.signature ?? a.featured ?? 0);
+      const bFeatured = Number(b.signature ?? b.featured ?? 0);
+      if (bFeatured !== aFeatured) return bFeatured - aFeatured;
+      
+      // Tertiary sort: popularity or rating
+      return forDish
+        ? Number(b.popularity ?? 0) - Number(a.popularity ?? 0)
+        : Number(b.rating ?? 0) - Number(a.rating ?? 0);
+    })
+    .slice(0, limit);
+}
 
   useEffect(() => {
     let cancel = false;

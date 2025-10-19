@@ -336,6 +336,15 @@ const handleCreate = () => {
       } 
     });
   };
+const shouldShowBadge = (value: any): boolean => {
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'boolean') return value === true;
+  if (typeof value === 'string') return value === '1' || value === 'true';
+  return false;
+};
+
+
+
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -554,12 +563,12 @@ const handleCreate = () => {
                 <div key={d.id} className="border rounded-xl p-4 hover:shadow-sm transition">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
-                      <div className="font-semibold flex items-center gap-2 mb-1">
-                        {d.name}
-                        {d.is_signature && <Badge variant="solid">Signature</Badge>}
-                        {d.panel_rank && <Badge variant="solid">Top {d.panel_rank}</Badge>}
-                        {d.featured && <Badge variant="outline">Featured</Badge>}
-                      </div>
+<div className="font-semibold flex items-center gap-2 mb-1">
+  {d.name}
+  {shouldShowBadge(d.is_signature) && <Badge variant="solid">Signature</Badge>}
+  {shouldShowBadge(d.panel_rank) && <Badge variant="solid">Top {d.panel_rank}</Badge>}
+  {shouldShowBadge(d.featured) && <Badge variant="outline">Featured</Badge>}
+</div>
                       <div className="text-xs text-neutral-500 mb-2">
                         {d.category} • {d.municipality_name || `Muni ID: ${d.municipality_id}`}
                       </div>
@@ -1220,9 +1229,8 @@ function RestaurantsTab() {
                     <div className="flex-1">
                       <div className="font-semibold flex items-center gap-2 mb-1">
                         {r.name}
-                        {r.featured && <Badge variant="solid">Featured</Badge>}
-                        {r.featured_rank && <Badge variant="solid">Top {r.featured_rank}</Badge>}
-                        {r.signature && <Badge variant="outline">Signature</Badge>}
+{r.featured === 1 && <Badge variant="solid">Featured</Badge>}
+{r.panel_rank > 0 && <Badge variant="solid">Top {r.panel_rank}</Badge>}
                       </div>
                       <div className="text-xs text-neutral-500 mb-2">
                         {r.kind} • {r.municipality_name || `Muni ID: ${r.municipality_id}`}
