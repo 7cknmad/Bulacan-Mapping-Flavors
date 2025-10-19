@@ -75,21 +75,36 @@ export default function RestaurantDetails() {
   });
 
   /** 2) Load dishes linked to this restaurant via link table */
-  const dishesQ = useQuery<Dish[]>({
-    queryKey: ["restaurant-dishes", restaurantQ.data?.id],
-    enabled: !!restaurantQ.data?.id,
-    queryFn: async () => {
-      const rid = restaurantQ.data!.id;
-      // Preferred route: GET /api/restaurants/:id/dishes
-      try {
-        return await getJSON<Dish[]>(`${API}/api/restaurants/${rid}/dishes`);
-      } catch {
-        // Fallback: if you created GET /api/dishes?restaurantId=…
-        return await getJSON<Dish[]>(`${API}/api/dishes?restaurantId=${rid}`);
-      }
-    },
-    staleTime: 60_000,
-  });
+const dishesQ = useQuery<Dish[]>({
+  queryKey: ["restaurant-dishes", restaurantQ.data?.id],
+  enabled: !!restaurantQ.data?.id,
+  queryFn: async () => {
+    const rid = restaurantQ.data!.id;
+    try {
+      const dishes = await getJSON<any[]>(`${API}/api/restaurants/${rid}/featured-dishes`);
+      
+      return dishes.map(dish => ({
+        id: dish.dish_id || dish.id,
+        name: dish.dish_name || dish.name,
+        description: dish.restaurant_specific_description || dish.original_description || dish.description,
+        category: dish.category,
+        image_url: dish.image_url,
+        municipality_id: dish.municipality_id,
+        slug: dish.slug || `dish-${dish.dish_id || dish.id}`,
+        rating: dish.rating,
+        popularity: dish.popularity,
+        featured: dish.is_featured === 1 || dish.is_featured === true,
+        featured_rank: dish.featured_rank,
+        restaurant_specific_price: dish.restaurant_specific_price,
+        availability: dish.availability
+      } as Dish & any));
+    } catch (error) {
+      console.error('Failed to fetch restaurant dishes:', error);
+      return [];
+    }
+  },
+  staleTime: 60_000,
+});
 
   /** Featured dishes: only include dishes marked featured or with featured_rank.
       Sort by featured_rank ascending (lower rank = higher priority), then popularity, rating, name. */
@@ -270,37 +285,70 @@ export default function RestaurantDetails() {
 
         {/* Content */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          {/* OVERVIEW: show featured dishes only */}
-          {tab === "overview" && (
-            <div>
-              <h2 className="mb-3">About {r.name}</h2>
-              <p className="text-neutral-700 mb-6">{r.description || "No description yet."}</p>
+{/* OVERVIEW: show featured dishes only */}
+{tab === "overview" && (
+  <div>
+    <h2 className="mb-3">About {r.name}</h2>
+    <p className="text-neutral-700 mb-6">{r.description || "No description yet."}</p>
 
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-semibold flex items-center gap-2">
-                  <UtensilsIcon size={18} /> Featured Dishes
-                </h3>
-                <button onClick={() => setTab("menu")} className="text-sm text-primary-600 hover:text-primary-700">
-                  View Full Menu →
-                </button>
+    <div className="flex items-center justify-between mb-3">
+      <h3 className="text-lg font-semibold flex items-center gap-2">
+        <UtensilsIcon size={18} /> Featured Dishes
+      </h3>
+      <button onClick={() => setTab("menu")} className="text-sm text-primary-600 hover:text-primary-700">
+        View Full Menu →
+      </button>
+    </div>
+
+    {dishesQ.isLoading ? (
+      <div className="skeleton rounded h-40 mb-8" />
+    ) : dishesQ.error ? (
+      <div className="text-red-600 mb-4">Failed to load dishes for this place.</div>
+    ) : featuredDishes.length === 0 ? (
+      <div className="text-neutral-500">
+        No featured dishes yet. Check back later for their special offerings.
+      </div>
+    ) : (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl">
+        {featuredDishes.slice(0, 4).map((fd) => (
+          <Link
+            key={fd.id}
+            to={`/dish/${fd.id}`}
+            className="flex border border-neutral-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-white"
+          >
+            <img
+              src={fd.image_url || "https://via.placeholder.com/160"}
+              alt={fd.name}
+              className="w-24 h-24 object-cover rounded-md mr-4 bg-neutral-100"
+              onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/160"))}
+            />
+            <div className="flex-1">
+              <h3 className="font-medium text-lg mb-1">{fd.name}</h3>
+              <p className="text-sm text-neutral-600 mb-2 line-clamp-2">
+                {fd.description || ""}
+              </p>
+              <div className="text-xs text-neutral-500 mb-1">
+                ⭐ {Number(fd.rating ?? 0).toFixed(1)} • {fd.category?.toUpperCase?.()}
               </div>
-
-              {dishesQ.isLoading ? (
-                <div className="skeleton rounded h-40 mb-8" />
-              ) : dishesQ.error ? (
-                <div className="text-red-600 mb-4">Failed to load dishes for this place.</div>
-              ) : featuredDishes.length === 0 ? (
-                <div className="text-neutral-500">No featured dishes linked yet.</div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl">
-                  {featuredDishes.slice(0, 3).map((fd) => (
-                    <DishCard key={fd.id} dish={fd} />
-                  ))}
+              {/* Show price if available */}
+              {fd.restaurant_specific_price && (
+                <div className="text-sm font-medium text-green-600">
+                  ₱ {fd.restaurant_specific_price}
                 </div>
               )}
+              {/* Show featured badge if applicable */}
+              {fd.featured && (
+                <span className="inline-block px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-full mt-1">
+                  Featured
+                </span>
+              )}
             </div>
-          )}
-
+          </Link>
+        ))}
+      </div>
+    )}
+  </div>
+)}
           {/* MENU: all linked dishes */}
           {tab === "menu" && (
             <div>
@@ -322,7 +370,7 @@ export default function RestaurantDetails() {
                   {dishesQ.data!.map((d) => (
                     <Link
                       key={d.id}
-                      to={`/dish/${encodeURIComponent(d.slug || String(d.id))}`}
+                      to={`/dish/${d.id}`}
                       className="flex border-b border-neutral-200 pb-4 mb-4"
                     >
                       <img

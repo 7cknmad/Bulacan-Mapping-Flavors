@@ -247,7 +247,7 @@ export default function DishesPage() {
             {sorted.map((d) => (
               <motion.div key={d.id} layout>
                 <Link
-                  to={`/dish/${encodeURIComponent(d.slug || String(d.id))}`}
+                  to={`/dish/${d.id}`}
                   className="flex items-center gap-4 p-3 hover:bg-neutral-50"
                 >
                   <img

@@ -9,7 +9,12 @@ import {
   setDishCuration, setRestaurantCuration, listDishCategories,
   getAnalyticsSummary, getPerMunicipalityCounts,
   type Municipality, type Dish, type Restaurant,
-  coerceStringArray, slugify
+  coerceStringArray, slugify,
+  // ADD THESE NEW FUNCTIONS:
+  getRestaurantFeaturedDishes,
+  setRestaurantDishFeatured,
+  addDishToRestaurant,
+  getRestaurantDishDetails
 } from "../../utils/adminApi";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -174,13 +179,10 @@ function DishesTab() {
     ingredients: [],
     history: "",
     image_url: "",
-    is_signature: false,
-    panel_rank: null,
-    featured: false,
-    featured_rank: null,
     autoSlug: true 
   });
   const [serverError, setServerError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
   const categoriesQ = useQuery({ 
@@ -194,6 +196,35 @@ function DishesTab() {
     queryFn: () => listDishes({ q, ...filters }), 
     keepPreviousData: true 
   });
+
+  // Validation function
+  const validateForm = (formData: any, isEdit: boolean = false) => {
+    const errors: Record<string, string> = {};
+    
+    if (!formData.name?.trim()) {
+      errors.name = "Name is required";
+    } else if (formData.name.trim().length < 2) {
+      errors.name = "Name must be at least 2 characters";
+    }
+    
+    if (!isEdit && (!formData.municipality_id || formData.municipality_id === 0)) {
+      errors.municipality_id = "Municipality is required";
+    }
+    
+    if (!formData.category_id || formData.category_id === 0) {
+      errors.category_id = "Category ID is required";
+    }
+    
+    if (formData.rating !== null && (formData.rating < 0 || formData.rating > 5)) {
+      errors.rating = "Rating must be between 0 and 5";
+    }
+    
+    if (formData.popularity !== null && (formData.popularity < 0 || formData.popularity > 100)) {
+      errors.popularity = "Popularity must be between 0 and 100";
+    }
+    
+    return errors;
+  };
 
   const createM = useMutation({
     mutationFn: (payload: any) => createDish(payload),
@@ -212,13 +243,10 @@ function DishesTab() {
         ingredients: [],
         history: "",
         image_url: "",
-        is_signature: false,
-        panel_rank: null,
-        featured: false,
-        featured_rank: null,
         autoSlug: true 
       });
       setServerError(null);
+      setFieldErrors({});
       alert("Dish created.");
     },
     onError: (e: any) => setServerError(e?.message || "Create failed."),
@@ -230,6 +258,7 @@ function DishesTab() {
       qc.invalidateQueries({ queryKey: ["dishes"] });
       setEditOpen(false);
       setServerError(null);
+      setFieldErrors({});
       alert("Dish saved.");
     },
     onError: (e: any) => setServerError(e?.message || "Update failed."),
@@ -245,7 +274,12 @@ function DishesTab() {
   });
 
   function setName(name: string) {
-    setForm((f: any) => ({ ...f, name, slug: f.autoSlug ? slugify(name) : f.slug }));
+    const slug = form.autoSlug ? slugify(name) : form.slug;
+    setForm((f: any) => ({ ...f, name, slug }));
+    // Clear name error when user types
+    if (fieldErrors.name) {
+      setFieldErrors(prev => ({ ...prev, name: "" }));
+    }
   }
 
   function applyFilters(newFilters: any) {
@@ -257,36 +291,77 @@ function DishesTab() {
     setQ("");
   }
 
+  const handleCreate = () => {
+    const errors = validateForm(form);
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+    
+    createM.mutate({
+      name: String(form.name).trim(), 
+      slug: String(form.slug), 
+      municipality_id: Number(form.municipality_id), 
+      category: form.category,
+      category_id: Number(form.category_id),
+      rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5), 
+      popularity: form.popularity == null ? null : clamp(Number(form.popularity), 0, 100),
+      description: form.description?.trim() || null,
+      history: form.history?.trim() || null,
+      image_url: form.image_url?.trim() || null,
+      flavor_profile: coerceStringArray(form.flavor_profile),
+      ingredients: coerceStringArray(form.ingredients)
+    });
+  };
+
+  const handleUpdate = () => {
+    if (!form.id) return;
+    
+    const errors = validateForm(form, true);
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+    
+    updateM.mutate({ 
+      id: form.id, 
+      payload: { 
+        ...form, 
+        name: form.name.trim(),
+        description: form.description?.trim() || null,
+        history: form.history?.trim() || null,
+        image_url: form.image_url?.trim() || null,
+        flavor_profile: coerceStringArray(form.flavor_profile), 
+        ingredients: coerceStringArray(form.ingredients) 
+      } 
+    });
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Create Dish Form */}
       <Card title="Create Dish" className="lg:col-span-1">
         <div className="space-y-3">
-          <Field label="Name">
-            <Input value={form.name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          
-          <div className="flex items-center gap-2 -mt-2">
-            <input 
-              id="autoslug" 
-              type="checkbox" 
-              checked={!!form.autoSlug} 
-              onChange={(e) => setForm((f: any) => ({ ...f, autoSlug: e.target.checked }))} 
+          <Field label="Name" error={fieldErrors.name}>
+            <Input 
+              value={form.name} 
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter dish name"
             />
-            <label htmlFor="autoslug" className="text-sm text-neutral-500">Auto slug</label>
-          </div>
-          
-          <Field label="Slug">
-            <Input value={form.slug} onChange={(e) => setForm((f: any) => ({ ...f, slug: e.target.value }))} />
           </Field>
           
-          <Field label="Municipality">
+          <Field label="Municipality" error={fieldErrors.municipality_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.municipality_id} 
-              onChange={(e) => setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }))}
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }));
+                if (fieldErrors.municipality_id) {
+                  setFieldErrors(prev => ({ ...prev, municipality_id: "" }));
+                }
+              }}
             >
-              <option value={0}>Select…</option>
+              <option value={0}>Select Municipality…</option>
               {(muniQ.data ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
@@ -305,11 +380,16 @@ function DishesTab() {
             </select>
           </Field>
 
-          <Field label="Category ID">
+          <Field label="Category ID" error={fieldErrors.category_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.category_id} 
-              onChange={(e) => setForm((f: any) => ({ ...f, category_id: Number(e.target.value) }))}
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, category_id: Number(e.target.value) }));
+                if (fieldErrors.category_id) {
+                  setFieldErrors(prev => ({ ...prev, category_id: "" }));
+                }
+              }}
             >
               <option value={0}>Select Category…</option>
               {(categoriesQ.data ?? []).map((c) => (
@@ -319,85 +399,107 @@ function DishesTab() {
           </Field>
 
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Rating (0–5)">
+            <Field label="Rating (0–5)" error={fieldErrors.rating}>
               <Input 
                 type="number" 
                 step="0.1" 
                 min={0} 
                 max={5} 
                 value={form.rating ?? ""} 
-                onChange={(e) => setForm((f: any) => ({ 
-                  ...f, 
-                  rating: e.target.value === "" ? null : Number(e.target.value) 
-                }))} 
+                onChange={(e) => {
+                  setForm((f: any) => ({ 
+                    ...f, 
+                    rating: e.target.value === "" ? null : Number(e.target.value) 
+                  }));
+                  if (fieldErrors.rating) {
+                    setFieldErrors(prev => ({ ...prev, rating: "" }));
+                  }
+                }}
+                placeholder="0-5"
               />
             </Field>
-            <Field label="Popularity (0–100)">
+            <Field label="Popularity (0-100)" error={fieldErrors.popularity}>
               <Input 
                 type="number" 
                 min={0} 
                 max={100} 
                 value={form.popularity ?? ""} 
-                onChange={(e) => setForm((f: any) => ({ 
-                  ...f, 
-                  popularity: e.target.value === "" ? null : Number(e.target.value) 
-                }))} 
+                onChange={(e) => {
+                  setForm((f: any) => ({ 
+                    ...f, 
+                    popularity: e.target.value === "" ? null : Number(e.target.value) 
+                  }));
+                  if (fieldErrors.popularity) {
+                    setFieldErrors(prev => ({ ...prev, popularity: "" }));
+                  }
+                }}
+                placeholder="0-100"
               />
             </Field>
           </div>
 
-          <div className="flex items-center gap-2">
-            <input 
-              id="is_signature" 
-              type="checkbox" 
-              checked={!!form.is_signature} 
-              onChange={(e) => setForm((f: any) => ({ ...f, is_signature: e.target.checked }))} 
+          <Field label="Description">
+            <textarea 
+              className="w-full rounded-xl border px-3 py-2" 
+              rows={3}
+              value={form.description} 
+              onChange={(e) => setForm((f: any) => ({ ...f, description: e.target.value }))}
+              placeholder="Enter dish description"
             />
-            <label htmlFor="is_signature" className="text-sm">Signature Dish</label>
-          </div>
+          </Field>
 
-          <div className="flex items-center gap-2">
-            <input 
-              id="featured" 
-              type="checkbox" 
-              checked={!!form.featured} 
-              onChange={(e) => setForm((f: any) => ({ ...f, featured: e.target.checked }))} 
+          <Field label="History">
+            <textarea 
+              className="w-full rounded-xl border px-3 py-2" 
+              rows={2}
+              value={form.history} 
+              onChange={(e) => setForm((f: any) => ({ ...f, history: e.target.value }))}
+              placeholder="Enter dish history"
             />
-            <label htmlFor="featured" className="text-sm">Featured</label>
-          </div>
+          </Field>
+
+          <Field label="Image URL">
+            <Input 
+              value={form.image_url} 
+              onChange={(e) => setForm((f: any) => ({ ...f, image_url: e.target.value }))}
+              placeholder="Enter image URL"
+            />
+          </Field>
+
+          <Field label="Flavor Profile (comma separated)">
+            <Input 
+              value={Array.isArray(form.flavor_profile) ? form.flavor_profile.join(", ") : (form.flavor_profile ?? "")} 
+              onChange={(e) => setForm((f: any) => ({ ...f, flavor_profile: e.target.value }))}
+              placeholder="sweet, spicy, salty, etc."
+            />
+          </Field>
+
+          <Field label="Ingredients (comma separated)">
+            <Input 
+              value={Array.isArray(form.ingredients) ? form.ingredients.join(", ") : (form.ingredients ?? "")} 
+              onChange={(e) => setForm((f: any) => ({ ...f, ingredients: e.target.value }))}
+              placeholder="ingredient1, ingredient2, etc."
+            />
+          </Field>
 
           <div className="flex gap-2">
             <Button 
               variant="primary" 
               disabled={createM.isLoading} 
-              onClick={() => {
-                if (!form.name || !form.slug || !form.municipality_id) {
-                  setServerError("Please fill in all required fields");
-                  return;
-                }
-                createM.mutate({
-                  name: String(form.name), 
-                  slug: String(form.slug), 
-                  municipality_id: Number(form.municipality_id), 
-                  category: form.category,
-                  category_id: Number(form.category_id),
-                  rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5), 
-                  popularity: form.popularity == null ? null : clamp(Number(form.popularity), 0, 100),
-                  is_signature: Boolean(form.is_signature),
-                  featured: Boolean(form.featured)
-                });
-              }}
+              onClick={handleCreate}
             >
-              {createM.isLoading ? "Saving..." : "Save"}
+              {createM.isLoading ? "Saving..." : "Create Dish"}
             </Button>
             <Button 
               variant="soft" 
               onClick={() => { 
                 setForm({ 
                   name: "", slug: "", category: "food", municipality_id: 0, category_id: 0,
-                  rating: null, popularity: null, autoSlug: true, is_signature: false, featured: false 
+                  rating: null, popularity: null, description: "", history: "", image_url: "",
+                  flavor_profile: [], ingredients: [], autoSlug: true 
                 }); 
                 setServerError(null); 
+                setFieldErrors({});
               }}
             >
               Reset
@@ -471,7 +573,7 @@ function DishesTab() {
                         {d.featured && <Badge variant="outline">Featured</Badge>}
                       </div>
                       <div className="text-xs text-neutral-500 mb-2">
-                        {d.slug} • {d.category} • {d.municipality_name || `Muni ID: ${d.municipality_id}`}
+                        {d.category} • {d.municipality_name || `Muni ID: ${d.municipality_id}`}
                       </div>
                       {d.description && (
                         <p className="text-sm text-neutral-600 line-clamp-2 mb-2">{d.description}</p>
@@ -486,6 +588,7 @@ function DishesTab() {
                         size="sm" 
                         onClick={() => { 
                           setServerError(null); 
+                          setFieldErrors({});
                           setEditOpen(true); 
                           setForm({ ...d, autoSlug: false }); 
                         }}
@@ -514,24 +617,36 @@ function DishesTab() {
       {/* Edit Dish Modal */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit Dish">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Name">
-            <Input value={form.name ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, name: e.target.value }))} />
+          <Field label="Name" error={fieldErrors.name}>
+            <Input 
+              value={form.name ?? ""} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, name: e.target.value }));
+                if (fieldErrors.name) {
+                  setFieldErrors(prev => ({ ...prev, name: "" }));
+                }
+              }} 
+            />
           </Field>
-          <Field label="Slug">
-            <Input value={form.slug ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, slug: e.target.value }))} />
-          </Field>
-          <Field label="Municipality">
+          
+          <Field label="Municipality" error={fieldErrors.municipality_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.municipality_id ?? 0} 
-              onChange={(e) => setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }))}
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }));
+                if (fieldErrors.municipality_id) {
+                  setFieldErrors(prev => ({ ...prev, municipality_id: "" }));
+                }
+              }}
             >
-              <option value={0}>Select…</option>
+              <option value={0}>Select Municipality…</option>
               {(muniQ.data ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
           </Field>
+          
           <Field label="Category">
             <select 
               className="w-full rounded-xl border px-3 py-2" 
@@ -543,11 +658,17 @@ function DishesTab() {
               <option value="drink">Drink</option>
             </select>
           </Field>
-          <Field label="Category ID">
+          
+          <Field label="Category ID" error={fieldErrors.category_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.category_id ?? 0} 
-              onChange={(e) => setForm((f: any) => ({ ...f, category_id: Number(e.target.value) }))}
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, category_id: Number(e.target.value) }));
+                if (fieldErrors.category_id) {
+                  setFieldErrors(prev => ({ ...prev, category_id: "" }));
+                }
+              }}
             >
               <option value={0}>Select Category…</option>
               {(categoriesQ.data ?? []).map((c) => (
@@ -555,34 +676,48 @@ function DishesTab() {
               ))}
             </select>
           </Field>
+          
           <Field label="Image URL">
             <Input value={form.image_url ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, image_url: e.target.value }))} />
           </Field>
-          <Field label="Rating (0–5)">
+          
+          <Field label="Rating (0–5)" error={fieldErrors.rating}>
             <Input 
               type="number" 
               min={0} 
               max={5} 
               step="0.1" 
               value={form.rating ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                rating: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 5) 
-              }))} 
+              onChange={(e) => {
+                setForm((f: any) => ({ 
+                  ...f, 
+                  rating: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 5) 
+                }));
+                if (fieldErrors.rating) {
+                  setFieldErrors(prev => ({ ...prev, rating: "" }));
+                }
+              }} 
             />
           </Field>
-          <Field label="Popularity (0–100)">
+          
+          <Field label="Popularity (0-100)" error={fieldErrors.popularity}>
             <Input 
               type="number" 
               min={0} 
               max={100} 
               value={form.popularity ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                popularity: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 100) 
-              }))} 
+              onChange={(e) => {
+                setForm((f: any) => ({ 
+                  ...f, 
+                  popularity: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 100) 
+                }));
+                if (fieldErrors.popularity) {
+                  setFieldErrors(prev => ({ ...prev, popularity: "" }));
+                }
+              }} 
             />
           </Field>
+          
           <Field label="Panel Rank">
             <Input 
               type="number" 
@@ -595,6 +730,7 @@ function DishesTab() {
               }))} 
             />
           </Field>
+          
           <Field label="Featured Rank">
             <Input 
               type="number" 
@@ -607,18 +743,21 @@ function DishesTab() {
               }))} 
             />
           </Field>
+          
           <Field label="Flavor profile (comma separated)">
             <Input 
               value={Array.isArray(form.flavor_profile) ? form.flavor_profile.join(", ") : (form.flavor_profile ?? "")} 
               onChange={(e) => setForm((f: any) => ({ ...f, flavor_profile: e.target.value }))} 
             />
           </Field>
+          
           <Field label="Ingredients (comma separated)">
             <Input 
               value={Array.isArray(form.ingredients) ? form.ingredients.join(", ") : (form.ingredients ?? "")} 
               onChange={(e) => setForm((f: any) => ({ ...f, ingredients: e.target.value }))} 
             />
           </Field>
+          
           <Field label="Description" className="md:col-span-2">
             <textarea 
               className="w-full rounded-xl border px-3 py-2" 
@@ -627,6 +766,7 @@ function DishesTab() {
               onChange={(e) => setForm((f: any) => ({ ...f, description: e.target.value }))} 
             />
           </Field>
+          
           <Field label="History" className="md:col-span-2">
             <textarea 
               className="w-full rounded-xl border px-3 py-2" 
@@ -635,43 +775,13 @@ function DishesTab() {
               onChange={(e) => setForm((f: any) => ({ ...f, history: e.target.value }))} 
             />
           </Field>
-          <div className="md:col-span-2 flex gap-4">
-            <div className="flex items-center gap-2">
-              <input 
-                id="edit_is_signature" 
-                type="checkbox" 
-                checked={!!form.is_signature} 
-                onChange={(e) => setForm((f: any) => ({ ...f, is_signature: e.target.checked }))} 
-              />
-              <label htmlFor="edit_is_signature" className="text-sm">Signature Dish</label>
-            </div>
-            <div className="flex items-center gap-2">
-              <input 
-                id="edit_featured" 
-                type="checkbox" 
-                checked={!!form.featured} 
-                onChange={(e) => setForm((f: any) => ({ ...f, featured: e.target.checked }))} 
-              />
-              <label htmlFor="edit_featured" className="text-sm">Featured</label>
-            </div>
-          </div>
         </div>
         <div className="mt-4 flex gap-2">
           <Button 
             variant="primary" 
-            onClick={() => { 
-              if (!form.id) return; 
-              updateM.mutate({ 
-                id: form.id, 
-                payload: { 
-                  ...form, 
-                  flavor_profile: coerceStringArray(form.flavor_profile), 
-                  ingredients: coerceStringArray(form.ingredients) 
-                } 
-              }); 
-            }}
+            onClick={handleUpdate}
           >
-            {updateM.isLoading ? "Saving..." : "Save"}
+            {updateM.isLoading ? "Saving..." : "Save Changes"}
           </Button>
           <Button onClick={() => setEditOpen(false)}>Cancel</Button>
         </div>
@@ -705,15 +815,11 @@ function RestaurantsTab() {
     lat: null, 
     lng: null, 
     rating: null, 
-    is_featured: false,
-    panel_rank: null,
-    signature: false,
-    signature_rank: null,
-    featured: false,
-    featured_rank: null,
     autoSlug: true 
   });
   const [serverError, setServerError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
   
   const restQ = useQuery({ 
@@ -721,6 +827,39 @@ function RestaurantsTab() {
     queryFn: () => listRestaurants({ q, ...filters }), 
     keepPreviousData: true 
   });
+
+  // Validation function
+  const validateForm = (formData: any, isEdit: boolean = false) => {
+    const errors: Record<string, string> = {};
+    
+    if (!formData.name?.trim()) {
+      errors.name = "Name is required";
+    } else if (formData.name.trim().length < 2) {
+      errors.name = "Name must be at least 2 characters";
+    }
+    
+    if (!isEdit && (!formData.municipality_id || formData.municipality_id === 0)) {
+      errors.municipality_id = "Municipality is required";
+    }
+    
+    if (!formData.address?.trim()) {
+      errors.address = "Address is required";
+    }
+    
+    if (formData.rating !== null && (formData.rating < 0 || formData.rating > 5)) {
+      errors.rating = "Rating must be between 0 and 5";
+    }
+    
+    if (formData.email && !/\S+@\S+\.\S+/.test(formData.email)) {
+      errors.email = "Email is invalid";
+    }
+    
+    if (formData.phone && !/^[\d\s\-\+\(\)]+$/.test(formData.phone)) {
+      errors.phone = "Phone number is invalid";
+    }
+    
+    return errors;
+  };
 
   const createM = useMutation({
     mutationFn: (payload: any) => createRestaurant(payload),
@@ -730,10 +869,10 @@ function RestaurantsTab() {
         name: "", slug: "", municipality_id: 0, address: "", kind: "restaurant",
         phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
         price_range: "moderate", cuisine_types: [], lat: null, lng: null, rating: null,
-        is_featured: false, panel_rank: null, signature: false, signature_rank: null,
-        featured: false, featured_rank: null, autoSlug: true 
+        autoSlug: true 
       });
       setServerError(null);
+      setFieldErrors({});
       alert("Restaurant created.");
     },
     onError: (e: any) => setServerError(e?.message || "Create failed."),
@@ -745,6 +884,7 @@ function RestaurantsTab() {
       qc.invalidateQueries({ queryKey: ["rests"] });
       setEditOpen(false);
       setServerError(null);
+      setFieldErrors({});
       alert("Restaurant saved.");
     },
     onError: (e: any) => setServerError(e?.message || "Update failed."),
@@ -760,7 +900,12 @@ function RestaurantsTab() {
   });
 
   function setName(name: string) {
-    setForm((f: any) => ({ ...f, name, slug: f.autoSlug ? slugify(name) : f.slug }));
+    const slug = form.autoSlug ? slugify(name) : form.slug;
+    setForm((f: any) => ({ ...f, name, slug }));
+    // Clear name error when user types
+    if (fieldErrors.name) {
+      setFieldErrors(prev => ({ ...prev, name: "" }));
+    }
   }
 
   function applyFilters(newFilters: any) {
@@ -772,36 +917,90 @@ function RestaurantsTab() {
     setQ("");
   }
 
+  const handleCreate = () => {
+    const errors = validateForm(form);
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+    
+    createM.mutate({
+      name: String(form.name).trim(), 
+      slug: String(form.slug), 
+      municipality_id: Number(form.municipality_id), 
+      address: String(form.address).trim(),
+      kind: form.kind,
+      phone: form.phone?.trim() || null,
+      email: form.email?.trim() || null,
+      website: form.website?.trim() || null,
+      facebook: form.facebook?.trim() || null,
+      instagram: form.instagram?.trim() || null,
+      opening_hours: form.opening_hours?.trim() || null,
+      price_range: form.price_range,
+      cuisine_types: coerceStringArray(form.cuisine_types),
+      lat: form.lat === "" ? null : Number(form.lat), 
+      lng: form.lng === "" ? null : Number(form.lng), 
+      rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5),
+      description: form.description?.trim() || null,
+      image_url: form.image_url?.trim() || null
+    });
+  };
+
+  const handleUpdate = () => {
+    if (!form.id) return;
+    
+    const errors = validateForm(form, true);
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+    
+    updateM.mutate({ 
+      id: form.id, 
+      payload: { 
+        ...form,
+        name: form.name.trim(),
+        address: form.address.trim(),
+        phone: form.phone?.trim() || null,
+        email: form.email?.trim() || null,
+        website: form.website?.trim() || null,
+        facebook: form.facebook?.trim() || null,
+        instagram: form.instagram?.trim() || null,
+        opening_hours: form.opening_hours?.trim() || null,
+        description: form.description?.trim() || null,
+        image_url: form.image_url?.trim() || null,
+        cuisine_types: coerceStringArray(form.cuisine_types),
+        lat: form.lat === "" ? null : Number(form.lat),
+        lng: form.lng === "" ? null : Number(form.lng)
+      } 
+    });
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Create Restaurant Form */}
       <Card title="Create Restaurant" className="lg:col-span-1">
         <div className="space-y-3">
-          <Field label="Name">
-            <Input value={form.name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          
-          <div className="flex items-center gap-2 -mt-2">
-            <input 
-              id="autoslug2" 
-              type="checkbox" 
-              checked={!!form.autoSlug} 
-              onChange={(e) => setForm((f: any) => ({ ...f, autoSlug: e.target.checked }))} 
+          <Field label="Name" error={fieldErrors.name}>
+            <Input 
+              value={form.name} 
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter restaurant name"
             />
-            <label htmlFor="autoslug2" className="text-sm text-neutral-500">Auto slug</label>
-          </div>
-          
-          <Field label="Slug">
-            <Input value={form.slug} onChange={(e) => setForm((f: any) => ({ ...f, slug: e.target.value }))} />
           </Field>
           
-          <Field label="Municipality">
+          <Field label="Municipality" error={fieldErrors.municipality_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.municipality_id} 
-              onChange={(e) => setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }))}
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }));
+                if (fieldErrors.municipality_id) {
+                  setFieldErrors(prev => ({ ...prev, municipality_id: "" }));
+                }
+              }}
             >
-              <option value={0}>Select…</option>
+              <option value={0}>Select Municipality…</option>
               {(muniQ.data ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
@@ -823,16 +1022,44 @@ function RestaurantsTab() {
             </select>
           </Field>
 
-          <Field label="Address">
-            <Input value={form.address} onChange={(e) => setForm((f: any) => ({ ...f, address: e.target.value }))} />
+          <Field label="Address" error={fieldErrors.address}>
+            <Input 
+              value={form.address} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, address: e.target.value }));
+                if (fieldErrors.address) {
+                  setFieldErrors(prev => ({ ...prev, address: "" }));
+                }
+              }}
+              placeholder="Enter full address"
+            />
           </Field>
           
-          <Field label="Phone">
-            <Input value={form.phone} onChange={(e) => setForm((f: any) => ({ ...f, phone: e.target.value }))} />
+          <Field label="Phone" error={fieldErrors.phone}>
+            <Input 
+              value={form.phone} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, phone: e.target.value }));
+                if (fieldErrors.phone) {
+                  setFieldErrors(prev => ({ ...prev, phone: "" }));
+                }
+              }}
+              placeholder="Phone number"
+            />
           </Field>
           
-          <Field label="Email">
-            <Input type="email" value={form.email} onChange={(e) => setForm((f: any) => ({ ...f, email: e.target.value }))} />
+          <Field label="Email" error={fieldErrors.email}>
+            <Input 
+              type="email" 
+              value={form.email} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, email: e.target.value }));
+                if (fieldErrors.email) {
+                  setFieldErrors(prev => ({ ...prev, email: "" }));
+                }
+              }}
+              placeholder="Email address"
+            />
           </Field>
           
           <Field label="Price Range">
@@ -848,7 +1075,7 @@ function RestaurantsTab() {
           </Field>
 
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Lat">
+            <Field label="Latitude">
               <Input 
                 type="number" 
                 step="any" 
@@ -857,9 +1084,10 @@ function RestaurantsTab() {
                   ...f, 
                   lat: e.target.value === "" ? null : Number(e.target.value) 
                 }))} 
+                placeholder="e.g., 14.123456"
               />
             </Field>
-            <Field label="Lng">
+            <Field label="Longitude">
               <Input 
                 type="number" 
                 step="any" 
@@ -868,44 +1096,107 @@ function RestaurantsTab() {
                   ...f, 
                   lng: e.target.value === "" ? null : Number(e.target.value) 
                 }))} 
+                placeholder="e.g., 121.123456"
               />
             </Field>
           </div>
 
+          <Field label="Rating (0–5)" error={fieldErrors.rating}>
+            <Input 
+              type="number" 
+              step="0.1" 
+              min={0} 
+              max={5} 
+              value={form.rating ?? ""} 
+              onChange={(e) => {
+                setForm((f: any) => ({ 
+                  ...f, 
+                  rating: e.target.value === "" ? null : Number(e.target.value) 
+                }));
+                if (fieldErrors.rating) {
+                  setFieldErrors(prev => ({ ...prev, rating: "" }));
+                }
+              }}
+              placeholder="0-5"
+            />
+          </Field>
+
+          <Field label="Opening Hours">
+            <Input 
+              value={form.opening_hours} 
+              onChange={(e) => setForm((f: any) => ({ ...f, opening_hours: e.target.value }))}
+              placeholder="e.g., 9AM-6PM Mon-Sat"
+            />
+          </Field>
+
+          <Field label="Website">
+            <Input 
+              value={form.website} 
+              onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))}
+              placeholder="Website URL"
+            />
+          </Field>
+
+          <Field label="Facebook">
+            <Input 
+              value={form.facebook} 
+              onChange={(e) => setForm((f: any) => ({ ...f, facebook: e.target.value }))}
+              placeholder="Facebook page URL"
+            />
+          </Field>
+
+          <Field label="Instagram">
+            <Input 
+              value={form.instagram} 
+              onChange={(e) => setForm((f: any) => ({ ...f, instagram: e.target.value }))}
+              placeholder="Instagram handle"
+            />
+          </Field>
+
+          <Field label="Cuisine Types (comma separated)">
+            <Input 
+              value={Array.isArray(form.cuisine_types) ? form.cuisine_types.join(", ") : (form.cuisine_types ?? "")} 
+              onChange={(e) => setForm((f: any) => ({ ...f, cuisine_types: e.target.value }))}
+              placeholder="Filipino, Asian, Western, etc."
+            />
+          </Field>
+
+          <Field label="Description">
+            <textarea 
+              className="w-full rounded-xl border px-3 py-2" 
+              rows={3}
+              value={form.description} 
+              onChange={(e) => setForm((f: any) => ({ ...f, description: e.target.value }))}
+              placeholder="Enter restaurant description"
+            />
+          </Field>
+
+          <Field label="Image URL">
+            <Input 
+              value={form.image_url} 
+              onChange={(e) => setForm((f: any) => ({ ...f, image_url: e.target.value }))}
+              placeholder="Enter image URL"
+            />
+          </Field>
+
           <div className="flex gap-2">
             <Button 
               variant="primary" 
-              onClick={() => {
-                if (!form.name || !form.slug || !form.municipality_id || !form.address) {
-                  setServerError("Please fill in all required fields");
-                  return;
-                }
-                createM.mutate({
-                  name: String(form.name), 
-                  slug: String(form.slug), 
-                  municipality_id: Number(form.municipality_id), 
-                  address: String(form.address),
-                  kind: form.kind,
-                  phone: form.phone,
-                  email: form.email,
-                  price_range: form.price_range,
-                  lat: form.lat ? Number(form.lat) : null, 
-                  lng: form.lng ? Number(form.lng) : null, 
-                  rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5)
-                });
-              }}
+              onClick={handleCreate}
             >
-              {createM.isLoading ? "Saving..." : "Save"}
+              {createM.isLoading ? "Saving..." : "Create Restaurant"}
             </Button>
             <Button 
               variant="soft" 
               onClick={() => { 
                 setForm({ 
                   name: "", slug: "", municipality_id: 0, address: "", kind: "restaurant",
-                  phone: "", email: "", price_range: "moderate", lat: null, lng: null, 
-                  rating: null, autoSlug: true 
+                  phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
+                  price_range: "moderate", cuisine_types: [], lat: null, lng: null, 
+                  rating: null, description: "", image_url: "", autoSlug: true 
                 }); 
                 setServerError(null); 
+                setFieldErrors({});
               }}
             >
               Reset
@@ -983,7 +1274,7 @@ function RestaurantsTab() {
                         {r.signature && <Badge variant="outline">Signature</Badge>}
                       </div>
                       <div className="text-xs text-neutral-500 mb-2">
-                        {r.slug} • {r.kind} • {r.municipality_name || `Muni ID: ${r.municipality_id}`}
+                        {r.kind} • {r.municipality_name || `Muni ID: ${r.municipality_id}`}
                       </div>
                       <div className="text-sm text-neutral-600 mb-2">{r.address}</div>
                       {r.description && (
@@ -1000,6 +1291,7 @@ function RestaurantsTab() {
                         size="sm" 
                         onClick={() => { 
                           setServerError(null); 
+                          setFieldErrors({});
                           setEditOpen(true); 
                           setForm({ ...r, autoSlug: false }); 
                         }}
@@ -1028,24 +1320,36 @@ function RestaurantsTab() {
       {/* Edit Restaurant Modal */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit Restaurant">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Name">
-            <Input value={form.name ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, name: e.target.value }))} />
+          <Field label="Name" error={fieldErrors.name}>
+            <Input 
+              value={form.name ?? ""} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, name: e.target.value }));
+                if (fieldErrors.name) {
+                  setFieldErrors(prev => ({ ...prev, name: "" }));
+                }
+              }} 
+            />
           </Field>
-          <Field label="Slug">
-            <Input value={form.slug ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, slug: e.target.value }))} />
-          </Field>
-          <Field label="Municipality">
+          
+          <Field label="Municipality" error={fieldErrors.municipality_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.municipality_id ?? 0} 
-              onChange={(e) => setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }))}
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }));
+                if (fieldErrors.municipality_id) {
+                  setFieldErrors(prev => ({ ...prev, municipality_id: "" }));
+                }
+              }}
             >
-              <option value={0}>Select…</option>
+              <option value={0}>Select Municipality…</option>
               {(muniQ.data ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
           </Field>
+          
           <Field label="Kind">
             <select 
               className="w-full rounded-xl border px-3 py-2" 
@@ -1060,27 +1364,60 @@ function RestaurantsTab() {
               <option value="home-based">Home-based</option>
             </select>
           </Field>
-          <Field label="Address">
-            <Input value={form.address ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, address: e.target.value }))} />
+          
+          <Field label="Address" error={fieldErrors.address}>
+            <Input 
+              value={form.address ?? ""} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, address: e.target.value }));
+                if (fieldErrors.address) {
+                  setFieldErrors(prev => ({ ...prev, address: "" }));
+                }
+              }} 
+            />
           </Field>
-          <Field label="Phone">
-            <Input value={form.phone ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, phone: e.target.value }))} />
+          
+          <Field label="Phone" error={fieldErrors.phone}>
+            <Input 
+              value={form.phone ?? ""} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, phone: e.target.value }));
+                if (fieldErrors.phone) {
+                  setFieldErrors(prev => ({ ...prev, phone: "" }));
+                }
+              }} 
+            />
           </Field>
-          <Field label="Email">
-            <Input type="email" value={form.email ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, email: e.target.value }))} />
+          
+          <Field label="Email" error={fieldErrors.email}>
+            <Input 
+              type="email" 
+              value={form.email ?? ""} 
+              onChange={(e) => {
+                setForm((f: any) => ({ ...f, email: e.target.value }));
+                if (fieldErrors.email) {
+                  setFieldErrors(prev => ({ ...prev, email: "" }));
+                }
+              }} 
+            />
           </Field>
+          
           <Field label="Website">
             <Input value={form.website ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))} />
           </Field>
+          
           <Field label="Facebook">
             <Input value={form.facebook ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, facebook: e.target.value }))} />
           </Field>
+          
           <Field label="Instagram">
             <Input value={form.instagram ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, instagram: e.target.value }))} />
           </Field>
+          
           <Field label="Opening Hours">
             <Input value={form.opening_hours ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, opening_hours: e.target.value }))} />
           </Field>
+          
           <Field label="Price Range">
             <select 
               className="w-full rounded-xl border px-3 py-2" 
@@ -1092,13 +1429,15 @@ function RestaurantsTab() {
               <option value="expensive">Expensive</option>
             </select>
           </Field>
+          
           <Field label="Cuisine Types (comma separated)">
             <Input 
               value={Array.isArray(form.cuisine_types) ? form.cuisine_types.join(", ") : (form.cuisine_types ?? "")} 
               onChange={(e) => setForm((f: any) => ({ ...f, cuisine_types: e.target.value }))} 
             />
           </Field>
-          <Field label="Lat">
+          
+          <Field label="Latitude">
             <Input 
               type="number" 
               step="any" 
@@ -1109,7 +1448,8 @@ function RestaurantsTab() {
               }))} 
             />
           </Field>
-          <Field label="Lng">
+          
+          <Field label="Longitude">
             <Input 
               type="number" 
               step="any" 
@@ -1120,19 +1460,26 @@ function RestaurantsTab() {
               }))} 
             />
           </Field>
-          <Field label="Rating (0–5)">
+          
+          <Field label="Rating (0–5)" error={fieldErrors.rating}>
             <Input 
               type="number" 
               step="0.1" 
               min={0} 
               max={5} 
               value={form.rating ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                rating: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 5) 
-              }))} 
+              onChange={(e) => {
+                setForm((f: any) => ({ 
+                  ...f, 
+                  rating: e.target.value === "" ? null : clamp(Number(e.target.value), 0, 5) 
+                }));
+                if (fieldErrors.rating) {
+                  setFieldErrors(prev => ({ ...prev, rating: "" }));
+                }
+              }} 
             />
           </Field>
+          
           <Field label="Panel Rank">
             <Input 
               type="number" 
@@ -1145,6 +1492,7 @@ function RestaurantsTab() {
               }))} 
             />
           </Field>
+          
           <Field label="Signature Rank">
             <Input 
               type="number" 
@@ -1157,6 +1505,7 @@ function RestaurantsTab() {
               }))} 
             />
           </Field>
+          
           <Field label="Featured Rank">
             <Input 
               type="number" 
@@ -1169,6 +1518,7 @@ function RestaurantsTab() {
               }))} 
             />
           </Field>
+          
           <Field label="Description" className="md:col-span-2">
             <textarea 
               className="w-full rounded-xl border px-3 py-2" 
@@ -1177,55 +1527,17 @@ function RestaurantsTab() {
               onChange={(e) => setForm((f: any) => ({ ...f, description: e.target.value }))} 
             />
           </Field>
+          
           <Field label="Image URL" className="md:col-span-2">
             <Input value={form.image_url ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, image_url: e.target.value }))} />
           </Field>
-          
-          <div className="md:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="flex items-center gap-2">
-              <input 
-                id="edit_is_featured" 
-                type="checkbox" 
-                checked={!!form.is_featured} 
-                onChange={(e) => setForm((f: any) => ({ ...f, is_featured: e.target.checked }))} 
-              />
-              <label htmlFor="edit_is_featured" className="text-sm">Is Featured</label>
-            </div>
-            <div className="flex items-center gap-2">
-              <input 
-                id="edit_signature" 
-                type="checkbox" 
-                checked={!!form.signature} 
-                onChange={(e) => setForm((f: any) => ({ ...f, signature: e.target.checked }))} 
-              />
-              <label htmlFor="edit_signature" className="text-sm">Signature</label>
-            </div>
-            <div className="flex items-center gap-2">
-              <input 
-                id="edit_featured" 
-                type="checkbox" 
-                checked={!!form.featured} 
-                onChange={(e) => setForm((f: any) => ({ ...f, featured: e.target.checked }))} 
-              />
-              <label htmlFor="edit_featured" className="text-sm">Featured</label>
-            </div>
-          </div>
         </div>
         <div className="mt-4 flex gap-2">
           <Button 
             variant="primary" 
-            onClick={() => { 
-              if (!form.id) return; 
-              updateM.mutate({ 
-                id: form.id, 
-                payload: { 
-                  ...form, 
-                  cuisine_types: coerceStringArray(form.cuisine_types)
-                } 
-              }); 
-            }}
+            onClick={handleUpdate}
           >
-            {updateM.isLoading ? "Saving..." : "Save"}
+            {updateM.isLoading ? "Saving..." : "Save Changes"}
           </Button>
           <Button onClick={() => setEditOpen(false)}>Cancel</Button>
         </div>
@@ -1234,7 +1546,6 @@ function RestaurantsTab() {
     </div>
   );
 }
-
 
 
 /* ======================================================
@@ -1313,12 +1624,12 @@ function CurationTab() {
   });
 
   // Get linked dishes for the selected restaurant
-  const linkedDishesQ = useQuery({
-    queryKey: ["dishes:for-restaurant", featuredRestId],
-    enabled: !!featuredRestId,
-    queryFn: async () => (featuredRestId ? await listDishesForRestaurant(featuredRestId) : []),
-    staleTime: 60_000,
-  });
+const linkedDishesQ = useQuery({
+  queryKey: ["dishes:for-restaurant", featuredRestId],
+  enabled: !!featuredRestId,
+  queryFn: async () => (featuredRestId ? await getRestaurantFeaturedDishes(featuredRestId) : []),
+  staleTime: 60_000,
+});
 
   // Mutations
   const patchDishM_local = useMutation({
@@ -1492,6 +1803,310 @@ function CurationTab() {
     }
   }
 
+function RestaurantSpecificDishCard({ dish, restaurantId, onUpdate }: { 
+  dish: any; 
+  restaurantId: number; 
+  onUpdate: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  
+  // The dish object now comes from getRestaurantFeaturedDishes which has different field names
+  const [form, setForm] = useState({
+    featured_rank: dish.featured_rank || 0,
+    restaurant_specific_description: dish.restaurant_specific_description || '',
+    restaurant_specific_price: dish.restaurant_specific_price || '',
+    availability: dish.availability || 'regular',
+    is_featured: dish.is_featured === 1 || dish.is_featured === true // Handle both number and boolean
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (payload: any) => 
+      setRestaurantDishFeatured(restaurantId, dish.dish_id || dish.id, payload), // Use dish_id from the API
+    onSuccess: () => {
+      onUpdate();
+      setEditing(false);
+    },
+    onError: (error: any) => {
+      console.error('Error updating dish feature:', error);
+      alert('Failed to update dish: ' + error.message);
+    }
+  });
+
+  const handleSave = () => {
+    updateMutation.mutate(form);
+  };
+
+  const handleFeatureToggle = (featured: boolean) => {
+    const updatedForm = {
+      ...form,
+      is_featured: featured,
+      featured_rank: featured ? (form.featured_rank || 1) : null
+    };
+    
+    updateMutation.mutate(updatedForm);
+  };
+
+  // Use dish_name from the API response, fallback to name
+  const dishName = dish.dish_name || dish.name;
+  const dishCategory = dish.category;
+  const municipalityName = (muniQ.data ?? []).find(m => m.id === dish.municipality_id)?.name;
+
+  return (
+    <div className="border rounded-lg p-3 hover:shadow-sm transition bg-white">
+      <div className="flex items-start justify-between mb-2">
+        <div className="flex-1">
+          <div className="font-semibold">{dishName}</div>
+          <div className="text-xs text-neutral-500">
+            {dishCategory} • {municipalityName}
+          </div>
+          {dish.original_description && (
+            <div className="text-xs text-neutral-600 mt-1">{dish.original_description}</div>
+          )}
+        </div>
+        <div className="flex gap-1 flex-shrink-0">
+          <Button 
+            size="sm" 
+            variant={form.is_featured ? "primary" : "default"}
+            onClick={() => handleFeatureToggle(!form.is_featured)}
+            disabled={updateMutation.isLoading}
+          >
+            {form.is_featured ? 'Featured' : 'Feature'}
+          </Button>
+          <Button 
+            size="sm" 
+            variant="soft"
+            onClick={() => setEditing(!editing)}
+            disabled={updateMutation.isLoading}
+          >
+            {editing ? 'Cancel' : 'Edit'}
+          </Button>
+        </div>
+      </div>
+      
+      {form.is_featured && (
+        <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-100">
+          {editing ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium text-neutral-700">Featured Rank</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={form.featured_rank || ''}
+                    onChange={(e) => setForm(f => ({ ...f, featured_rank: e.target.value ? Number(e.target.value) : null }))}
+                    className="text-sm"
+                    placeholder="1-10"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-neutral-700">Price (₱)</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={form.restaurant_specific_price}
+                    onChange={(e) => setForm(f => ({ ...f, restaurant_specific_price: e.target.value }))}
+                    className="text-sm"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-neutral-700">Availability</label>
+                <select
+                  className="w-full border rounded p-1 text-sm"
+                  value={form.availability}
+                  onChange={(e) => setForm(f => ({ ...f, availability: e.target.value }))}
+                >
+                  <option value="regular">Regular</option>
+                  <option value="seasonal">Seasonal</option>
+                  <option value="preorder">Pre-order</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-neutral-700">Restaurant Description</label>
+                <textarea
+                  className="w-full border rounded p-2 text-sm"
+                  rows={2}
+                  value={form.restaurant_specific_description}
+                  onChange={(e) => setForm(f => ({ ...f, restaurant_specific_description: e.target.value }))}
+                  placeholder="How this restaurant prepares/serves this dish..."
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  onClick={handleSave}
+                  disabled={updateMutation.isLoading}
+                >
+                  {updateMutation.isLoading ? 'Saving...' : 'Save Changes'}
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="soft"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1 text-sm">
+              {form.restaurant_specific_description ? (
+                <p className="text-neutral-700">{form.restaurant_specific_description}</p>
+              ) : (
+                <p className="text-neutral-500 italic">No restaurant-specific description</p>
+              )}
+              
+              <div className="flex flex-wrap gap-3 text-xs text-neutral-600">
+                {form.featured_rank > 0 && (
+                  <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded">Rank: #{form.featured_rank}</span>
+                )}
+                {form.restaurant_specific_price && (
+                  <span className="bg-green-100 text-green-800 px-2 py-1 rounded">Price: ₱{form.restaurant_specific_price}</span>
+                )}
+                <span className="bg-gray-100 text-gray-800 px-2 py-1 rounded">Availability: {form.availability}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {updateMutation.isError && (
+        <div className="mt-2 text-xs text-red-600">
+          Error: {updateMutation.error.message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
+  restaurantId: number;
+  featuredDishes: any[];
+  onDishAdded: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [selectedDishes, setSelectedDishes] = useState<Set<number>>(new Set());
+  
+  const allDishesQ = useQuery({
+    queryKey: ['all-dishes', search],
+    queryFn: () => listDishes({ q: search }),
+    keepPreviousData: true,
+  });
+
+  const addDishMutation = useMutation({
+    mutationFn: (dishId: number) => 
+      addDishToRestaurant(restaurantId, dishId, {
+        is_featured: false,
+        availability: 'regular'
+      }),
+    onSuccess: () => {
+      onDishAdded();
+      setSelectedDishes(new Set());
+    },
+    onError: (error: any) => {
+      console.error('Error adding dish:', error);
+      alert('Failed to add dish: ' + error.message);
+    }
+  });
+
+  // Filter out dishes that are already linked to this restaurant
+  // Use dish_id from featuredDishes for comparison
+  const availableDishes = (allDishesQ.data || []).filter(dish => 
+    !featuredDishes.some(fd => (fd.dish_id || fd.id) === dish.id)
+  );
+
+  const toggleDishSelection = (dishId: number) => {
+    setSelectedDishes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(dishId)) {
+        newSet.delete(dishId);
+      } else {
+        newSet.add(dishId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleAddDishes = async () => {
+    if (selectedDishes.size === 0) return;
+    
+    try {
+      const promises = Array.from(selectedDishes).map(dishId => 
+        addDishMutation.mutateAsync(dishId)
+      );
+      await Promise.all(promises);
+    } catch (error) {
+      console.error('Error adding dishes:', error);
+    }
+  };
+
+  return (
+    <div className="border-t pt-4">
+      <div className="text-sm font-medium mb-2">Add More Dishes to This Restaurant:</div>
+      
+      <Input 
+        placeholder="Search dishes to add..." 
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="mb-3"
+      />
+
+      {availableDishes.length > 0 ? (
+        <>
+          <ScrollArea height={200}>
+            <div className="space-y-2 pr-2">
+              {availableDishes.map(dish => (
+                <label key={dish.id} className="flex items-center gap-2 p-2 border rounded hover:bg-neutral-50 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={selectedDishes.has(dish.id)} 
+                    onChange={() => toggleDishSelection(dish.id)} 
+                    disabled={addDishMutation.isLoading}
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">{dish.name}</div>
+                    <div className="text-xs text-neutral-500">
+                      {dish.category} • {(muniQ.data ?? []).find(m => m.id === dish.municipality_id)?.name}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </ScrollArea>
+          
+          <div className="flex items-center gap-3 mt-3 pt-3 border-t">
+            <Button 
+              size="sm"
+              onClick={handleAddDishes}
+              disabled={addDishMutation.isLoading || selectedDishes.size === 0}
+            >
+              {addDishMutation.isLoading ? 'Adding...' : `Add ${selectedDishes.size} Dishes`}
+            </Button>
+            <div className="text-xs text-neutral-500">
+              Selected {selectedDishes.size} dishes to add to restaurant
+            </div>
+          </div>
+
+          {addDishMutation.isError && (
+            <div className="text-xs text-red-600 mt-2">
+              Error adding dishes: {addDishMutation.error.message}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="text-sm text-neutral-500 text-center py-4">
+          No more dishes available to add. All dishes are already linked to this restaurant.
+        </div>
+      )}
+    </div>
+  );
+}
   return (
     <div className="space-y-6">
       {/* Panel 1: Dish Curation */}
@@ -1671,93 +2286,67 @@ function CurationTab() {
           </div>
         </ScrollArea>
       </Card>
+{/* Panel 4: Restaurant Dish Featured Curation - RESTAURANT-SPECIFIC */}
+<Card title="Restaurant Dish Featured Curation" toolbar={
+  <div className="flex gap-2 items-center">
+    <select className="border rounded px-2 py-1 text-sm" value={featuredMuniId ?? 0} onChange={(e) => setFeaturedMuniId(Number(e.target.value) || null)}>
+      <option value={0}>All municipalities</option>
+      {(muniQ.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+    </select>
 
-      {/* Panel 4: Restaurant Dish Featured Curation - FIXED */}
-      <Card title="Restaurant Dish Featured Curation" toolbar={
-        <div className="flex gap-2 items-center">
-          <select className="border rounded px-2 py-1 text-sm" value={featuredMuniId ?? 0} onChange={(e) => setFeaturedMuniId(Number(e.target.value) || null)}>
-            <option value={0}>All municipalities</option>
-            {(muniQ.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
+    <select className="border rounded px-2 py-1 text-sm" value={featuredRestId ?? 0} onChange={(e) => setFeaturedRestId(Number(e.target.value) || null)}>
+      <option value={0}>Select restaurant…</option>
+      {(featuredRestsQ.data ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+    </select>
+  </div>
+}>
+  {!featuredRestId ? (
+    <div className="text-center py-8 text-neutral-500">
+      Select a restaurant to manage featured dishes
+    </div>
+  ) : (
+    <div className="space-y-4">
+      <div className="text-sm text-neutral-600 mb-4">
+        Managing featured dishes for: <strong>{(featuredRestsQ.data ?? []).find(r => r.id === featuredRestId)?.name}</strong>
+      </div>
 
-          <select className="border rounded px-2 py-1 text-sm" value={featuredRestId ?? 0} onChange={(e) => setFeaturedRestId(Number(e.target.value) || null)}>
-            <option value={0}>Select restaurant…</option>
-            {(featuredRestsQ.data ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-        </div>
-      }>
-        {!featuredRestId ? (
-          <div className="text-center py-8 text-neutral-500">
-            Select a restaurant to manage featured dishes
+      {/* Add the new API functions to your state and mutations */}
+      {/* Linked Dishes for this Restaurant */}
+      <div>
+        <div className="text-sm font-medium mb-2">Dishes Available at this Restaurant:</div>
+        {linkedDishesQ.isLoading ? (
+          <div className="text-sm text-neutral-500">Loading dishes…</div>
+        ) : (linkedDishesQ.data ?? []).length === 0 ? (
+          <div className="text-sm text-neutral-500">
+            No dishes linked to this restaurant. Use the "Dish to Restaurant Linking" panel to add dishes first.
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="text-sm text-neutral-600 mb-4">
-              Managing featured dishes for: <strong>{(featuredRestsQ.data ?? []).find(r => r.id === featuredRestId)?.name}</strong>
-            </div>
-
-            {/* Linked Dishes for this Restaurant */}
-            <div>
-              <div className="text-sm font-medium mb-2">Dishes Available at this Restaurant:</div>
-              {linkedDishesQ.isLoading ? (
-                <div className="text-sm text-neutral-500">Loading dishes…</div>
-              ) : (linkedDishesQ.data ?? []).length === 0 ? (
-                <div className="text-sm text-neutral-500">
-                  No dishes linked to this restaurant. Use the "Dish to Restaurant Linking" panel to add dishes first.
-                </div>
-              ) : (
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {(linkedDishesQ.data ?? []).map(d => (
-                    <div key={d.id} className="border rounded-lg p-3 hover:shadow-sm transition">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <div className="font-semibold">{d.name}</div>
-                          <div className="text-xs text-neutral-500">
-                            {d.category} • {(muniQ.data ?? []).find(m => m.id === d.municipality_id)?.name}
-                          </div>
-                        </div>
-                        <Button 
-                          size="sm" 
-                          variant="danger"
-                          onClick={() => handleRemoveDishFromRestaurant(d.id)}
-                          disabled={unlinkMut.isLoading}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                      
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-xs text-neutral-500">Featured Rank:</div>
-                        {[1, 2, 3].map(rank => (
-                          <Button 
-                            key={`featured-${d.id}-${rank}`} 
-                            size="sm" 
-                            variant={(d as any).featured_rank === rank ? "primary" : "default"} 
-                            onClick={() => setDishAsFeatured(d.id, (d as any).featured_rank === rank ? null : rank)}
-                            disabled={patchDish.isLoading}
-                          >
-                            {rank}
-                          </Button>
-                        ))}
-                        {(d as any).featured_rank && (
-                          <span className="text-xs text-green-600 font-medium">
-                            Currently featured at rank {(d as any).featured_rank}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="text-xs text-neutral-500 border-t pt-3">
-              💡 <strong>Note:</strong> Featured dishes are set globally (across all restaurants). 
-              If you feature a dish here, it will be featured everywhere it appears.
-            </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {(linkedDishesQ.data ?? []).map(d => (
+              <RestaurantSpecificDishCard 
+                key={d.id}
+                dish={d}
+                restaurantId={featuredRestId}
+                onUpdate={() => {
+                  qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", featuredRestId] });
+                }}
+              />
+            ))}
           </div>
         )}
-      </Card>
+      </div>
+
+      {/* Add Available Dishes Section */}
+      <AvailableDishesSection 
+        restaurantId={featuredRestId}
+        featuredDishes={linkedDishesQ.data || []}
+        onDishAdded={() => {
+          qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", featuredRestId] });
+        }}
+      />
+    </div>
+  )}
+</Card>
     </div>
   );
 }

@@ -19,23 +19,54 @@ export function isLoggedIn() { return !!getAdminToken(); }
 
 /* ------------------------------ HTTP wrapper ------------------------------ */
 async function http(path: string, init: RequestInit = {}) {
-  const token = getAdminToken();
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: "omit", // <- no cookies
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}), // <- Bearer token if present
-      ...(init.headers || {}),
-    },
-    ...init,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}: ${text || "Request failed"}`);
+  // Debug logging for development
+  if (import.meta.env.DEV) {
+    console.log('🔄 API Call:', { path, method: init.method || 'GET', base: BASE });
   }
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) return res.json();
-  return res.text();
+
+  const token = getAdminToken();
+  const url = `${BASE}${path}`;
+  
+  try {
+    const res = await fetch(url, {
+      credentials: "omit",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init.headers || {}),
+      },
+      ...init,
+    });
+
+    // Enhanced error handling
+    if (!res.ok) {
+      let errorMessage = `${res.status} ${res.statusText}`;
+      
+      try {
+        const errorData = await res.json();
+        errorMessage = errorData.message || errorData.error || errorMessage;
+      } catch {
+        // If not JSON, try text
+        const text = await res.text().catch(() => "");
+        if (text) errorMessage = `${errorMessage}: ${text.slice(0, 200)}`;
+      }
+      
+      throw new Error(errorMessage);
+    }
+
+    const contentType = res.headers.get("content-type");
+    if (contentType?.includes("application/json")) {
+      return await res.json();
+    }
+    
+    return await res.text();
+  } catch (error: any) {
+    // Network errors or CORS issues
+    if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+      throw new Error(`Network error: Cannot connect to server. Check if ${BASE} is accessible.`);
+    }
+    throw error;
+  }
 }
 
 function qs(params: Record<string, any>) {
@@ -106,88 +137,45 @@ export async function listMunicipalities(): Promise<Municipality[]> {
   return Array.isArray(data) ? data : [];
 }
 
-
-// Add these API functions
-export async function listDishCategories(): Promise<any[]> {
-  const res = await fetch('/api/dish-categories');
-  if (!res.ok) throw new Error('Failed to fetch dish categories');
-  return res.json();
-}
-
-export async function listDishes(filters?: { q?: string; municipality_id?: number; category?: string }): Promise<any[]> {
-  const params = new URLSearchParams();
-  if (filters?.q) params.append('q', filters.q);
-  if (filters?.municipality_id) params.append('municipality_id', filters.municipality_id.toString());
-  if (filters?.category) params.append('category', filters.category);
-  
-  const res = await fetch(`/api/dishes?${params}`);
-  if (!res.ok) throw new Error('Failed to fetch dishes');
-  return res.json();
-}
-
-export async function listRestaurants(filters?: { q?: string; municipality_id?: number; kind?: string }): Promise<any[]> {
-  const params = new URLSearchParams();
-  if (filters?.q) params.append('q', filters.q);
-  if (filters?.municipality_id) params.append('municipality_id', filters.municipality_id.toString());
-  if (filters?.kind) params.append('kind', filters.kind);
-  
-  const res = await fetch(`/api/restaurants?${params}`);
-  if (!res.ok) throw new Error('Failed to fetch restaurants');
-  return res.json();
-}
-
-export async function createDish(payload: any): Promise<any> {
-  const res = await fetch('/api/dishes', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error('Failed to create dish');
-  return res.json();
-}
-
-export async function updateDish(id: number, payload: any): Promise<any> {
-  const res = await fetch(`/api/dishes/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error('Failed to update dish');
-  return res.json();
-}
-
-export async function deleteDish(id: number): Promise<void> {
-  const res = await fetch(`/api/dishes/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Failed to delete dish');
-}
-
-export async function createRestaurant(payload: any): Promise<any> {
-  const res = await fetch('/api/restaurants', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error('Failed to create restaurant');
-  return res.json();
-}
-
-export async function updateRestaurant(id: number, payload: any): Promise<any> {
-  const res = await fetch(`/api/restaurants/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error('Failed to update restaurant');
-  return res.json();
-}
-
-export async function deleteRestaurant(id: number): Promise<void> {
-  const res = await fetch(`/api/restaurants/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Failed to delete restaurant');
-}
 /* ---------------------------------- Admin --------------------------------- */
 
 
+/* --------------------------- CRUD Operations --------------------------- */
+export async function listDishCategories(): Promise<any[]> {
+  return http(`/api/dish-categories`);
+}
+
+export async function listDishes(filters?: { q?: string; municipality_id?: number; category?: string }): Promise<any[]> {
+  return http(`/api/dishes${qs(filters || {})}`);
+}
+
+export async function listRestaurants(filters?: { q?: string; municipality_id?: number; kind?: string }): Promise<any[]> {
+  return http(`/api/restaurants${qs(filters || {})}`);
+}
+
+export async function createDish(payload: any): Promise<any> {
+  return http(`/api/dishes`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateDish(id: number, payload: any): Promise<any> {
+  return http(`/api/dishes/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export async function deleteDish(id: number): Promise<void> {
+  await http(`/api/dishes/${id}`, { method: 'DELETE' });
+}
+
+export async function createRestaurant(payload: any): Promise<any> {
+  return http(`/api/restaurants`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateRestaurant(id: number, payload: any): Promise<any> {
+  return http(`/api/restaurants/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export async function deleteRestaurant(id: number): Promise<void> {
+  await http(`/api/restaurants/${id}`, { method: 'DELETE' });
+}
 
 
 /* ------------------------------ Analytics API ----------------------------- */
@@ -395,4 +383,70 @@ export async function setRestaurantCuration(id: number, payload: { featured_rank
     // Fallback to regular restaurant update endpoint
     return await http(`/admin/restaurants/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
   }
+}
+
+
+/* --------------------------- Health Check --------------------------- */
+export async function healthCheck(): Promise<{ status: string; timestamp: string }> {
+  try {
+    const result = await http(`/health`);
+    return { status: 'connected', timestamp: new Date().toISOString() };
+  } catch (error: any) {
+    // Try alternative health endpoints
+    try {
+      await http(`/api/health`);
+      return { status: 'connected', timestamp: new Date().toISOString() };
+    } catch {
+      try {
+        await http(`/`);
+        return { status: 'connected', timestamp: new Date().toISOString() };
+      } catch {
+        throw new Error(`Cannot connect to backend at ${BASE}. Please check if the server is running.`);
+      }
+    }
+  }
+}
+
+/* ------------------- Restaurant-Specific Dish Features ------------------- */
+export async function getRestaurantFeaturedDishes(restaurantId: number): Promise<any[]> {
+  return http(`/api/restaurants/${restaurantId}/featured-dishes`);
+}
+
+export async function setRestaurantDishFeatured(
+  restaurantId: number, 
+  dishId: number, 
+  payload: { 
+    is_featured: boolean; 
+    featured_rank?: number; 
+    restaurant_specific_description?: string; 
+    restaurant_specific_price?: number;
+    availability?: string;
+  }
+): Promise<any> {
+  return http(`/admin/restaurants/${restaurantId}/dishes/${dishId}/feature`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getRestaurantDishDetails(restaurantId: number, dishId: number): Promise<any> {
+  return http(`/api/restaurants/${restaurantId}/dishes/${dishId}`);
+}
+
+export async function addDishToRestaurant(
+  restaurantId: number,
+  dishId: number,
+  payload: {
+    price_note?: string;
+    availability?: string;
+    is_featured?: boolean;
+    featured_rank?: number;
+    restaurant_specific_description?: string;
+    restaurant_specific_price?: number;
+  }
+): Promise<any> {
+  return http(`/admin/restaurants/${restaurantId}/dishes`, {
+    method: 'POST',
+    body: JSON.stringify({ dish_id: dishId, ...payload })
+  });
 }

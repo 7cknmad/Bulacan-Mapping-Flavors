@@ -7,7 +7,6 @@ import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 const app = express();
-
 /* ---------------- CORS (GH Pages + local + tunnel) ---------------- */
 const allowed = new Set([
   'http://localhost:5173',
@@ -67,37 +66,8 @@ function authRequired(req, res, next) {
   }
 }
 
-// Auth endpoints (unguarded)
-app.post('/auth/login', async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
-  if (String(email).toLowerCase() !== String(ADMIN_EMAIL).toLowerCase())
-    return res.status(401).json({ error: 'invalid_credentials' });
+/* ---------------- Database connection & schema info ---------------- */
 
-  if (ADMIN_PASSWORD_HASH) {
-    const ok = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
-    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
-  } else {
-    if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD)
-      return res.status(401).json({ error: 'invalid_credentials' });
-  }
-
-  const token = sign({ uid: 'admin', email });
-  res.json({ ok: true, token, user: { id: 'admin', email, name: 'Administrator', role: 'admin' } });
-});
-
-app.get('/auth/me', (req, res) => {
-  const token = readBearer(req);
-  if (!token) return res.status(401).json({ error: 'unauthorized' });
-  try {
-    const p = jwt.verify(token, ADMIN_JWT_SECRET);
-    res.json({ user: { id: p.uid || 'admin', email: p.email, name: 'Administrator', role: 'admin' } });
-  } catch {
-    res.status(401).json({ error: 'invalid_token' });
-  }
-});
-
-/* ---------------- MySQL pool + schema probe ---------------- */
 const cfg = {
   host: process.env.DB_HOST || '127.0.0.1',
   user: process.env.DB_USER || 'root',
@@ -150,6 +120,35 @@ const slugify = (s) => String(s || '')
 /* ========================================================================== */
 /*                              PUBLIC API (/api)                              */
 /* ========================================================================== */
+
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
+  if (String(email).toLowerCase() !== String(ADMIN_EMAIL).toLowerCase())
+    return res.status(401).json({ error: 'invalid_credentials' });
+
+  if (ADMIN_PASSWORD_HASH) {
+    const ok = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+  } else {
+    if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD)
+      return res.status(401).json({ error: 'invalid_credentials' });
+  }
+
+  const token = sign({ uid: 'admin', email });
+  res.json({ ok: true, token, user: { id: 'admin', email, name: 'Administrator', role: 'admin' } });
+});
+
+app.get('/auth/me', (req, res) => {
+  const token = readBearer(req);
+  if (!token) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const p = jwt.verify(token, ADMIN_JWT_SECRET);
+    res.json({ user: { id: p.uid || 'admin', email: p.email, name: 'Administrator', role: 'admin' } });
+  } catch {
+    res.status(401).json({ error: 'invalid_token' });
+  }
+});
 
 app.get('/api/health', async (_req, res) => {
   try {
@@ -309,7 +308,6 @@ app.get('/api/restaurants/:id/dishes', async (req, res) => {
 
 // Guard ALL admin routes (Bearer JWT)
 app.use('/admin', authRequired);
-
 app.get('/admin/health', async (_req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
@@ -790,7 +788,386 @@ app.patch('/admin/curation/restaurants/:id', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// =============================================================================
+// RESTAURANT-SPECIFIC DISH FEATURING ENDPOINTS
+// =============================================================================
+app.get('/api/restaurants/:id/featured-dishes', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    console.log('🔄 GET /api/restaurants/' + restaurantId + '/featured-dishes');
+    
+    // First, check if the restaurant exists
+    const [restaurantCheck] = await pool.query(
+      'SELECT id, name FROM restaurants WHERE id = ?',
+      [restaurantId]
+    );
+    
+    if (restaurantCheck.length === 0) {
+      console.log('❌ Restaurant not found:', restaurantId);
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+    
+    console.log('✅ Restaurant found:', restaurantCheck[0].name);
 
+    // Check if dish_restaurants table has the required columns
+    try {
+      const [tableInfo] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'dish_restaurants' 
+        AND TABLE_SCHEMA = DATABASE()
+      `);
+      console.log('📋 dish_restaurants columns:', tableInfo.map(col => col.COLUMN_NAME));
+    } catch (tableError) {
+      console.log('⚠️ Could not check table structure:', tableError.message);
+    }
+
+    // Simple query to get all dishes for this restaurant
+    const query = `
+      SELECT 
+        d.id as dish_id,
+        d.name as dish_name,
+        d.description as original_description,
+        d.category,
+        d.image_url,
+        d.municipality_id,
+        dr.is_featured,
+        dr.featured_rank,
+        dr.restaurant_specific_description,
+        dr.restaurant_specific_price,
+        dr.availability,
+        dr.created_at
+      FROM dish_restaurants dr
+      JOIN dishes d ON dr.dish_id = d.id
+      WHERE dr.restaurant_id = ?
+      ORDER BY dr.is_featured DESC, dr.featured_rank ASC, d.name ASC
+    `;
+    
+    console.log('📝 Executing query for restaurant:', restaurantId);
+    const [dishes] = await pool.query(query, [restaurantId]);
+    console.log(`✅ Found ${dishes.length} dishes for restaurant ${restaurantId}`);
+    
+    res.json(dishes);
+  } catch (error) {
+    console.error('❌ Error fetching featured dishes:', error);
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      sqlMessage: error.sqlMessage,
+      sql: error.sql
+    });
+    res.status(500).json({ 
+      error: 'Failed to fetch featured dishes',
+      details: error.message 
+    });
+  }
+});
+
+app.patch('/admin/restaurants/:restaurantId/dishes/:dishId/feature', async (req, res) => {
+  try {
+    const { restaurantId, dishId } = req.params;
+    const {
+      is_featured,
+      featured_rank,
+      restaurant_specific_description,
+      restaurant_specific_price,
+      availability
+    } = req.body;
+
+    console.log('Updating restaurant dish feature:', { 
+      restaurantId, 
+      dishId, 
+      is_featured, 
+      featured_rank 
+    });
+
+    // Check if relationship exists
+    const [existing] = await pool.query(
+      'SELECT * FROM dish_restaurants WHERE restaurant_id = ? AND dish_id = ?',
+      [restaurantId, dishId]
+    );
+
+    if (existing.length === 0) {
+      // Create new relationship
+      await pool.query(
+        `INSERT INTO dish_restaurants 
+         (restaurant_id, dish_id, is_featured, featured_rank, restaurant_specific_description, restaurant_specific_price, availability) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          restaurantId, 
+          dishId, 
+          is_featured ? 1 : 0, 
+          featured_rank, 
+          restaurant_specific_description, 
+          restaurant_specific_price, 
+          availability || 'regular'
+        ]
+      );
+      console.log('Created new dish-restaurant relationship');
+    } else {
+      // Update existing relationship
+      await pool.query(
+        `UPDATE dish_restaurants 
+         SET is_featured = ?, featured_rank = ?, restaurant_specific_description = ?, restaurant_specific_price = ?, availability = ?
+         WHERE restaurant_id = ? AND dish_id = ?`,
+        [
+          is_featured ? 1 : 0, 
+          featured_rank, 
+          restaurant_specific_description, 
+          restaurant_specific_price, 
+          availability || 'regular', 
+          restaurantId, 
+          dishId
+        ]
+      );
+      console.log('Updated existing dish-restaurant relationship');
+    }
+
+    res.json({ success: true, message: 'Dish feature updated successfully' });
+  } catch (error) {
+    console.error('Error updating dish feature:', error);
+    res.status(500).json({ error: 'Failed to update dish feature' });
+  }
+});
+
+app.post('/admin/restaurants/:restaurantId/dishes', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    const { dish_id, is_featured, featured_rank, restaurant_specific_description, restaurant_specific_price, availability } = req.body;
+
+    console.log('Adding dish to restaurant:', { restaurantId, dish_id, ...req.body });
+
+    // Check if relationship already exists
+    const [existing] = await pool.query(
+      'SELECT * FROM dish_restaurants WHERE restaurant_id = ? AND dish_id = ?',
+      [restaurantId, dish_id]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'Dish is already linked to this restaurant' });
+    }
+
+    await pool.query(
+      `INSERT INTO dish_restaurants 
+       (restaurant_id, dish_id, is_featured, featured_rank, restaurant_specific_description, restaurant_specific_price, availability) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        restaurantId, 
+        dish_id, 
+        is_featured ? 1 : 0, 
+        featured_rank, 
+        restaurant_specific_description, 
+        restaurant_specific_price, 
+        availability || 'regular'
+      ]
+    );
+
+    console.log('Successfully added dish to restaurant');
+    res.json({ success: true, message: 'Dish added to restaurant successfully' });
+  } catch (error) {
+    console.error('Error adding dish to restaurant:', error);
+    res.status(500).json({ error: 'Failed to add dish to restaurant' });
+  }
+});
+
+// GET /api/restaurants/:restaurantId/dishes/:dishId
+app.get('/api/restaurants/:restaurantId/dishes/:dishId', async (req, res) => {
+  try {
+    const { restaurantId, dishId } = req.params;
+    
+    console.log('Fetching restaurant dish details:', { restaurantId, dishId });
+    
+    const [results] = await pool.query(
+      `SELECT 
+        dr.*, 
+        d.name as dish_name, 
+        d.description as original_description,
+        d.category,
+        d.image_url,
+        d.municipality_id
+       FROM dish_restaurants dr
+       JOIN dishes d ON dr.dish_id = d.id
+       WHERE dr.restaurant_id = ? AND dr.dish_id = ?`,
+      [restaurantId, dishId]
+    );
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Dish not found in restaurant' });
+    }
+    
+    const dish = results[0];
+    
+    // Parse JSON fields if they exist
+    const parsedDish = {
+      ...dish,
+      flavor_profile: dish.flavor_profile ? JSON.parse(dish.flavor_profile) : null,
+      ingredients: dish.ingredients ? JSON.parse(dish.ingredients) : null,
+    };
+    
+    res.json(parsedDish);
+  } catch (error) {
+    console.error('Error fetching restaurant dish details:', error);
+    res.status(500).json({ error: 'Failed to fetch dish details' });
+  }
+});
+
+// GET /api/restaurants/:restaurantId/dishes/:dishId
+// Get restaurant-specific dish details
+app.get('/api/restaurants/:restaurantId/dishes/:dishId', async (req, res) => {
+  try {
+    const { restaurantId, dishId } = req.params;
+    
+    const [results] = await pool.query(
+      `SELECT 
+        dr.*, 
+        d.name as dish_name, 
+        d.description as original_description,
+        d.category,
+        d.image_url
+       FROM dish_restaurants dr
+       JOIN dishes d ON dr.dish_id = d.id
+       WHERE dr.restaurant_id = ? AND dr.dish_id = ?`,
+      [restaurantId, dishId]
+    );
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Dish not found in restaurant' });
+    }
+    
+    const dish = results[0];
+    
+    // Parse JSON fields if they exist
+    const parsedDish = {
+      ...dish,
+      flavor_profile: dish.flavor_profile ? JSON.parse(dish.flavor_profile) : null,
+      ingredients: dish.ingredients ? JSON.parse(dish.ingredients) : null,
+    };
+    
+    res.json(parsedDish);
+  } catch (error) {
+    console.error('Error fetching restaurant dish details:', error);
+    res.status(500).json({ error: 'Failed to fetch dish details' });
+  }
+});
+
+// GET /api/restaurants/:id/dishes
+// Get all dishes for a restaurant (both featured and non-featured)
+app.get('/api/restaurants/:id/dishes', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    
+    const query = `
+      SELECT 
+        d.id,
+        d.name,
+        d.description,
+        d.category,
+        d.image_url,
+        d.municipality_id,
+        d.rating,
+        d.popularity,
+        dr.is_featured,
+        dr.featured_rank,
+        dr.restaurant_specific_description,
+        dr.restaurant_specific_price,
+        dr.availability,
+        dr.price_note,
+        dr.created_at
+      FROM dish_restaurants dr
+      JOIN dishes d ON dr.dish_id = d.id
+      WHERE dr.restaurant_id = ?
+      ORDER BY dr.is_featured DESC, dr.featured_rank ASC, d.name ASC
+    `;
+    
+    const [dishes] = await pool.query(query, [restaurantId]);
+    res.json(dishes);
+  } catch (error) {
+    console.error('Error fetching restaurant dishes:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant dishes' });
+  }
+});
+
+// DELETE /admin/restaurants/:restaurantId/dishes/:dishId
+// Remove a dish from a restaurant
+app.delete('/admin/restaurants/:restaurantId/dishes/:dishId', async (req, res) => {
+  try {
+    const { restaurantId, dishId } = req.params;
+
+    console.log('Removing dish from restaurant:', { restaurantId, dishId });
+
+    const [result] = await pool.query(
+      'DELETE FROM dish_restaurants WHERE restaurant_id = ? AND dish_id = ?',
+      [restaurantId, dishId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Dish not found in restaurant' });
+    }
+
+    res.json({ success: true, message: 'Dish removed from restaurant successfully' });
+  } catch (error) {
+    console.error('Error removing dish from restaurant:', error);
+    res.status(500).json({ error: 'Failed to remove dish from restaurant' });
+  }
+});
+
+// PATCH /admin/restaurants/:restaurantId/dishes/:dishId/availability
+// Update only the availability of a dish in a restaurant
+app.patch('/admin/restaurants/:restaurantId/dishes/:dishId/availability', async (req, res) => {
+  try {
+    const { restaurantId, dishId } = req.params;
+    const { availability } = req.body;
+
+    console.log('Updating dish availability:', { restaurantId, dishId, availability });
+
+    const [result] = await pool.query(
+      'UPDATE dish_restaurants SET availability = ? WHERE restaurant_id = ? AND dish_id = ?',
+      [availability, restaurantId, dishId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Dish not found in restaurant' });
+    }
+
+    res.json({ success: true, message: 'Dish availability updated successfully' });
+  } catch (error) {
+    console.error('Error updating dish availability:', error);
+    res.status(500).json({ error: 'Failed to update dish availability' });
+  }
+});
+
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'Server is working!', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/debug-routes', (req, res) => {
+  const routes = [
+    '/api/test',
+    '/api/restaurants/:id/featured-dishes',
+    '/admin/restaurants/:restaurantId/dishes/:dishId/feature',
+    '/admin/restaurants/:restaurantId/dishes',
+    '/api/restaurants/:restaurantId/dishes/:dishId'
+  ];
+  res.json({ availableRoutes: routes });
+});
 /* ---------------- Start ---------------- */
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const [result] = await pool.query('SELECT NOW() as current_time, DATABASE() as db_name');
+    res.json({ 
+      success: true, 
+      database: result[0].db_name,
+      currentTime: result[0].current_time,
+      message: 'Database connection is working!' 
+    });
+  } catch (error) {
+    console.error('❌ Database test failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Database connection failed',
+      details: error.message 
+    });
+  }
+});
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`🚀 Unified API running at http://localhost:${PORT}`));
