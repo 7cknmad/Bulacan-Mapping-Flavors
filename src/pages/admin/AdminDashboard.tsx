@@ -2843,11 +2843,7 @@ function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
                   </Card>
        </div>
                          );
-                                  }
-
-/* ======================================================
-   Main Admin Dashboard with tabs (UI-polished)
-   ====================================================== */
+                                  }https://jumping-hydrogen-richmond-cheaper.trycloudflare.com
 export default function AdminDashboard() {
   const [tab, setTab] = useState<"analytics" | "dishes" | "restaurants" | "curation">("analytics");
 
@@ -2865,7 +2861,6 @@ export default function AdminDashboard() {
           </div>
         }
       />
-
       {tab === "analytics" && <AnalyticsTab />}
       {tab === "dishes" && <DishesTab />}
       {tab === "restaurants" && <RestaurantsTab />}
