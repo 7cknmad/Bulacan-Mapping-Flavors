@@ -2843,7 +2843,7 @@ function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
                   </Card>
        </div>
                          );
-                                  }https://jumping-hydrogen-richmond-cheaper.trycloudflare.com
+                                  }
 export default function AdminDashboard() {
   const [tab, setTab] = useState<"analytics" | "dishes" | "restaurants" | "curation">("analytics");
 
