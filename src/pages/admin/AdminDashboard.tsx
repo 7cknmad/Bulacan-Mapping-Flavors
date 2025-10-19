@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo,useCallback, useState, useEffect } from "react";
 import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "../admin/ui";
 import {
   listMunicipalities, listDishes, listRestaurants,
@@ -14,24 +14,22 @@ import {
   getRestaurantFeaturedDishes,
   setRestaurantDishFeatured,
   addDishToRestaurant,
-  getRestaurantDishDetails
+  getRestaurantDishDetails,
+  getRestaurantDishLinks,
+  getDishesWithRestaurants,
+  getRestaurantsWithDishes,
+  getUnlinkingData,
+  unlinkDishFromRestaurants,
+  unlinkRestaurantFromDishes,
+  removeAllDishLinks,
+  removeAllRestaurantLinks,
+  bulkUnlinkDishesFromRestaurants,
+  getLinkStats
 } from "../../utils/adminApi";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid
 } from "recharts";
-import { motion } from "framer-motion";
-import {
-  ArrowLeft as ArrowLeftIcon,
-  Star as StarIcon,
-  MapPin as MapPinIcon,
-  Phone as PhoneIcon,
-  Globe as GlobeIcon,
-  Clock as ClockIcon,
-  Facebook as FacebookIcon,
-  Instagram as InstagramIcon,
-  Utensils as UtensilsIcon,
-} from "lucide-react";
 
 /* -------------------- tiny helpers -------------------- */
 const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
@@ -164,12 +162,11 @@ function AnalyticsTab() {
 function DishesTab() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
-  const [filters, setFilters] = useState({ municipality_id: 0, category: "" });
+  const [filters, setFilters] = useState({ municipality_id: 0, category_id: 0 });
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<any>({ 
     name: "", 
     slug: "", 
-    category: "food", 
     municipality_id: 0, 
     category_id: 0,
     rating: null, 
@@ -185,6 +182,7 @@ function DishesTab() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
+  
   const categoriesQ = useQuery({ 
     queryKey: ["dish-categories"], 
     queryFn: listDishCategories, 
@@ -212,7 +210,7 @@ function DishesTab() {
     }
     
     if (!formData.category_id || formData.category_id === 0) {
-      errors.category_id = "Category ID is required";
+      errors.category_id = "Category is required";
     }
     
     if (formData.rating !== null && (formData.rating < 0 || formData.rating > 5)) {
@@ -233,7 +231,6 @@ function DishesTab() {
       setForm({ 
         name: "", 
         slug: "", 
-        category: "food", 
         municipality_id: 0, 
         category_id: 0,
         rating: null, 
@@ -287,32 +284,35 @@ function DishesTab() {
   }
 
   function clearFilters() {
-    setFilters({ municipality_id: 0, category: "" });
+    setFilters({ municipality_id: 0, category_id: 0 });
     setQ("");
   }
 
-  const handleCreate = () => {
-    const errors = validateForm(form);
-    if (Object.keys(errors).length > 0) {
-      setFieldErrors(errors);
-      return;
-    }
-    
-    createM.mutate({
-      name: String(form.name).trim(), 
-      slug: String(form.slug), 
-      municipality_id: Number(form.municipality_id), 
-      category: form.category,
-      category_id: Number(form.category_id),
-      rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5), 
-      popularity: form.popularity == null ? null : clamp(Number(form.popularity), 0, 100),
-      description: form.description?.trim() || null,
-      history: form.history?.trim() || null,
-      image_url: form.image_url?.trim() || null,
-      flavor_profile: coerceStringArray(form.flavor_profile),
-      ingredients: coerceStringArray(form.ingredients)
-    });
+const handleCreate = () => {
+  const errors = validateForm(form);
+  if (Object.keys(errors).length > 0) {
+    setFieldErrors(errors);
+    return;
+  }
+  
+  const payload = {
+    name: String(form.name).trim(), 
+    slug: String(form.slug), 
+    municipality_id: Number(form.municipality_id), 
+    category_id: Number(form.category_id),
+    rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5), 
+    popularity: form.popularity == null ? null : clamp(Number(form.popularity), 0, 100),
+    description: form.description?.trim() || null,
+    history: form.history?.trim() || null,
+    image_url: form.image_url?.trim() || null,
+    flavor_profile: coerceStringArray(form.flavor_profile),
+    ingredients: coerceStringArray(form.ingredients)
   };
+  
+  console.log('🔄 Sending dish creation payload:', payload);
+  
+  createM.mutate(payload);
+};
 
   const handleUpdate = () => {
     if (!form.id) return;
@@ -368,19 +368,7 @@ function DishesTab() {
             </select>
           </Field>
 
-          <Field label="Category">
-            <select 
-              className="w-full rounded-xl border px-3 py-2" 
-              value={form.category} 
-              onChange={(e) => setForm((f: any) => ({ ...f, category: e.target.value }))}
-            >
-              <option value="food">Food</option>
-              <option value="delicacy">Delicacy</option>
-              <option value="drink">Drink</option>
-            </select>
-          </Field>
-
-          <Field label="Category ID" error={fieldErrors.category_id}>
+          <Field label="Category" error={fieldErrors.category_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.category_id} 
@@ -494,7 +482,7 @@ function DishesTab() {
               variant="soft" 
               onClick={() => { 
                 setForm({ 
-                  name: "", slug: "", category: "food", municipality_id: 0, category_id: 0,
+                  name: "", slug: "", municipality_id: 0, category_id: 0,
                   rating: null, popularity: null, description: "", history: "", image_url: "",
                   flavor_profile: [], ingredients: [], autoSlug: true 
                 }); 
@@ -537,13 +525,13 @@ function DishesTab() {
               
               <select 
                 className="rounded-xl border px-3 py-2 text-sm"
-                value={filters.category}
-                onChange={(e) => applyFilters({ category: e.target.value })}
+                value={filters.category_id}
+                onChange={(e) => applyFilters({ category_id: Number(e.target.value) })}
               >
-                <option value="">All Categories</option>
-                <option value="food">Food</option>
-                <option value="delicacy">Delicacy</option>
-                <option value="drink">Drink</option>
+                <option value={0}>All Categories</option>
+                {(categoriesQ.data ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>{c.display_name}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -557,7 +545,7 @@ function DishesTab() {
           </div>
         ) : dishesQ.data?.length === 0 ? (
           <div className="text-center py-8 text-neutral-500">
-            No dishes found. {q || filters.municipality_id || filters.category ? "Try changing your filters." : "Create your first dish!"}
+            No dishes found. {q || filters.municipality_id || filters.category_id ? "Try changing your filters." : "Create your first dish!"}
           </div>
         ) : (
           <ScrollArea height={520}>
@@ -647,19 +635,7 @@ function DishesTab() {
             </select>
           </Field>
           
-          <Field label="Category">
-            <select 
-              className="w-full rounded-xl border px-3 py-2" 
-              value={form.category ?? "food"} 
-              onChange={(e) => setForm((f: any) => ({ ...f, category: e.target.value }))}
-            >
-              <option value="food">Food</option>
-              <option value="delicacy">Delicacy</option>
-              <option value="drink">Drink</option>
-            </select>
-          </Field>
-          
-          <Field label="Category ID" error={fieldErrors.category_id}>
+          <Field label="Category" error={fieldErrors.category_id}>
             <select 
               className="w-full rounded-xl border px-3 py-2" 
               value={form.category_id ?? 0} 
@@ -718,31 +694,6 @@ function DishesTab() {
             />
           </Field>
           
-          <Field label="Panel Rank">
-            <Input 
-              type="number" 
-              min={0} 
-              max={255} 
-              value={form.panel_rank ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                panel_rank: e.target.value === "" ? null : Number(e.target.value) 
-              }))} 
-            />
-          </Field>
-          
-          <Field label="Featured Rank">
-            <Input 
-              type="number" 
-              min={0} 
-              max={255} 
-              value={form.featured_rank ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                featured_rank: e.target.value === "" ? null : Number(e.target.value) 
-              }))} 
-            />
-          </Field>
           
           <Field label="Flavor profile (comma separated)">
             <Input 
@@ -1198,7 +1149,7 @@ function RestaurantsTab() {
                 setServerError(null); 
                 setFieldErrors({});
               }}
-            >
+                    >
               Reset
             </Button>
           </div>
@@ -1294,6 +1245,7 @@ function RestaurantsTab() {
                           setFieldErrors({});
                           setEditOpen(true); 
                           setForm({ ...r, autoSlug: false }); 
+                          
                         }}
                       >
                         Edit
@@ -1306,6 +1258,7 @@ function RestaurantsTab() {
                             deleteM.mutate(r.id); 
                         }}
                       >
+
                         Delete
                       </Button>
                     </div>
@@ -1478,46 +1431,7 @@ function RestaurantsTab() {
                 }
               }} 
             />
-          </Field>
-          
-          <Field label="Panel Rank">
-            <Input 
-              type="number" 
-              min={0} 
-              max={255} 
-              value={form.panel_rank ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                panel_rank: e.target.value === "" ? null : Number(e.target.value) 
-              }))} 
-            />
-          </Field>
-          
-          <Field label="Signature Rank">
-            <Input 
-              type="number" 
-              min={0} 
-              max={255} 
-              value={form.signature_rank ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                signature_rank: e.target.value === "" ? null : Number(e.target.value) 
-              }))} 
-            />
-          </Field>
-          
-          <Field label="Featured Rank">
-            <Input 
-              type="number" 
-              min={0} 
-              max={255} 
-              value={form.featured_rank ?? ""} 
-              onChange={(e) => setForm((f: any) => ({ 
-                ...f, 
-                featured_rank: e.target.value === "" ? null : Number(e.target.value) 
-              }))} 
-            />
-          </Field>
+          </Field>          
           
           <Field label="Description" className="md:col-span-2">
             <textarea 
@@ -1528,10 +1442,11 @@ function RestaurantsTab() {
             />
           </Field>
           
-          <Field label="Image URL" className="md:col-span-2">
+          <Field label="Image URL" className="md:col-span-1">
             <Input value={form.image_url ?? ""} onChange={(e) => setForm((f: any) => ({ ...f, image_url: e.target.value }))} />
           </Field>
         </div>
+
         <div className="mt-4 flex gap-2">
           <Button 
             variant="primary" 
@@ -1558,25 +1473,66 @@ function CurationTab() {
   const [dishMuniId, setDishMuniId] = useState<number | null>(null);
   const [dishCategory, setDishCategory] = useState<"food" | "delicacy" | "drink">("food");
   const [dishSearch, setDishSearch] = useState("");
-  
   const [linkDishSearch, setLinkDishSearch] = useState("");
   const [linkRestSearch, setLinkRestSearch] = useState("");
   const [linkMuniId, setLinkMuniId] = useState<number | null>(null);
   const [selectedLinkDishes, setSelectedLinkDishes] = useState<Set<number>>(new Set());
   const [selectedLinkRests, setSelectedLinkRests] = useState<Set<number>>(new Set());
-  
   const [restMuniId, setRestMuniId] = useState<number | null>(null);
   const [restSearch, setRestSearch] = useState("");
-  
   const [featuredRestId, setFeaturedRestId] = useState<number | null>(null);
   const [featuredMuniId, setFeaturedMuniId] = useState<number | null>(null);
-
   const [bulkLoading, setBulkLoading] = useState(false);
-
+  const [unlinkRestId, setUnlinkRestId] = useState<number | null>(null);
+  const [unlinkDishSearch, setUnlinkDishSearch] = useState("");
+  const [unlinkRestSearch, setUnlinkRestSearch] = useState("");
+  const [selectedUnlinkDishes, setSelectedUnlinkDishes] = useState<Set<number>>(new Set());
+  const [selectedUnlinkRests, setSelectedUnlinkRests] = useState<Set<number>>(new Set());
+  const [bulkUnlinkLoading, setBulkUnlinkLoading] = useState(false);
   const muniQ = useQuery({ queryKey: ["munis"], queryFn: listMunicipalities, staleTime: 300_000 });
 
-  // Queries for each panel
-  const dishesQ = useQuery({
+
+
+
+
+const linkedDishesForUnlink = useQuery({
+  queryKey: ["dishes:for-restaurant", unlinkRestId],
+  enabled: !!unlinkRestId,
+  queryFn: async () => {
+    if (!unlinkRestId) return [];
+    return await getDishesForRestaurant(unlinkRestId);
+  },
+});
+
+
+const allRestaurantDishLinks = useQuery({
+  queryKey: ["all-restaurant-dish-links", linkMuniId],
+  queryFn: () => getRestaurantDishLinks({ 
+    municipalityId: linkMuniId ?? undefined,
+    limit: 5000 
+  }),
+  staleTime: 30000,
+});
+
+const unlinkingDataQuery = useQuery({
+  queryKey: ["unlinking-data"],
+  queryFn: () => getUnlinkingData(),
+  staleTime: 30000,
+});
+
+
+const unlinkDishesQ = useQuery({
+  queryKey: ["unlink-dishes", unlinkDishSearch],
+  queryFn: () => listDishes({ q: unlinkDishSearch }),
+  keepPreviousData: true,
+});
+
+const unlinkRestsQ = useQuery({
+  queryKey: ["unlink-rests", unlinkRestSearch],
+  queryFn: () => listRestaurants({ q: unlinkRestSearch }),
+  keepPreviousData: true,
+});
+const dishesQ = useQuery({
     queryKey: ["dishes", dishSearch, dishMuniId, dishCategory],
     queryFn: () =>
       listDishes({
@@ -1631,7 +1587,52 @@ const linkedDishesQ = useQuery({
   staleTime: 60_000,
 });
 
-  // Mutations
+const isDishLinkedToRestaurant = (dishId: number, restaurantId: number) => {
+  if (!allRestaurantDishLinks.data) return false;
+  
+  return allRestaurantDishLinks.data.some((link: any) => 
+    link.dish_id === dishId && link.restaurant_id === restaurantId
+  );
+};
+const getRestaurantsForDish = (dishId: number) => {
+  if (!allRestaurantDishLinks.data) return [];
+  
+  const restaurants = allRestaurantDishLinks.data
+    .filter((link: any) => link.dish_id === dishId)
+    .map((link: any) => link.restaurant_id);
+  
+  return Array.from(new Set(restaurants)); // Remove duplicates
+};
+
+const getDishesForRestaurant = (restaurantId: number) => {
+  if (!allRestaurantDishLinks.data) return [];
+  
+  const dishes = allRestaurantDishLinks.data
+    .filter((link: any) => link.restaurant_id === restaurantId)
+    .map((link: any) => link.dish_id);
+  
+  return Array.from(new Set(dishes)); // Remove duplicates
+};
+const bulkUnlinkMutation = useMutation({
+  mutationFn: ({ dishIds, restaurantIds }: { dishIds: number[]; restaurantIds: number[] }) =>
+    bulkUnlinkDishesFromRestaurants(dishIds, restaurantIds),
+  onSuccess: () => {
+    qc.invalidateQueries({ queryKey: ["all-restaurant-dish-links"] });
+    qc.invalidateQueries({ queryKey: ["dishes:for-restaurant"] });
+    qc.invalidateQueries({ queryKey: ["unlinking-data"] });
+  },
+});
+
+const unlinkSingleMutation = useMutation({
+  mutationFn: (vars: { dish_id: number; restaurant_id: number }) => unlinkDishRestaurant(vars),
+  onSuccess: (_, vars) => {
+    qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", vars.restaurant_id] });
+    qc.invalidateQueries({ queryKey: ["link-dishes"] });
+    qc.invalidateQueries({ queryKey: ["link-rests"] });
+    qc.invalidateQueries({ queryKey: ["restaurant-dish-links"] }); // Add this for the new endpoints
+  },
+});
+
   const patchDishM_local = useMutation({
     mutationFn: ({ id, payload }: { id: number; payload: any }) => setDishCuration(id, payload),
     onSuccess: () => {
@@ -1645,28 +1646,249 @@ const linkedDishesQ = useQuery({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rests"] }),
   });
 
-  const linkMut_local = useMutation({
-    mutationFn: (vars: { dish_id: number; restaurant_id: number }) => linkDishRestaurant(vars),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", vars.restaurant_id] });
-      qc.invalidateQueries({ queryKey: ["link-dishes"] });
-      qc.invalidateQueries({ queryKey: ["link-rests"] });
-    },
-  });
+const linkMut_local = useMutation({
+  mutationFn: (vars: { dish_id: number; restaurant_id: number }) => linkDishRestaurant(vars),
+  onSuccess: (_, vars) => {
+    qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", vars.restaurant_id] });
+    qc.invalidateQueries({ queryKey: ["link-dishes"] });
+    qc.invalidateQueries({ queryKey: ["link-rests"] });
+    qc.invalidateQueries({ queryKey: ["all-restaurant-dish-links"] }); // Add this
+  },
+});
 
-  const unlinkMut_local = useMutation({
-    mutationFn: (vars: { dish_id: number; restaurant_id: number }) => unlinkDishRestaurant(vars),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", vars.restaurant_id] });
-      qc.invalidateQueries({ queryKey: ["link-dishes"] });
-      qc.invalidateQueries({ queryKey: ["link-rests"] });
-    },
-  });
+const unlinkMut_local = useMutation({
+  mutationFn: (vars: { dish_id: number; restaurant_id: number }) => unlinkDishRestaurant(vars),
+  onSuccess: (_, vars) => {
+    qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", vars.restaurant_id] });
+    qc.invalidateQueries({ queryKey: ["link-dishes"] });
+    qc.invalidateQueries({ queryKey: ["link-rests"] });
+    qc.invalidateQueries({ queryKey: ["all-restaurant-dish-links"] }); // Add this
+  },
+});
 
   const patchDish = patchDishM_local;
   const patchRest = patchRestM_local;
   const linkMut = linkMut_local;
   const unlinkMut = unlinkMut_local;
+
+
+const filteredLinkDishes = useMemo(() => {
+  const allDishes = linkDishesQ.data ?? [];
+  
+  if (!selectedLinkRests.size) {
+    return allDishes;
+  }
+  
+  return allDishes.filter(dish => {
+    // Show dish if it's NOT linked to ALL the selected restaurants
+    return !Array.from(selectedLinkRests).every(restId => 
+      isDishLinkedToRestaurant(dish.id, restId)
+    );
+  });
+}, [linkDishesQ.data, selectedLinkRests, allRestaurantDishLinks.data]);
+
+const filteredLinkRests = useMemo(() => {
+  const allRests = linkRestsQ.data ?? [];
+  
+  if (!selectedLinkDishes.size) {
+    return allRests;
+  }
+  
+  return allRests.filter(rest => {
+    // Show restaurant if it DOESN'T have ALL the selected dishes linked
+    return !Array.from(selectedLinkDishes).every(dishId => 
+      isDishLinkedToRestaurant(dishId, rest.id)
+    );
+  });
+}, [linkRestsQ.data, selectedLinkDishes, allRestaurantDishLinks.data]);
+
+// For Bulk Unlinking: When selecting dishes, only show restaurants that HAVE those dishes linked
+const filteredUnlinkRests = useMemo(() => {
+  const allRests = unlinkRestsQ.data ?? [];
+  
+  if (!selectedUnlinkDishes.size) {
+    // Show restaurants that have ANY dishes linked
+    return allRests.filter(rest => {
+      const linkedDishes = getDishesForRestaurant(rest.id);
+      return linkedDishes.length > 0;
+    });
+  }
+  
+  return allRests.filter(rest => {
+    // Show restaurant if it HAS AT LEAST ONE of the selected dishes linked
+    return Array.from(selectedUnlinkDishes).some(dishId => 
+      isDishLinkedToRestaurant(dishId, rest.id)
+    );
+  });
+}, [unlinkRestsQ.data, selectedUnlinkDishes, allRestaurantDishLinks.data]);
+
+const filteredUnlinkDishes = useMemo(() => {
+  const allDishes = unlinkDishesQ.data ?? [];
+  
+  if (!selectedUnlinkRests.size) {
+    // Show dishes that are linked to ANY restaurant
+    return allDishes.filter(dish => {
+      const linkedRestaurants = getRestaurantsForDish(dish.id);
+      return linkedRestaurants.length > 0;
+    });
+  }
+  
+  return allDishes.filter(dish => {
+    // Show dish if it's linked to AT LEAST ONE selected restaurant
+    return Array.from(selectedUnlinkRests).some(restId => 
+      isDishLinkedToRestaurant(dish.id, restId)
+    );
+  });
+}, [unlinkDishesQ.data, selectedUnlinkRests, allRestaurantDishLinks.data]);
+
+
+// Add these functions
+function toggleUnlinkDish(id: number) {
+  setSelectedUnlinkDishes(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    return n;
+  });
+}
+
+function toggleUnlinkRest(id: number) {
+  setSelectedUnlinkRests(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    return n;
+  });
+}
+
+async function handleUnlinkSingle(dishId: number, restaurantId: number) {
+  const dish = (unlinkDishesQ.data ?? []).find(d => d.id === dishId);
+  const restaurant = (unlinkRestsQ.data ?? []).find(r => r.id === restaurantId);
+  
+  if (!dish || !restaurant) return;
+  
+  // Validate that the link actually exists using our improved function
+  if (!isDishLinkedToRestaurant(dishId, restaurantId)) {
+    alert(`"${dish.name}" is not linked to "${restaurant.name}"`);
+    return;
+  }
+  
+  const ok = await confirmThen(`Unlink "${dish.name}" from "${restaurant.name}"?`);
+  if (!ok) return;
+  
+  try {
+    await unlinkMut.mutateAsync({ dish_id: dishId, restaurant_id: restaurantId });
+    // Refresh the links cache after successful unlinking
+    allLinksQuery.refetch();
+  } catch (err: any) {
+    console.error("Unlink failed", err);
+    alert("Failed to unlink: " + (err?.message || "unknown"));
+  }
+}
+
+async function handleBulkUnlink() {
+  if (!selectedUnlinkDishes.size || !selectedUnlinkRests.size) {
+    alert("Please select both dishes and restaurants to unlink.");
+    return;
+  }
+
+  const dishIds = Array.from(selectedUnlinkDishes);
+  const restaurantIds = Array.from(selectedUnlinkRests);
+
+  // Validate that at least some links exist
+  const existingLinks = [];
+  for (const dishId of dishIds) {
+    for (const restId of restaurantIds) {
+      if (isDishLinkedToRestaurant(dishId, restId)) {
+        existingLinks.push(`${dishId}-${restId}`);
+      }
+    }
+  }
+
+  if (existingLinks.length === 0) {
+    alert("None of the selected dish-restaurant combinations are currently linked.");
+    return;
+  }
+
+  const ok = await confirmThen(
+    `Unlink ${dishIds.length} dishes from ${restaurantIds.length} restaurants? This will remove ${existingLinks.length} links.`
+  );
+  if (!ok) return;
+
+  setBulkUnlinkLoading(true);
+  try {
+    const result = await bulkUnlinkMutation.mutateAsync({
+      dishIds,
+      restaurantIds
+    });
+
+    setSelectedUnlinkDishes(new Set());
+    setSelectedUnlinkRests(new Set());
+    
+    alert(`Successfully unlinked ${result.removed || result.unlinkedCount} dish-restaurant combinations!`);
+  } catch (err: any) {
+    console.error("Bulk unlink failed", err);
+    alert("Bulk unlink failed: " + (err?.message || "unknown"));
+  } finally {
+    setBulkUnlinkLoading(false);
+  }
+}
+
+// Unlink a dish from all restaurants
+async function handleUnlinkDishFromAll(dishId: number) {
+  const dish = (unlinkDishesQ.data ?? []).find(d => d.id === dishId);
+  if (!dish) return;
+
+  const linkedCount = getRestaurantsForDish(dishId).length;
+  if (linkedCount === 0) {
+    alert(`"${dish.name}" is not linked to any restaurants.`);
+    return;
+  }
+
+  const ok = await confirmThen(
+    `Remove "${dish.name}" from all ${linkedCount} restaurants?`
+  );
+  if (!ok) return;
+
+  try {
+    await removeAllDishLinks(dishId);
+    // Refresh data
+    allRestaurantDishLinks.refetch();
+    unlinkingDataQuery.refetch();
+    alert(`Successfully removed "${dish.name}" from all restaurants.`);
+  } catch (err: any) {
+    console.error("Failed to unlink dish from all restaurants:", err);
+    alert("Failed to unlink dish: " + (err?.message || "unknown"));
+  }
+}
+
+// Unlink a restaurant from all dishes
+async function handleUnlinkRestaurantFromAll(restaurantId: number) {
+  const restaurant = (unlinkRestsQ.data ?? []).find(r => r.id === restaurantId);
+  if (!restaurant) return;
+
+  const linkedCount = getDishesForRestaurant(restaurantId).length;
+  if (linkedCount === 0) {
+    alert(`"${restaurant.name}" has no dishes linked.`);
+    return;
+  }
+
+  const ok = await confirmThen(
+    `Remove all ${linkedCount} dishes from "${restaurant.name}"?`
+  );
+  if (!ok) return;
+
+  try {
+    await removeAllRestaurantLinks(restaurantId);
+    // Refresh data
+    allRestaurantDishLinks.refetch();
+    unlinkingDataQuery.refetch();
+    alert(`Successfully removed all dishes from "${restaurant.name}".`);
+  } catch (err: any) {
+    console.error("Failed to unlink restaurant from all dishes:", err);
+    alert("Failed to unlink restaurant: " + (err?.message || "unknown"));
+  }
+}
 
   // Dish Curation Functions
   async function setDishRank(d: Dish, rank: number | null) {
@@ -1713,31 +1935,63 @@ const linkedDishesQ = useQuery({
     });
   }
 
-  async function handleBulkLink() {
-    if (!selectedLinkDishes.size || !selectedLinkRests.size) {
-      alert("Please select both dishes and restaurants to link.");
-      return;
-    }
+async function handleBulkLink() {
+  if (!selectedLinkDishes.size || !selectedLinkRests.size) {
+    alert("Please select both dishes and restaurants to link.");
+    return;
+  }
 
-    setBulkLoading(true);
-    try {
-      const linkPromises = [];
-      for (const dishId of selectedLinkDishes) {
-        for (const restId of selectedLinkRests) {
-          linkPromises.push(linkMut.mutateAsync({ dish_id: dishId, restaurant_id: restId }));
-        }
+  // Validate no duplicate links
+  const duplicateLinks = [];
+  for (const dishId of selectedLinkDishes) {
+    for (const restId of selectedLinkRests) {
+      if (isDishLinkedToRestaurant(dishId, restId)) {
+        const dish = (linkDishesQ.data ?? []).find(d => d.id === dishId);
+        const rest = (linkRestsQ.data ?? []).find(r => r.id === restId);
+        duplicateLinks.push(`${dish?.name} ↔ ${rest?.name}`);
       }
-      await Promise.all(linkPromises);
-      setSelectedLinkDishes(new Set());
-      setSelectedLinkRests(new Set());
-      alert(`Successfully linked ${selectedLinkDishes.size} dishes to ${selectedLinkRests.size} restaurants!`);
-    } catch (err: any) {
-      console.error("Bulk link failed", err);
-      alert("Bulk link failed: " + (err?.message || "unknown"));
-    } finally {
-      setBulkLoading(false);
     }
   }
+
+  if (duplicateLinks.length > 0) {
+    alert(`Some links already exist:\n${duplicateLinks.join('\n')}\n\nThese will be skipped.`);
+  }
+
+  setBulkLoading(true);
+  try {
+    const linkPromises = [];
+    let successCount = 0;
+    
+    for (const dishId of selectedLinkDishes) {
+      for (const restId of selectedLinkRests) {
+        // Skip if already linked
+        if (!isDishLinkedToRestaurant(dishId, restId)) {
+          linkPromises.push(
+            linkMut.mutateAsync({ dish_id: dishId, restaurant_id: restId })
+              .then(() => successCount++)
+              .catch(err => {
+                console.error(`Failed to link dish ${dishId} to restaurant ${restId}:`, err);
+              })
+          );
+        }
+      }
+    }
+
+    await Promise.all(linkPromises);
+    setSelectedLinkDishes(new Set());
+    setSelectedLinkRests(new Set());
+    
+    const totalAttempted = selectedLinkDishes.size * selectedLinkRests.size;
+    const skipped = totalAttempted - successCount;
+    
+    alert(`Successfully linked ${successCount} dish-restaurant combinations!${skipped > 0 ? ` (${skipped} already linked)` : ''}`);
+  } catch (err: any) {
+    console.error("Bulk link failed", err);
+    alert("Bulk link failed: " + (err?.message || "unknown"));
+  } finally {
+    setBulkLoading(false);
+  }
+}
 
   // FIXED: Featured Dishes Functions
   async function setDishAsFeatured(dishId: number, rank: number | null) {
@@ -1985,6 +2239,7 @@ function RestaurantSpecificDishCard({ dish, restaurantId, onUpdate }: {
   );
 }
 
+
 function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
   restaurantId: number;
   featuredDishes: any[];
@@ -2159,92 +2414,331 @@ function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
         </ScrollArea>
       </Card>
 
-      {/* Panel 2: Dish to Restaurant Linking */}
-      <Card title="Dish to Restaurant Linking" toolbar={
-        <div className="flex gap-2 items-center">
-          <select className="border rounded px-2 py-1 text-sm" value={linkMuniId ?? 0} onChange={(e) => setLinkMuniId(Number(e.target.value) || null)}>
-            <option value={0}>All municipalities</option>
-            {(muniQ.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </div>
-      }>
-        <div className="grid md:grid-cols-2 gap-4 mb-4">
-          {/* Dishes Column */}
-          <div>
-            <div className="text-sm font-medium mb-2">Select Dishes</div>
-            <Input 
-              placeholder="Search dishes…" 
-              value={linkDishSearch} 
-              onChange={(e) => setLinkDishSearch(e.target.value)} 
-              className="mb-2"
-            />
-            <ScrollArea height={200}>
-              <div className="space-y-2 pr-2">
-                {(linkDishesQ.data ?? []).map(d => (
-                  <label key={d.id} className="flex items-center gap-2 p-2 border rounded hover:bg-neutral-50 cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedLinkDishes.has(d.id)} 
-                      onChange={() => toggleLinkDish(d.id)} 
-                    />
-                    <div>
-                      <div className="font-medium text-sm">{d.name}</div>
-                      <div className="text-xs text-neutral-500">{d.category}</div>
-                    </div>
-                  </label>
-                ))}
+{/* Panel 2: Dish to Restaurant Linking */}
+<Card title="Dish to Restaurant Linking" toolbar={
+  <div className="flex gap-2 items-center">
+    <select className="border rounded px-2 py-1 text-sm" value={linkMuniId ?? 0} onChange={(e) => setLinkMuniId(Number(e.target.value) || null)}>
+      <option value={0}>All municipalities</option>
+      {(muniQ.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+    </select>
+  </div>
+ }>
+  <div className="grid md:grid-cols-2 gap-4 mb-4">
+    {/* Dishes Column - For Linking */}
+    <div>
+      <div className="text-sm font-medium mb-2">Select Dishes to Link</div>
+      <div className="text-xs text-neutral-500 mb-2">
+  {selectedLinkRests.size > 0 
+    ? `Only showing dishes NOT linked to the ${selectedLinkRests.size} selected restaurant(s)`
+    : "Select restaurants to see which dishes can be linked"
+  }
+ </div>
+      <Input 
+        placeholder="Search dishes…" 
+        value={linkDishSearch} 
+        onChange={(e) => setLinkDishSearch(e.target.value)} 
+        className="mb-2"
+      />
+      <ScrollArea height={200}>
+        <div className="space-y-2 pr-2">
+          {filteredLinkDishes.map(d => (
+            <label key={d.id} className="flex items-center gap-2 p-2 border rounded hover:bg-neutral-50 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={selectedLinkDishes.has(d.id)} 
+                onChange={() => toggleLinkDish(d.id)} 
+              />
+              <div>
+                <div className="font-medium text-sm">{d.name}</div>
+                <div className="text-xs text-neutral-500">{d.category}</div>
+                {selectedLinkRests.size > 0 && (
+                  <div className="text-xs text-green-600">
+                    Can be linked to {selectedLinkRests.size} restaurant(s)
+                  </div>
+                )}
               </div>
-            </ScrollArea>
-            <div className="text-xs text-neutral-500 mt-1">
-              Selected: {selectedLinkDishes.size} dishes
+            </label>
+          ))}
+          {filteredLinkDishes.length === 0 && (
+            <div className="text-sm text-neutral-500 text-center py-4">
+              {selectedLinkRests.size > 0 
+                ? "All dishes are already linked to the selected restaurants"
+                : "No dishes found"
+              }
             </div>
-          </div>
+          )}
+        </div>
+      </ScrollArea>
+      <div className="text-xs text-neutral-500 mt-1">
+        Selected: {selectedLinkDishes.size} dishes • Showing: {filteredLinkDishes.length} available
+      </div>
+    </div>
 
-          {/* Restaurants Column */}
-          <div>
-            <div className="text-sm font-medium mb-2">Select Restaurants</div>
-            <Input 
-              placeholder="Search restaurants…" 
-              value={linkRestSearch} 
-              onChange={(e) => setLinkRestSearch(e.target.value)} 
-              className="mb-2"
-            />
-            <ScrollArea height={200}>
-              <div className="space-y-2 pr-2">
-                {(linkRestsQ.data ?? []).map(r => (
-                  <label key={r.id} className="flex items-center gap-2 p-2 border rounded hover:bg-neutral-50 cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedLinkRests.has(r.id)} 
-                      onChange={() => toggleLinkRest(r.id)} 
-                    />
-                    <div>
-                      <div className="font-medium text-sm">{r.name}</div>
-                      <div className="text-xs text-neutral-500">{r.address}</div>
-                    </div>
-                  </label>
-                ))}
+    {/* Restaurants Column - For Linking */}
+    <div>
+      <div className="text-sm font-medium mb-2">Select Restaurants to Link To</div>
+ <div className="text-xs text-neutral-500 mb-2">
+  {selectedLinkDishes.size > 0 
+    ? `Only showing restaurants that DON'T have the ${selectedLinkDishes.size} selected dish(es)`
+    : "Select dishes to see which restaurants can link them"
+  }
+ </div>
+      <Input 
+        placeholder="Search restaurants…" 
+        value={linkRestSearch} 
+        onChange={(e) => setLinkRestSearch(e.target.value)} 
+        className="mb-2"
+      />
+      <ScrollArea height={200}>
+        <div className="space-y-2 pr-2">
+          {filteredLinkRests.map(r => (
+            <label key={r.id} className="flex items-center gap-2 p-2 border rounded hover:bg-neutral-50 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={selectedLinkRests.has(r.id)} 
+                onChange={() => toggleLinkRest(r.id)} 
+              />
+              <div>
+                <div className="font-medium text-sm">{r.name}</div>
+                <div className="text-xs text-neutral-500">{r.address}</div>
+                {selectedLinkDishes.size > 0 && (
+                  <div className="text-xs text-green-600">
+                    Can link {selectedLinkDishes.size} dish(es)
+                  </div>
+                )}
               </div>
-            </ScrollArea>
-            <div className="text-xs text-neutral-500 mt-1">
-              Selected: {selectedLinkRests.size} restaurants
+            </label>
+          ))}
+          {filteredLinkRests.length === 0 && (
+            <div className="text-sm text-neutral-500 text-center py-4">
+              {selectedLinkDishes.size > 0
+                ? "All restaurants already have the selected dishes linked"
+                : "No restaurants found"
+              }
             </div>
-          </div>
+          )}
         </div>
+      </ScrollArea>
+      <div className="text-xs text-neutral-500 mt-1">
+        Selected: {selectedLinkRests.size} restaurants • Showing: {filteredLinkRests.length} available
+      </div>
+    </div>
+  </div>
 
-        <div className="flex items-center gap-3 border-t pt-4">
-          <Button 
-            variant="primary" 
-            onClick={handleBulkLink} 
-            disabled={bulkLoading || !selectedLinkDishes.size || !selectedLinkRests.size}
-          >
-            Link Selected ({selectedLinkDishes.size} dishes × {selectedLinkRests.size} restaurants)
-          </Button>
-          <div className="text-sm text-neutral-600">
-            This will link every selected dish to every selected restaurant
+  <div className="flex items-center gap-3 border-t pt-4">
+    <Button 
+      variant="primary" 
+      onClick={handleBulkLink} 
+      disabled={bulkLoading || !selectedLinkDishes.size || !selectedLinkRests.size}
+    >
+      {bulkLoading ? 'Linking...' : `Link Selected (${selectedLinkDishes.size} × ${selectedLinkRests.size})`}
+    </Button>
+    <div className="text-sm text-neutral-600">
+      Links every selected dish to every selected restaurant (skips existing links)
+    </div>
+  </div>
+ </Card>
+ <Card title="Bulk Unlink">
+     {/* Bulk Unlinking */}
+     <div className="grid md:grid-cols-2 gap-4 mb-4">
+      <div>
+        <div className="text-sm font-medium mb-2">Select Dishes to Unlink</div>
+     <div className="text-xs text-neutral-500 mb-2">
+      {selectedUnlinkRests.size > 0 
+         ? `Only showing dishes linked to the ${selectedUnlinkRests.size} selected restaurant(s)`
+         : "Select restaurants to see linked dishes"
+      }
+         </div>
+        <Input 
+          placeholder="Search dishes to unlink…" 
+          value={unlinkDishSearch} 
+          onChange={(e) => setUnlinkDishSearch(e.target.value)} 
+          className="mb-2"
+        />
+        <ScrollArea height={150}>
+          <div className="space-y-2 pr-2">
+            {filteredUnlinkDishes.map(d => (
+              <label key={d.id} className="flex items-center gap-2 p-2 border rounded hover:bg-neutral-50 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={selectedUnlinkDishes.has(d.id)} 
+                  onChange={() => toggleUnlinkDish(d.id)} 
+                />
+                <div>
+                  <div className="font-medium text-sm">{d.name}</div>
+                  <div className="text-xs text-neutral-500">{d.category}</div>
+                  {selectedUnlinkRests.size > 0 && (
+                    <div className="text-xs text-red-600">
+                      Linked to {selectedUnlinkRests.size} restaurant(s)
+                    </div>
+                  )}
+                </div>
+              </label>
+            ))}
+            {filteredUnlinkDishes.length === 0 && (
+              <div className="text-sm text-neutral-500 text-center py-4">
+                {selectedUnlinkRests.size > 0
+                  ? "No dishes linked to the selected restaurants"
+                  : "No dishes found"
+                }
+              </div>
+            )}
           </div>
+        </ScrollArea>
+        <div className="text-xs text-neutral-500 mt-1">
+          Selected: {selectedUnlinkDishes.size} dishes • Showing: {filteredUnlinkDishes.length} linked
         </div>
-      </Card>
+      </div>
+
+      <div>
+        <div className="text-sm font-medium mb-2">Select Restaurants to Unlink From</div>
+             <div className="text-xs text-neutral-500 mb-2">
+        {selectedUnlinkDishes.size > 0 
+       ? `Only showing restaurants that HAVE the ${selectedUnlinkDishes.size} selected dish(es)`
+        : "Select dishes to see which restaurants have them"
+           }
+              </div>
+        <Input 
+          placeholder="Search restaurants…" 
+          value={unlinkRestSearch} 
+          onChange={(e) => setUnlinkRestSearch(e.target.value)} 
+          className="mb-2"
+        />
+        <ScrollArea height={150}>
+          <div className="space-y-2 pr-2">
+            {filteredUnlinkRests.map(r => (
+              <label key={r.id} className="flex items-center gap-2 p-2 border rounded hover:bg-neutral-50 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={selectedUnlinkRests.has(r.id)} 
+                  onChange={() => toggleUnlinkRest(r.id)} 
+                />
+                <div>
+                  <div className="font-medium text-sm">{r.name}</div>
+                  <div className="text-xs text-neutral-500">{r.address}</div>
+                  {selectedUnlinkDishes.size > 0 && (
+                    <div className="text-xs text-red-600">
+                      Has {selectedUnlinkDishes.size} selected dish(es)
+                    </div>
+                  )}
+                </div>
+              </label>
+            ))}
+            {filteredUnlinkRests.length === 0 && (
+              <div className="text-sm text-neutral-500 text-center py-4">
+                {selectedUnlinkDishes.size > 0
+                  ? "No restaurants have the selected dishes linked"
+                  : "No restaurants found"
+                }
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+        <div className="text-xs text-neutral-500 mt-1">
+          Selected: {selectedUnlinkRests.size} restaurants • Showing: {filteredUnlinkRests.length} with links
+        </div>
+      </div>
+    </div>
+
+    <div className="flex items-center gap-3">
+      <Button 
+        variant="danger" 
+        onClick={handleBulkUnlink} 
+        disabled={bulkUnlinkLoading || !selectedUnlinkDishes.size || !selectedUnlinkRests.size}
+      >
+        {bulkUnlinkLoading ? 'Unlinking...' : `Unlink Selected (${selectedUnlinkDishes.size} × ${selectedUnlinkRests.size})`}
+      </Button>
+      <div className="text-sm text-neutral-600">
+        Unlinks every selected dish from every selected restaurant
+      </div>
+    </div>
+</Card>
+
+<Card title="Quick Actions">
+
+
+
+
+
+
+
+                  <div className="my-7 border-green-500">
+          {/* Add this section after your bulk unlinking section */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                   {/* Quick Dish Unlinking */}
+                  <div>
+            <div className="text-xl font-medium mb-1">Unlink Dish from All Restaurants</div>
+              <select 
+        className="w-full border rounded px-3 py-2 text-sm mb-2"
+        onChange={async (e) => {
+          const dishId = Number(e.target.value);
+          if (dishId) {
+            await handleUnlinkDishFromAll(dishId);
+            e.target.value = ''; // Reset selection
+          }
+        }}
+      >
+        <option value="">Select a dish to unlink from all restaurants...</option>
+        {unlinkDishesQ.data?.filter(dish => getRestaurantsForDish(dish.id).length > 0)
+          .map(dish => (
+            <option key={dish.id} value={dish.id}>
+              {dish.name} ({getRestaurantsForDish(dish.id).length} restaurants)
+            </option>
+          ))
+        }
+      </select>
+    </div>
+    <div>
+      <div className="text-xl font-medium mb-1">Unlink Restaurant from All Dishes</div>
+      <select 
+        className="w-full border rounded px-3 py-2 text-sm mb-2"
+        onChange={async (e) => {
+          const restaurantId = Number(e.target.value);
+          if (restaurantId) {
+            await handleUnlinkRestaurantFromAll(restaurantId);
+            e.target.value = ''; // Reset selection
+          }
+        }}
+      >
+        <option value="">Select a restaurant to unlink all dishes...</option>
+        {unlinkRestsQ.data?.filter(rest => getDishesForRestaurant(rest.id).length > 0)
+          .map(rest => (
+            <option key={rest.id} value={rest.id}>
+              {rest.name} ({getDishesForRestaurant(rest.id).length} dishes)
+            </option>
+          ))
+        }
+      </select>
+    </div>
+  </div>
+{/* Add statistics section */}
+<div className="border-t pt-4 mt-4">
+  <h4 className="text-xl font-medium mb-3">Link Statistics</h4>
+  {allRestaurantDishLinks.data && (
+    <div className="grid grid-cols-3 gap-4 text-sm">
+      <div className="text-center p-3 bg-blue-50 rounded border">
+        <div className="font-semibold text-blue-800">
+          {new Set(allRestaurantDishLinks.data.map((l: any) => l.dish_id)).size}
+        </div>
+        <div className="text-xs text-blue-600">Dishes with Links</div>
+      </div>
+      <div className="text-center p-3 bg-green-50 rounded border">
+        <div className="font-semibold text-green-800">
+          {new Set(allRestaurantDishLinks.data.map((l: any) => l.restaurant_id)).size}
+        </div>
+        <div className="text-xs text-green-600">Restaurants with Links</div>
+      </div>
+      <div className="text-center p-3 bg-purple-50 rounded border">
+        <div className="font-semibold text-purple-800">
+          {allRestaurantDishLinks.data.length}
+        </div>
+        <div className="text-xs text-purple-600">Total Links</div>
+      </div>
+    </div>
+    )}
+    </div>
+    </div>
+   </Card>
 
       {/* Panel 3: Restaurant Curation */}
       <Card title="Restaurant Curation (Per Municipality)" toolbar={
@@ -2285,9 +2779,9 @@ function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
             ))}
           </div>
         </ScrollArea>
-      </Card>
-{/* Panel 4: Restaurant Dish Featured Curation - RESTAURANT-SPECIFIC */}
-<Card title="Restaurant Dish Featured Curation" toolbar={
+             </Card>
+                                  {/* Panel 4: Restaurant Dish Featured Curation - RESTAURANT-SPECIFIC */}
+                    <Card title="Restaurant Dish Featured Curation" toolbar={
   <div className="flex gap-2 items-center">
     <select className="border rounded px-2 py-1 text-sm" value={featuredMuniId ?? 0} onChange={(e) => setFeaturedMuniId(Number(e.target.value) || null)}>
       <option value={0}>All municipalities</option>
@@ -2299,7 +2793,7 @@ function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
       {(featuredRestsQ.data ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
     </select>
   </div>
-}>
+  }>
   {!featuredRestId ? (
     <div className="text-center py-8 text-neutral-500">
       Select a restaurant to manage featured dishes
@@ -2346,10 +2840,10 @@ function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
       />
     </div>
   )}
-</Card>
-    </div>
-  );
-}
+                  </Card>
+       </div>
+                         );
+                                  }
 
 /* ======================================================
    Main Admin Dashboard with tabs (UI-polished)

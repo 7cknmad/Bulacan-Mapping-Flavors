@@ -93,6 +93,43 @@ export type Dish = {
   is_signature?: 0 | 1 | boolean | null;
   panel_rank?: number | null; // 1..3 unique per muni
 };
+export type DishWithRestaurants = Dish & {
+  restaurants: Restaurant[];
+  restaurant_count: number;
+  municipality_name: string;
+};
+
+export type RestaurantWithDishes = Restaurant & {
+  dishes: Dish[];
+  dish_count: number;
+  municipality_name: string;
+};
+
+export type RestaurantDishLink = {
+  dish_id: number;
+  restaurant_id: number;
+  dish_name: string;
+  restaurant_name: string;
+  municipality_name: string;
+  is_featured: boolean;
+  featured_rank: number;
+  restaurant_specific_description?: string;
+  restaurant_specific_price?: number;
+  availability: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UnlinkingData = {
+  dishes: Dish[];
+  restaurants: Restaurant[];
+  recentLinks: RestaurantDishLink[];
+  summary: {
+    totalDishes: number;
+    totalRestaurants: number;
+    totalLinks: number;
+  };
+};
 export type Restaurant = {
   id: number; name: string; slug: string;
   municipality_id: number;
@@ -131,6 +168,10 @@ export async function login(email: string, password: string) {
 export async function me() { return http(`/auth/me`); }
 export function logout() { setAdminToken(null); }
 
+export async function listDishCategories(): Promise<any[]> {
+  return http(`/api/dish-categories`);
+}
+
 /* --------------------------------- Public --------------------------------- */
 export async function listMunicipalities(): Promise<Municipality[]> {
   const data = await http(`/api/municipalities`);
@@ -139,42 +180,38 @@ export async function listMunicipalities(): Promise<Municipality[]> {
 
 /* ---------------------------------- Admin --------------------------------- */
 
-
 /* --------------------------- CRUD Operations --------------------------- */
-export async function listDishCategories(): Promise<any[]> {
-  return http(`/api/dish-categories`);
-}
 
 export async function listDishes(filters?: { q?: string; municipality_id?: number; category?: string }): Promise<any[]> {
-  return http(`/api/dishes${qs(filters || {})}`);
+  return http(`/admin/dishes${qs(filters || {})}`);
 }
 
 export async function listRestaurants(filters?: { q?: string; municipality_id?: number; kind?: string }): Promise<any[]> {
-  return http(`/api/restaurants${qs(filters || {})}`);
+  return http(`/admin/restaurants${qs(filters || {})}`);
 }
 
 export async function createDish(payload: any): Promise<any> {
-  return http(`/api/dishes`, { method: 'POST', body: JSON.stringify(payload) });
+  return http(`/admin/dishes`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateDish(id: number, payload: any): Promise<any> {
-  return http(`/api/dishes/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  return http(`/admin/dishes/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
 }
 
 export async function deleteDish(id: number): Promise<void> {
-  await http(`/api/dishes/${id}`, { method: 'DELETE' });
+  await http(`/admin/dishes/${id}`, { method: 'DELETE' });
 }
 
 export async function createRestaurant(payload: any): Promise<any> {
-  return http(`/api/restaurants`, { method: 'POST', body: JSON.stringify(payload) });
+  return http(`/admin/restaurants`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateRestaurant(id: number, payload: any): Promise<any> {
-  return http(`/api/restaurants/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  return http(`/admin/restaurants/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
 
 export async function deleteRestaurant(id: number): Promise<void> {
-  await http(`/api/restaurants/${id}`, { method: 'DELETE' });
+  await http(`/admin/restaurants/${id}`, { method: 'DELETE' });
 }
 
 
@@ -239,6 +276,7 @@ export async function listRestaurantsForDish(dishId: number): Promise<Restaurant
 
   const paths = [
     `/admin/dishes/${dishId}/restaurants`,         // canonical (returns full restaurant objects)
+    `/api/restaurant-dish-links/dish/${dishId}`,   // NEW: more reliable endpoint
     `/admin/links${qs({ dishId })}`,               // sometimes present (may return objects or ids)
     `/admin/dish-restaurants${qs({ dish_id: dishId })}`, // may return { restaurant_id } objects
     `/admin/links/ids${qs({ dishId })}`,           // some variants return numeric id arrays
@@ -292,6 +330,7 @@ export async function listDishesForRestaurant(restId: number): Promise<Dish[]> {
 
   const paths = [
     `/admin/restaurants/${restId}/dishes`,        // canonical (returns full dish objects)
+    `/api/restaurant-dish-links/restaurant/${restId}`, // NEW: more reliable endpoint
     `/admin/links${qs({ restaurantId: restId })}`,// alt (may return objects or ids)
     `/admin/dish-restaurants${qs({ restaurant_id: restId })}`, // alt shape
     `/api/dishes${qs({ restaurantId: restId })}`, // public fallback
@@ -449,4 +488,131 @@ export async function addDishToRestaurant(
     method: 'POST',
     body: JSON.stringify({ dish_id: dishId, ...payload })
   });
+}
+
+export async function getDishesWithRestaurants(filters?: { municipalityId?: number; limit?: number }): Promise<DishWithRestaurants[]> {
+  return http(`/admin/dishes-with-restaurants${qs(filters || {})}`);
+}
+
+// Get restaurants with their linked dishes for unlinking interface  
+export async function getRestaurantsWithDishes(filters?: { municipalityId?: number; limit?: number }): Promise<RestaurantWithDishes[]> {
+  return http(`/admin/restaurants-with-dishes${qs(filters || {})}`);
+}
+
+// Get comprehensive data for unlinking interface
+export async function getUnlinkingData(filters?: { municipalityId?: number }): Promise<UnlinkingData> {
+  return http(`/admin/unlinking-data${qs(filters || {})}`);
+}
+
+// Unlink a dish from one or more restaurants
+export async function unlinkDishFromRestaurants(dishId: number, restaurantIds: number[]): Promise<any> {
+  return http(`/admin/unlink-dish`, {
+    method: 'POST',
+    body: JSON.stringify({ dishId, restaurantIds })
+  });
+}
+
+// Unlink a restaurant from one or more dishes
+export async function unlinkRestaurantFromDishes(restaurantId: number, dishIds: number[]): Promise<any> {
+  return http(`/admin/unlink-restaurant`, {
+    method: 'POST', 
+    body: JSON.stringify({ restaurantId, dishIds })
+  });
+}
+
+// Remove all links for a dish
+export async function removeAllDishLinks(dishId: number): Promise<any> {
+  return http(`/admin/remove-all-dish-links/${dishId}`, {
+    method: 'DELETE'
+  });
+}
+
+// Remove all links for a restaurant
+export async function removeAllRestaurantLinks(restaurantId: number): Promise<any> {
+  return http(`/admin/remove-all-restaurant-links/${restaurantId}`, {
+    method: 'DELETE'
+  });
+}
+
+// Test unlinking data
+export async function testUnlinkingData(): Promise<any> {
+  return http(`/admin/test-unlinking`);
+}
+
+/* -------------------- Restaurant-Dish Linking Analytics ------------------- */
+// Get all restaurant-dish links with filtering
+export async function getRestaurantDishLinks(params?: {
+  dishId?: number;
+  restaurantId?: number;
+  municipalityId?: number;
+  limit?: number;
+}): Promise<any[]> {
+  return http(`/api/restaurant-dish-links${qs(params || {})}`);
+}
+
+// Get all restaurants for a specific dish
+export async function getRestaurantsForDish(dishId: number): Promise<any[]> {
+  return http(`/api/restaurant-dish-links/dish/${dishId}`);
+}
+
+// Get all dishes for a specific restaurant
+export async function getDishesForRestaurant(restaurantId: number): Promise<any[]> {
+  return http(`/api/restaurant-dish-links/restaurant/${restaurantId}`);
+}
+
+// Get links for a specific municipality
+export async function getMunicipalityLinks(municipalityId: number): Promise<any[]> {
+  return http(`/api/restaurant-dish-links/municipality/${municipalityId}`);
+}
+
+// Bulk link dishes to restaurants
+export async function bulkLinkDishesToRestaurants(dishIds: number[], restaurantIds: number[]): Promise<any> {
+  return http(`/api/restaurant-dish-links/bulk-link`, {
+    method: 'POST',
+    body: JSON.stringify({ dish_ids: dishIds, restaurant_ids: restaurantIds })
+  });
+}
+
+// Bulk unlink dishes from restaurants
+export async function bulkUnlinkDishesFromRestaurants(dishIds: number[], restaurantIds: number[]): Promise<any> {
+  return http(`/api/restaurant-dish-links/bulk-unlink`, {
+    method: 'POST',
+    body: JSON.stringify({ dish_ids: dishIds, restaurant_ids: restaurantIds })
+  });
+}
+
+// Get link statistics
+export async function getLinkStats(): Promise<any> {
+  return http(`/api/restaurant-dish-links/stats`);
+}
+
+/* -------------------- Admin versions of linking endpoints ------------------- */
+// Admin version of restaurant-dish links
+export async function getAdminRestaurantDishLinks(params?: {
+  dishId?: number;
+  restaurantId?: number;
+  municipalityId?: number;
+  limit?: number;
+}): Promise<any[]> {
+  return http(`/admin/restaurant-dish-links${qs(params || {})}`);
+}
+
+// Admin version of bulk operations
+export async function adminBulkLinkDishesToRestaurants(dishIds: number[], restaurantIds: number[]): Promise<any> {
+  return http(`/admin/restaurant-dish-links/bulk-link`, {
+    method: 'POST',
+    body: JSON.stringify({ dish_ids: dishIds, restaurant_ids: restaurantIds })
+  });
+}
+
+export async function adminBulkUnlinkDishesFromRestaurants(dishIds: number[], restaurantIds: number[]): Promise<any> {
+  return http(`/admin/restaurant-dish-links/bulk-unlink`, {
+    method: 'POST',
+    body: JSON.stringify({ dish_ids: dishIds, restaurant_ids: restaurantIds })
+  });
+}
+
+// Admin version of link stats
+export async function getAdminLinkStats(): Promise<any> {
+  return http(`/admin/restaurant-dish-links/stats`);
 }
