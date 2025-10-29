@@ -1,0 +1,1 @@
+ALTER TABLE user_favorites ADD COLUMN IF NOT EXISTS metadata JSON;

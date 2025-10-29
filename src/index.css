@@ -1,7 +1,7 @@
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap');
 @layer base {
   body {
     @apply bg-neutral-50 text-neutral-900 font-sans;
@@ -22,6 +22,76 @@
     @apply text-xl md:text-2xl font-medium;
   }
 }
+:root{
+  --bm-cream:#fff8f0;
+  --bm-gold:#b97a2b;
+  --bm-brown:#6b4a2b;
+  --bm-serif: 'Playfair Display', serif;
+  --bm-sans: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+}
+
+/* hero / section utilities */
+.bm-section {
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.bm-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center center;
+  filter: blur(6px) saturate(0.95) contrast(0.98);
+  transform: translateZ(0);
+}
+.bm-overlay {
+  position: absolute; inset:0; background: linear-gradient(180deg, rgba(255,250,246,0.6), rgba(245,240,235,0.55)); mix-blend-mode: multiply;
+}
+.bm-content { position: relative; z-index: 2; max-width: 72rem; padding: 2rem; }
+.bm-hero-title { font-family: var(--bm-serif); }
+.bm-hero-cta { background: linear-gradient(90deg,var(--bm-gold), #d19a4d); color: #fff; }
+.bm-card-hover { transition: transform .28s ease, box-shadow .28s ease; }
+.bm-card-hover:hover { transform: translateY(-6px); box-shadow: 0 18px 40px rgba(0,0,0,0.08); }
+
+/* Accessible skip link */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+  width: auto;
+  height: auto;
+  background: white;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+  z-index: 60;
+}
+
+@media (max-width: 768px) {
+  .bm-hero-title { font-size: 1.6rem; }
+  .bm-content { padding: 1rem; }
+}
+
+/* Fade-in animation for content */
+.bm-content { color: #fff; opacity: 0; transform: translateY(12px); transition: opacity .6s ease, transform .6s ease; }
+.bm-content.in-view { opacity: 1; transform: translateY(0); }
+.bm-content-dark { color: var(--bm-brown); }
+
+/* Parallax background smoothing */
+.bm-bg { transition: transform .2s linear; will-change: transform; }
+
+/* Subtle overlay for contrast */
+.bm-overlay { mix-blend-mode: multiply; }
 @layer components {
   .btn {
     @apply px-4 py-2 rounded-md font-medium transition-all duration-200;
@@ -72,6 +142,10 @@
 .input { @apply border rounded px-3 py-2 outline-none focus:ring-2 focus:ring-primary-300;}
 .btn { @apply inline-flex items-center px-4 py-2 rounded font-medium;}
 .btn-primary { @apply bg-primary-600 text-white hover:bg-primary-700;}
+.btn:focus, .input:focus, .card:focus {
+  outline: 3px solid rgba(107,74,43,0.14);
+  box-shadow: 0 0 0 4px rgba(185,122,43,0.12);
+}
 .leaflet-control-container {
   z-index: 500 !important;
 }

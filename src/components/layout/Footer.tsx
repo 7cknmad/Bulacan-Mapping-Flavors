@@ -2,7 +2,17 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { FacebookIcon, InstagramIcon, TwitterIcon, MapPinIcon, PhoneIcon, MailIcon } from 'lucide-react';
 const Footer: React.FC = () => {
-  return <footer className="bg-neutral-800 text-neutral-200 pt-12 pb-6">
+  const [showFooter, setShowFooter] = React.useState(true);
+  React.useEffect(() => {
+    const onNavVisible = (e: Event) => {
+      const detail = (e as CustomEvent<{ visible: boolean }>).detail;
+      setShowFooter(Boolean(detail?.visible));
+    };
+    window.addEventListener('nav:visible', onNavVisible as EventListener);
+    return () => window.removeEventListener('nav:visible', onNavVisible as EventListener);
+  }, []);
+
+  return <footer className={`bg-neutral-800 text-neutral-200 pt-12 pb-6 transition-opacity duration-300 ${showFooter ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
       <div className="container mx-auto px-4">
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-8">
           {/* About */}

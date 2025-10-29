@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+// import RatingForm from '../components/RatingForm';
 import {
   fetchDishes,
   fetchMunicipalities,
@@ -73,18 +74,46 @@ export default function DishesPage() {
     staleTime: 60_000,
   });
 
+  
+
   const sorted = useMemo(() => {
     const rows = dishesQ.data ?? [];
     const clone = [...rows];
+    const getAvg = (d: typeof rows[number]) => Number(d.avg_rating ?? d.rating ?? 0);
+    const getTotal = (d: typeof rows[number]) => Number(d.total_ratings ?? 0);
     switch (sort) {
       case "rating":
-        clone.sort((a, b) => (Number(b.rating ?? 0) - Number(a.rating ?? 0)) || a.name.localeCompare(b.name));
+        // Prefer avg_rating where available, then rating; break ties with total_ratings, popularity, then name
+        clone.sort((a, b) => {
+          const ra = getAvg(a);
+          const rb = getAvg(b);
+          if (rb !== ra) return rb - ra;
+          const ta = getTotal(a);
+          const tb = getTotal(b);
+          if (tb !== ta) return tb - ta;
+          const pa = Number(a.popularity ?? 0);
+          const pb = Number(b.popularity ?? 0);
+          if (pb !== pa) return pb - pa;
+          return a.name.localeCompare(b.name);
+        });
         break;
       case "name":
         clone.sort((a, b) => a.name.localeCompare(b.name));
         break;
       default:
-        clone.sort((a, b) => (Number(b.popularity ?? 0) - Number(a.popularity ?? 0)) || a.name.localeCompare(b.name));
+        // Popularity: primarily by popularity, then by rating & total_ratings
+        clone.sort((a, b) => {
+          const pa = Number(a.popularity ?? 0);
+          const pb = Number(b.popularity ?? 0);
+          if (pb !== pa) return pb - pa;
+          const ra = getAvg(a);
+          const rb = getAvg(b);
+          if (rb !== ra) return rb - ra;
+          const ta = getTotal(a);
+          const tb = getTotal(b);
+          if (tb !== ta) return tb - ta;
+          return a.name.localeCompare(b.name);
+        });
     }
     return clone;
   }, [dishesQ.data, sort]);
@@ -116,6 +145,13 @@ export default function DishesPage() {
             title="Back to Map"
           >
             ← Back to Map
+          </Link>
+          <Link
+            to={muni ? `/dishes/top?municipalityId=${muni.id}` : "/dishes/top"}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-neutral-50"
+            title="Top dishes"
+          >
+            ⭐ Top dishes
           </Link>
         </div>
 

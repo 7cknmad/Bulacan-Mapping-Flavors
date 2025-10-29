@@ -48,7 +48,7 @@ const SearchBar: React.FC = () => {
     staleTime: 30_000,
   });
 
-  const restosQ = useQuery<Restaurant[]>({
+  const restosQ = useQuery<{ rows: Restaurant[]; total: number }>({
     queryKey: ["search", "restaurants", q],
     queryFn: () => fetchRestaurants({ q }),
     enabled: q.length >= MIN_QUERY,
@@ -73,7 +73,7 @@ const SearchBar: React.FC = () => {
 
   const hasResults =
     (dishesQ.data?.length ?? 0) > 0 ||
-    (restosQ.data?.length ?? 0) > 0 ||
+    (restosQ.data?.rows?.length ?? 0) > 0 ||
     muniMatches.length > 0;
 
   const onSubmit = (e: React.FormEvent) => {
@@ -155,9 +155,9 @@ const SearchBar: React.FC = () => {
                 </Section>
               )}
 
-              {(restosQ.data?.length ?? 0) > 0 && (
+              {(restosQ.data?.rows?.length ?? 0) > 0 && (
                 <Section title="Restaurants">
-                  {restosQ.data!.slice(0, 6).map((r) => (
+                  {restosQ.data!.rows.slice(0, 6).map((r) => (
                     <ResultRow
                       key={`resto-${r.id}`}
                       to={`/restaurant/${encodeURIComponent(r.slug || String(r.id))}`}
