@@ -11,6 +11,16 @@ export interface UserFavorite {
   lng?: number;
   image_url?: string;
   municipality_name?: string;
+  item_name?: string;
+  item_image_url?: string;
+  metadata?: {
+    name?: string;
+    lat?: number;
+    lng?: number;
+    image_url?: string;
+    municipality_name?: string;
+    [key: string]: any;
+  };
 }
 
 // Fetch all favorites for the logged-in user
@@ -19,7 +29,7 @@ export const fetchUserFavorites = async (): Promise<UserFavorite[]> => {
   return response.map(item => ({
     favoriteable_id: item.item_id,
     favoriteable_type: item.item_type as 'restaurant' | 'dish',
-    ...item.metadata,
+    metadata: item.metadata || {},
     created_at: item.created_at
   }));
 };

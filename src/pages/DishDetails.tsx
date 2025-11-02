@@ -7,6 +7,7 @@ import {
   fetchMunicipalities,
   fetchRestaurants,
   fetchReviews,
+  calculateAverageRating,
   type Dish,
   type Municipality,
   type Restaurant,
@@ -70,6 +71,13 @@ export default function DishDetails() {
     staleTime: 60_000,
     retry: 0,
   });
+
+    // Increment popularity when dish is viewed
+    useEffect(() => {
+      if (dishQ.data?.id) {
+        fetch(`/api/dishes/${dishQ.data.id}/view`, { method: 'POST' }).catch(() => {});
+      }
+    }, [dishQ.data?.id]);
 
   // Reviews for this dish (run after dishQ is available)
   const reviewsQ = useQuery<any[]>({
@@ -145,6 +153,9 @@ export default function DishDetails() {
   const flavorList = toArray(dish.flavor_profile);
   const ingredientsList = toArray(dish.ingredients);
   const hero = dish.image_url || "https://via.placeholder.com/1600x900?text=Dish";
+
+  // Consistent average rating calculation
+  const avgRating = reviewsQ.data ? calculateAverageRating(reviewsQ.data) : Number(dish.avg_rating ?? dish.rating ?? 0);
 
   return (
     <motion.div
@@ -237,11 +248,11 @@ export default function DishDetails() {
                     )}
                   </div>
 
-                  {/* Rating Badge */}
+                  {/* Rating Badge (consistent, accurate) */}
                   <div className="flex items-center gap-2">
                     <span className="px-3 py-1.5 bg-white/90 text-neutral-900 rounded-full flex items-center gap-1.5 font-medium">
                       <StarIcon size={16} className="text-yellow-500 fill-yellow-500" />
-                      <span>{Number(dish.rating ?? 0).toFixed(1)}</span>
+                      <span>{avgRating.toFixed(1)}</span>
                     </span>
                   </div>
                 </div>

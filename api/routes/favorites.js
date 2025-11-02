@@ -11,24 +11,30 @@ export default function createFavoritesRouter(pool) {
       if (!userId) return res.status(401).json({ error: 'User ID required' });
 
       const [rows] = await pool.query(
-        `SELECT f.id, f.item_id, f.item_type, f.created_at, 
-                CASE 
-                  WHEN f.item_type = 'dish' THEN d.name
-                  WHEN f.item_type = 'restaurant' THEN r.name
-                END as item_name,
-                CASE 
-                  WHEN f.item_type = 'dish' THEN d.image_url
-                  WHEN f.item_type = 'restaurant' THEN r.image_url
-                END as item_image_url
-         FROM user_favorites f
-         LEFT JOIN dishes d ON f.item_type = 'dish' AND f.item_id = d.id
-         LEFT JOIN restaurants r ON f.item_type = 'restaurant' AND f.item_id = r.id
-         WHERE f.user_id = ?
-         ORDER BY f.created_at DESC`,
-        [userId]
-      );
+          `SELECT f.id, f.item_id, f.item_type, f.created_at, f.metadata,
+                  CASE 
+                    WHEN f.item_type = 'dish' THEN COALESCE(d.name, 'Unnamed Dish')
+                    WHEN f.item_type = 'restaurant' THEN COALESCE(r.name, 'Unnamed Restaurant')
+                  END as item_name,
+                  CASE 
+                    WHEN f.item_type = 'dish' THEN COALESCE(d.image_url, '')
+                    WHEN f.item_type = 'restaurant' THEN COALESCE(r.image_url, '')
+                  END as item_image_url
+           FROM user_favorites f
+           LEFT JOIN dishes d ON f.item_type = 'dish' AND f.item_id = d.id
+           LEFT JOIN restaurants r ON f.item_type = 'restaurant' AND f.item_id = r.id
+           WHERE f.user_id = ?
+           ORDER BY f.created_at DESC`,
+          [userId]
+        );
 
-      res.json(rows);
+        // Parse metadata JSON for each row
+        const result = rows.map(row => ({
+          ...row,
+          metadata: row.metadata ? JSON.parse(row.metadata) : {}
+        }));
+
+        res.json(result);
     } catch (error) {
       console.error('Error fetching favorites:', error);
       res.status(500).json({ error: 'Failed to fetch favorites' });

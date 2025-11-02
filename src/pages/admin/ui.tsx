@@ -156,12 +156,34 @@ export function Toolbar({ left, right, className }: { left?: React.ReactNode; ri
   );
 }
 
-export function KPI({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+export function KPI({ 
+  label, 
+  value, 
+  trend, 
+  secondary,
+  icon,
+}: { 
+  label: string; 
+  value: React.ReactNode; 
+  trend?: string;
+  secondary?: string;
+  icon?: React.ReactNode;
+}) {
   return (
-    <div className="bg-white border rounded-2xl px-4 py-3">
-      <div className="text-xs text-neutral-500">{label}</div>
-      <div className="text-3xl font-semibold leading-tight">{value}</div>
-      {hint && <div className="text-[11px] text-neutral-500 mt-1">{hint}</div>}
+    <div className="bg-white border rounded-2xl px-4 py-4 hover:shadow-sm transition">
+      <div className="flex items-center gap-2 mb-1">
+        {icon}
+        <div className="text-sm font-medium text-neutral-600">{label}</div>
+      </div>
+      <div className="text-2xl font-semibold leading-tight">{value}</div>
+      {secondary && (
+        <div className="text-xs text-neutral-500 mt-1">{secondary}</div>
+      )}
+      {trend && (
+        <div className="text-xs text-emerald-600 font-medium mt-2">
+          {trend}
+        </div>
+      )}
     </div>
   );
 }

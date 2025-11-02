@@ -1,6 +1,23 @@
-// @ts-nocheck
-import React, { useMemo,useCallback, useState, useEffect } from "react";
-import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "../admin/ui";
+import React, { useMemo, useCallback, useState } from "react";
+import {
+  LayoutDashboard, 
+  UtensilsCrossed, 
+  Store, 
+  MapPin, 
+  Users, 
+  Star, 
+  Image as ImageIcon,
+  Settings,
+  LogOut,
+  Bell,
+  Search,
+  Plus,
+  Filter
+} from "lucide-react";
+import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "./ui";
+import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "../../hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 import {
   listMunicipalities, listDishes, listRestaurants,
   createDish, updateDish, deleteDish,
@@ -11,7 +28,6 @@ import {
   getAnalyticsSummary, getPerMunicipalityCounts,
   type Municipality, type Dish, type Restaurant,
   coerceStringArray, slugify,
-  // ADD THESE NEW FUNCTIONS:
   getRestaurantFeaturedDishes,
   setRestaurantDishFeatured,
   addDishToRestaurant,
@@ -37,15 +53,42 @@ const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).
 const confirmThen = (msg: string) => Promise.resolve(window.confirm(msg));
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
-function ChartShell({ children, height = 420 }: { children: React.ReactNode; height?: number }) {
+// Chart theme settings
+const chartTheme = {
+  dishColor: '#8b5cf6',
+  restaurantColor: '#3b82f6',
+  ratingColor: '#f59e0b',
+  popularityColor: '#10b981',
+  gridColor: '#e5e7eb',
+  tooltipStyle: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: '8px',
+    padding: '8px 12px',
+    border: '1px solid #e5e7eb',
+    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+  },
+  labelStyle: {
+    fontWeight: 500,
+    marginBottom: '4px',
+  },
+  axisStyle: {
+    tick: { fill: '#6b7280', fontSize: 12 },
+    tickLine: { stroke: '#e5e7eb' },
+    axisLine: { stroke: '#e5e7eb' },
+  },
+};
+
+function ChartShell({ children, height = 420, className }: { children: React.ReactNode; height?: number; className?: string }) {
   const [k, setK] = useState(0);
   React.useEffect(() => { const id = setTimeout(() => setK(1), 60); return () => clearTimeout(id); }, []);
   return (
-    <Card className="p-3">
-      <div style={{ height }}>
-        <ResponsiveContainer key={k} width="100%" height="100%" debounce={150}>
-          {children as any}
-        </ResponsiveContainer>
+    <Card className={cx("bg-white/50 backdrop-blur-sm transition hover:shadow-lg", className)}>
+      <div className="p-4">
+        <div style={{ height }}>
+          <ResponsiveContainer key={k} width="100%" height="100%" debounce={150}>
+            {children as any}
+          </ResponsiveContainer>
+        </div>
       </div>
     </Card>
   );
@@ -83,77 +126,488 @@ function Field({ label, hint, children, error, className }: { label: string; hin
 function AnalyticsTab() {
   const summaryQ = useQuery({ queryKey: ["analytics:summary"], queryFn: getAnalyticsSummary, staleTime: 120_000 });
   const perMuniQ = useQuery({ queryKey: ["analytics:per-muni"], queryFn: getPerMunicipalityCounts, staleTime: 120_000 });
-
+  const linksQ = useQuery({ queryKey: ["analytics:links"], queryFn: getLinkStats, staleTime: 120_000 });
+  const dishesQ = useQuery({ queryKey: ["dishes"], queryFn: () => listDishes(), staleTime: 120_000 });
+  const restaurantsQ = useQuery({ queryKey: ["restaurants"], queryFn: () => listRestaurants(), staleTime: 120_000 });
+  
   const [type, setType] = useState<"bar" | "line" | "pie">("bar");
   const [stacked, setStacked] = useState(false);
+  const [selectedMuni, setSelectedMuni] = useState<number | null>(null);
+  const [dataType, setDataType] = useState<"counts" | "ratings" | "popularity">("counts");
 
   const counts = (summaryQ.data as any)?.counts ?? summaryQ.data ?? { dishes: 0, restaurants: 0, municipalities: 0 };
+  const reviews = linksQ.data?.totalReviews ?? 0;
+
+  // Calculate average ratings and popularity
+  const dishStats = useMemo(() => {
+    const dishes = dishesQ.data ?? [];
+    const validRatings = dishes.filter(d => d.rating != null).map(d => d.rating!);
+    const validPopularity = dishes.filter(d => d.popularity != null).map(d => d.popularity!);
+    
+    return {
+      avgRating: validRatings.length ? (validRatings.reduce((a, b) => a + b, 0) / validRatings.length).toFixed(1) : "N/A",
+      avgPopularity: validPopularity.length ? (validPopularity.reduce((a, b) => a + b, 0) / validPopularity.length).toFixed(1) : "N/A",
+      topRated: validRatings.length ? Math.max(...validRatings).toFixed(1) : "N/A",
+      mostPopular: validPopularity.length ? Math.max(...validPopularity).toFixed(1) : "N/A",
+      ratedCount: validRatings.length,
+      popularityCount: validPopularity.length
+    };
+  }, [dishesQ.data]);
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <KPI label="Dishes" value={counts.dishes} />
-        <KPI label="Restaurants" value={counts.restaurants} />
-        <KPI label="Municipalities" value={counts.municipalities} />
+    <div className="space-y-6">
+      {/* Top Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPI 
+          label="Total Dishes" 
+          value={counts.dishes} 
+          trend={"+5 this week"}
+          icon={<UtensilsCrossed className="w-5 h-5 text-primary-500" />}
+        />
+        <KPI 
+          label="Total Restaurants" 
+          value={counts.restaurants}
+          trend={"+2 this week"}
+          icon={<Store className="w-5 h-5 text-primary-500" />}
+        />
+        <KPI 
+          label="Municipalities" 
+          value={counts.municipalities}
+          secondary={`${((counts.dishes + counts.restaurants) / counts.municipalities).toFixed(1)} items/muni`}
+          icon={<MapPin className="w-5 h-5 text-primary-500" />}
+        />
+        <KPI 
+          label="Total Reviews" 
+          value={reviews} 
+          trend={`${(reviews / counts.dishes).toFixed(1)} per dish`}
+          icon={<Star className="w-5 h-5 text-primary-500" />}
+        />
       </div>
 
+      {/* Dish Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPI 
+          label="Average Rating" 
+          value={dishStats.avgRating}
+          secondary={`${dishStats.ratedCount} rated dishes`}
+          trend={`Top: ${dishStats.topRated}`}
+          icon={<Star className="w-5 h-5 text-yellow-500" />}
+        />
+        <KPI 
+          label="Average Popularity" 
+          value={`${dishStats.avgPopularity}%`}
+          secondary={`${dishStats.popularityCount} dishes tracked`}
+          trend={`Peak: ${dishStats.mostPopular}%`}
+          icon={<Users className="w-5 h-5 text-blue-500" />}
+        />
+        <KPI 
+          label="Featured Dishes" 
+          value={(dishesQ.data ?? []).filter(d => d.is_signature).length}
+          secondary="Signature dishes"
+          trend={`${((dishesQ.data ?? []).filter(d => d.is_signature).length / counts.dishes * 100).toFixed(1)}%`}
+          icon={<Star className="w-5 h-5 text-primary-500" />}
+        />
+        <KPI 
+          label="Featured Restaurants" 
+          value={(restaurantsQ.data ?? []).filter(r => r.featured).length}
+          secondary="Featured venues"
+          trend={`${((restaurantsQ.data ?? []).filter(r => r.featured).length / counts.restaurants * 100).toFixed(1)}%`}
+          icon={<Star className="w-5 h-5 text-primary-500" />}
+        />
+      </div>
+
+      {/* Main Chart Card */}
       <Card
-        title="Per-municipality totals"
+        title={
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <h3 className="font-semibold text-lg text-neutral-800">Municipality Analytics</h3>
+              <p className="text-sm text-neutral-500 mt-1">
+                {selectedMuni 
+                  ? `Viewing data for ${(perMuniQ.data ?? []).find(m => m.municipality_id === selectedMuni)?.municipality_name}`
+                  : 'Comparing all municipalities'}
+              </p>
+            </div>
+            <select 
+              className="w-full sm:w-auto text-sm border rounded-xl px-3 py-2 bg-white focus:ring-2 focus:ring-primary-400 focus:border-primary-400 transition"
+              value={selectedMuni ?? ""}
+              onChange={(e) => setSelectedMuni(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">All Municipalities</option>
+              {(perMuniQ.data ?? []).map((m) => (
+                <option key={m.municipality_id} value={m.municipality_id}>{m.municipality_name}</option>
+              ))}
+            </select>
+          </div>
+        }
         toolbar={
-          <div className="flex gap-2">
-            {["bar","line","pie"].map((t)=> (
-              <Button key={t} size="sm" variant={type===t?"primary":"default"} onClick={()=>setType(t as any)}>{t}</Button>
-            ))}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex rounded-xl border p-1 bg-white shadow-sm">
+              {["counts", "ratings", "popularity"].map((t) => (
+                <button
+                  key={t}
+                  className={cx(
+                    "flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-all",
+                    dataType === t 
+                      ? "bg-primary-100 text-primary-800" 
+                      : "text-neutral-600 hover:bg-neutral-50"
+                  )}
+                  onClick={() => setDataType(t as any)}
+                >
+                  {t[0].toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="flex rounded-xl border p-1 bg-white shadow-sm">
+              {["bar","line","pie"].map((t)=> (
+                <button
+                  key={t}
+                  className={cx(
+                    "flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-all",
+                    type === t 
+                      ? "bg-primary-100 text-primary-800" 
+                      : "text-neutral-600 hover:bg-neutral-50"
+                  )}
+                  onClick={() => setType(t as any)}
+                >
+                  {t[0].toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
             {type === "bar" && (
-              <Button size="sm" variant={stacked?"primary":"default"} onClick={()=>setStacked(s=>!s)}>{stacked?"Unstack":"Stack"}</Button>
+              <Button 
+                size="sm" 
+                variant={stacked ? "primary" : "soft"}
+                className={cx(
+                  "shadow-sm",
+                  stacked ? "bg-primary-100 text-primary-800" : ""
+                )}
+                onClick={()=>setStacked(s=>!s)}
+              >
+                {stacked ? "Stacked View" : "Normal View"}
+              </Button>
             )}
           </div>
         }
       >
-        {summaryQ.isLoading || perMuniQ.isLoading ? (
-          <div className="h-[440px] bg-neutral-100 animate-pulse rounded-xl" />
+        {summaryQ.isLoading || perMuniQ.isLoading || dishesQ.isLoading || restaurantsQ.isLoading ? (
+          <div className="h-[440px] flex items-center justify-center">
+            <div className="text-center">
+              <div className="w-16 h-16 mb-4 rounded-full border-4 border-primary-200 border-t-primary-600 animate-spin mx-auto" />
+              <div className="text-sm text-neutral-600">Loading analytics data...</div>
+            </div>
+          </div>
+        ) : !perMuniQ.data?.length ? (
+          <div className="h-[440px] flex items-center justify-center">
+            <div className="text-center">
+              <Store className="w-12 h-12 text-neutral-300 mx-auto mb-3" />
+              <div className="text-neutral-600">No data available</div>
+              <div className="text-sm text-neutral-500 mt-1">Add some dishes and restaurants to see analytics</div>
+            </div>
+          </div>
         ) : (
           <ChartShell height={440}>
             {type === "pie" ? (
               <PieChart>
-                <Tooltip />
+                <Tooltip formatter={(value: any) => [value, dataType === "counts" ? "Items" : (dataType === "ratings" ? "Avg Rating" : "Avg Popularity")]} />
                 <Legend />
-                <Pie data={(perMuniQ.data ?? []).map((r)=>({ name:r.municipality_name, value:r.dishes }))} dataKey="value" nameKey="name" outerRadius={110} />
-                <Pie data={(perMuniQ.data ?? []).map((r)=>({ name:r.municipality_name, value:r.restaurants }))} dataKey="value" nameKey="name" innerRadius={120} outerRadius={160} />
-              </PieChart>
-            ) : type === "line" ? (
-              <LineChart data={(perMuniQ.data ?? []).map((r)=>({ name:r.municipality_name, dishes:r.dishes, restaurants:r.restaurants }))}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" hide />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="dishes" />
-                <Line type="monotone" dataKey="restaurants" />
-              </LineChart>
-            ) : (
-              <BarChart data={(perMuniQ.data ?? []).map((r)=>({ name:r.municipality_name, dishes:r.dishes, restaurants:r.restaurants }))}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" hide />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                {stacked ? (
+                {dataType === "counts" ? (
                   <>
-                    <Bar dataKey="dishes" stackId="a" />
-                    <Bar dataKey="restaurants" stackId="a" />
+                    <Pie 
+                      data={(perMuniQ.data ?? [])
+                        .filter(r => !selectedMuni || r.municipality_id === selectedMuni)
+                        .map((r) => ({ 
+                          name: r.municipality_name, 
+                          value: r.dishes,
+                          fill: chartTheme.dishColor
+                        }))} 
+                      dataKey="value" 
+                      nameKey="name" 
+                      label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(0)}%)`}
+                      labelLine={false}
+                      outerRadius={110}
+                      animationDuration={750}
+                      animationBegin={0}
+                    >
+                      {(perMuniQ.data ?? [])
+                        .filter(r => !selectedMuni || r.municipality_id === selectedMuni)
+                        .map((entry, index) => (
+                          <Cell 
+                            key={`cell-${index}`} 
+                            fill={`hsl(${250 + (index * 20)}deg, 80%, 65%)`}
+                            stroke="#fff"
+                            strokeWidth={2}
+                          />
+                        ))}
+                    </Pie>
+                    <Pie 
+                      data={(perMuniQ.data ?? [])
+                        .filter(r => !selectedMuni || r.municipality_id === selectedMuni)
+                        .map((r) => ({ 
+                          name: r.municipality_name, 
+                          value: r.restaurants,
+                          fill: chartTheme.restaurantColor
+                        }))} 
+                      dataKey="value" 
+                      nameKey="name" 
+                      label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(0)}%)`}
+                      labelLine={false}
+                      innerRadius={120} 
+                      outerRadius={160}
+                      animationDuration={750} 
+                      animationBegin={250}
+                    >
+                      {(perMuniQ.data ?? [])
+                        .filter(r => !selectedMuni || r.municipality_id === selectedMuni)
+                        .map((entry, index) => (
+                          <Cell 
+                            key={`cell-${index}`} 
+                            fill={`hsl(${220 + (index * 20)}deg, 85%, 60%)`}
+                            stroke="#fff"
+                            strokeWidth={2}
+                          />
+                        ))}
+                    </Pie>
                   </>
                 ) : (
+                  <Pie 
+                    data={(perMuniQ.data ?? [])
+                      .filter(r => !selectedMuni || r.municipality_id === selectedMuni)
+                      .map((r) => {
+                        const dishesInMuni = (dishesQ.data ?? []).filter(d => d.municipality_id === r.municipality_id);
+                        const restaurantsInMuni = (restaurantsQ.data ?? []).filter(d => d.municipality_id === r.municipality_id);
+                        
+                        let value = 0;
+                        if (dataType === "ratings") {
+                          const validRatings = dishesInMuni.filter(d => d.rating != null).map(d => d.rating!);
+                          value = validRatings.length ? validRatings.reduce((a, b) => a + b, 0) / validRatings.length : 0;
+                        } else if (dataType === "popularity") {
+                          const validPopularity = dishesInMuni.filter(d => d.popularity != null).map(d => d.popularity!);
+                          value = validPopularity.length ? validPopularity.reduce((a, b) => a + b, 0) / validPopularity.length : 0;
+                        }
+                        
+                        return {
+                          name: r.municipality_name,
+                          value: Number(value.toFixed(1)),
+                          fill: `hsl(${220 + (value * 20)}deg, 90%, 60%)`
+                        };
+                      })} 
+                    dataKey="value" 
+                    nameKey="name" 
+                    label={true}
+                    outerRadius={160} 
+                  />
+                )}
+              </PieChart>
+            ) : type === "line" ? (
+              <LineChart 
+                data={(perMuniQ.data ?? [])
+                  .filter(r => !selectedMuni || r.municipality_id === selectedMuni)
+                  .map((r) => {
+                    const dishesInMuni = (dishesQ.data ?? []).filter(d => d.municipality_id === r.municipality_id);
+                    const restaurantsInMuni = (restaurantsQ.data ?? []).filter(d => d.municipality_id === r.municipality_id);
+                    
+                    const avgRating = (() => {
+                      const validRatings = dishesInMuni.filter(d => d.rating != null).map(d => d.rating!);
+                      return validRatings.length ? Number((validRatings.reduce((a, b) => a + b, 0) / validRatings.length).toFixed(1)) : 0;
+                    })();
+                    
+                    const avgPopularity = (() => {
+                      const validPopularity = dishesInMuni.filter(d => d.popularity != null).map(d => d.popularity!);
+                      return validPopularity.length ? Number((validPopularity.reduce((a, b) => a + b, 0) / validPopularity.length).toFixed(1)) : 0;
+                    })();
+                    
+                    return {
+                      name: r.municipality_name,
+                      dishes: r.dishes,
+                      restaurants: r.restaurants,
+                      rating: avgRating,
+                      popularity: avgPopularity
+                    };
+                  })}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
+                <YAxis 
+                  domain={dataType === "ratings" ? [0, 5] : dataType === "popularity" ? [0, 100] : ["auto", "auto"]}
+                  tickFormatter={dataType === "popularity" ? (value) => `${value}%` : undefined}
+                />
+                <Tooltip 
+                  formatter={(value: any) => [
+                    dataType === "popularity" ? `${value}%` : value,
+                    dataType === "counts" ? "Items" : (dataType === "ratings" ? "Rating" : "Popularity")
+                  ]} 
+                />
+                <Legend />
+                {dataType === "counts" ? (
                   <>
-                    <Bar dataKey="dishes" />
-                    <Bar dataKey="restaurants" />
+                    <Line type="monotone" dataKey="dishes" stroke="#4f46e5" strokeWidth={2} />
+                    <Line type="monotone" dataKey="restaurants" stroke="#2563eb" strokeWidth={2} />
                   </>
+                ) : (
+                  <Line 
+                    type="monotone" 
+                    dataKey={dataType === "ratings" ? "rating" : "popularity"} 
+                    stroke="#4f46e5" 
+                    strokeWidth={2}
+                  />
+                )}
+              </LineChart>
+            ) : (
+              <BarChart 
+                data={(perMuniQ.data ?? [])
+                  .filter(r => !selectedMuni || r.municipality_id === selectedMuni)
+                  .map((r) => {
+                    const dishesInMuni = (dishesQ.data ?? []).filter(d => d.municipality_id === r.municipality_id);
+                    const restaurantsInMuni = (restaurantsQ.data ?? []).filter(d => d.municipality_id === r.municipality_id);
+                    
+                    const avgRating = (() => {
+                      const validRatings = dishesInMuni.filter(d => d.rating != null).map(d => d.rating!);
+                      return validRatings.length ? Number((validRatings.reduce((a, b) => a + b, 0) / validRatings.length).toFixed(1)) : 0;
+                    })();
+                    
+                    const avgPopularity = (() => {
+                      const validPopularity = dishesInMuni.filter(d => d.popularity != null).map(d => d.popularity!);
+                      return validPopularity.length ? Number((validPopularity.reduce((a, b) => a + b, 0) / validPopularity.length).toFixed(1)) : 0;
+                    })();
+                    
+                    return {
+                      name: r.municipality_name,
+                      dishes: r.dishes,
+                      restaurants: r.restaurants,
+                      rating: avgRating,
+                      popularity: avgPopularity
+                    };
+                  })}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
+                <YAxis 
+                  domain={dataType === "ratings" ? [0, 5] : dataType === "popularity" ? [0, 100] : ["auto", "auto"]}
+                  tickFormatter={dataType === "popularity" ? (value) => `${value}%` : undefined}
+                />
+                <Tooltip 
+                  formatter={(value: any) => [
+                    dataType === "popularity" ? `${value}%` : value,
+                    dataType === "counts" ? "Items" : (dataType === "ratings" ? "Rating" : "Popularity")
+                  ]} 
+                />
+                <Legend />
+                {dataType === "counts" ? (
+                  stacked ? (
+                    <>
+                      <Bar 
+                        dataKey="dishes" 
+                        stackId="a" 
+                        fill="#8b5cf6" 
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar 
+                        dataKey="restaurants" 
+                        stackId="a" 
+                        fill="#3b82f6" 
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Bar 
+                        dataKey="dishes" 
+                        fill="#8b5cf6" 
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar 
+                        dataKey="restaurants" 
+                        fill="#3b82f6" 
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </>
+                  )
+                ) : (
+                  <Bar 
+                    dataKey={dataType === "ratings" ? "rating" : "popularity"} 
+                    fill={dataType === "ratings" ? "#f59e0b" : "#10b981"}
+                    radius={[4, 4, 0, 0]}
+                  />
                 )}
               </BarChart>
             )}
           </ChartShell>
         )}
       </Card>
+
+      {/* Summary Lists */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Top Rated Dishes */}
+        <Card 
+          title={
+            <div className="flex items-center gap-2">
+              <Star className="w-5 h-5 text-yellow-500" />
+              <h3 className="font-semibold">Top Rated Dishes</h3>
+            </div>
+          }
+          className="bg-white/50 backdrop-blur-sm hover:shadow-lg transition"
+        >
+          <div className="divide-y">
+            {(dishesQ.data ?? [])
+              .filter(d => d.rating != null)
+              .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+              .slice(0, 5)
+              .map((dish, i) => (
+                <div key={dish.id} className="py-4 flex items-center gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-yellow-100 text-yellow-700 font-semibold flex items-center justify-center">
+                    #{i + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-neutral-900 truncate">{dish.name}</div>
+                    <div className="text-sm text-neutral-500 truncate">
+                      {dish.category} • {(perMuniQ.data ?? []).find(m => m.municipality_id === dish.municipality_id)?.municipality_name}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 px-3 py-1 rounded-full bg-yellow-50 text-yellow-700">
+                    <Star className="w-4 h-4 fill-current" />
+                    <span className="font-medium">{dish.rating}</span>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </Card>
+
+        {/* Most Popular Dishes */}
+        <Card 
+          title={
+            <div className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-blue-500" />
+              <h3 className="font-semibold">Most Popular Dishes</h3>
+            </div>
+          }
+          className="bg-white/50 backdrop-blur-sm hover:shadow-lg transition"
+        >
+          <div className="divide-y">
+            {(dishesQ.data ?? [])
+              .filter(d => d.popularity != null)
+              .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
+              .slice(0, 5)
+              .map((dish, i) => (
+                <div key={dish.id} className="py-4 flex items-center gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-semibold flex items-center justify-center">
+                    #{i + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-neutral-900 truncate">{dish.name}</div>
+                    <div className="text-sm text-neutral-500 truncate">
+                      {dish.category} • {(perMuniQ.data ?? []).find(m => m.municipality_id === dish.municipality_id)?.municipality_name}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 px-3 py-1 rounded-full bg-blue-50 text-blue-700">
+                    <Users className="w-4 h-4" />
+                    <span className="font-medium">{dish.popularity}%</span>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -1518,7 +1972,7 @@ const linkedDishesForUnlink = useQuery({
 const allRestaurantDishLinks = useQuery({
   queryKey: ["all-restaurant-dish-links", linkMuniId],
   queryFn: () => getRestaurantDishLinks({ 
-    municipality_id: linkMuniId ?? undefined,
+    municipalityId: linkMuniId ?? undefined,
     limit: 5000 
   }),
   staleTime: 30000,
@@ -2854,27 +3308,174 @@ function AvailableDishesSection({ restaurantId, featuredDishes, onDishAdded }: {
        </div>
                          );
                                   }
+// Navigation items for the admin sidebar
+const navItems = [
+  { id: "analytics", label: "Dashboard", icon: LayoutDashboard },
+  { id: "dishes", label: "Dishes", icon: UtensilsCrossed },
+  { id: "restaurants", label: "Restaurants", icon: Store },
+  { id: "curation", label: "Curation", icon: Star },
+  { id: "users", label: "Users", icon: Users },
+  { id: "municipalities", label: "Municipalities", icon: MapPin },
+  { id: "media", label: "Media Library", icon: ImageIcon },
+  { id: "settings", label: "Settings", icon: Settings }
+] as const;
+
+type TabId = typeof navItems[number]["id"];
+
+// Create a context to maintain scroll position per tab
+const ViewContext = React.createContext<{
+  scrollPositions: Record<TabId, number>;
+  setScrollPosition: (tab: TabId, position: number) => void;
+}>({
+  scrollPositions: {
+    analytics: 0,
+    dishes: 0,
+    restaurants: 0,
+    curation: 0,
+    users: 0,
+    municipalities: 0,
+    media: 0,
+    settings: 0
+  },
+  setScrollPosition: () => {},
+});
+
+// Create a hook to use the scroll context
+const useViewContext = () => {
+  const context = React.useContext(ViewContext);
+  if (!context) {
+    throw new Error("useViewContext must be used within a ViewContextProvider");
+  }
+  return context;
+};
+
 export default function AdminDashboard() {
-  const [tab, setTab] = useState<"analytics" | "dishes" | "restaurants" | "curation">("analytics");
+  const [tab, setTab] = useState<TabId>("analytics");
+  const [scrollPositions, setScrollPositions] = useState<Record<TabId, number>>({
+    analytics: 0,
+    dishes: 0,
+    restaurants: 0,
+    curation: 0,
+    users: 0,
+    municipalities: 0,
+    media: 0,
+    settings: 0
+  });
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = useCallback(() => {
+    logout();
+    navigate("/auth");
+  }, [logout, navigate]);
 
   return (
-    <div className="space-y-6">
-      <Toolbar
-        left={<div><h2 className="text-2xl font-bold">Admin Dashboard</h2><div className="text-sm text-neutral-500">Bulacan – Mapping Flavors</div></div>}
-        right={
-          <div className="flex gap-2">
-            {(["analytics","dishes","restaurants","curation"] as const).map((t)=> (
-              <Button key={t} size="sm" variant={tab===t?"primary":"default"} onClick={()=>setTab(t)}>
-                {t[0].toUpperCase()+t.slice(1)}
-              </Button>
-            ))}
+    <div className="flex h-screen bg-neutral-50">
+      {/* Sidebar */}
+      <aside className="w-64 bg-white border-r shadow-sm overflow-y-auto flex flex-col">
+        {/* Brand */}
+        <div className="p-4 border-b">
+          <h1 className="text-lg font-bold text-primary-700">Admin Dashboard</h1>
+          <p className="text-sm text-neutral-500">Bulacan – Mapping Flavors</p>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 p-2">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setTab(item.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm mb-1 transition-colors ${
+                tab === item.id
+                  ? "bg-primary-50 text-primary-700 font-medium"
+                  : "text-neutral-600 hover:bg-neutral-50"
+              }`}
+            >
+              <item.icon size={18} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* User area */}
+        <div className="p-4 border-t bg-neutral-50">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700">
+              {user?.displayName?.[0].toUpperCase() || "A"}
+            </div>
+            <div className="min-w-0">
+              <div className="font-medium text-sm truncate">{user?.displayName || "Admin"}</div>
+              <div className="text-xs text-neutral-500 truncate">{user?.email}</div>
+            </div>
           </div>
-        }
-      />
-      {tab === "analytics" && <AnalyticsTab />}
-      {tab === "dishes" && <DishesTab />}
-      {tab === "restaurants" && <RestaurantsTab />}
-      {tab === "curation" && <CurationTab />}
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <LogOut size={16} />
+            Sign Out
+          </button>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main 
+        className="flex-1 overflow-y-auto"
+        onScroll={(e) => {
+          const main = e.currentTarget;
+          setScrollPositions(prev => ({
+            ...prev,
+            [tab]: main.scrollTop
+          }));
+        }}
+        ref={(el) => {
+          if (el) {
+            el.scrollTop = scrollPositions[tab] || 0;
+          }
+        }}
+      >
+        <div className="p-6">
+          {/* Page header */}
+          <header className="mb-6">
+            <h1 className="text-2xl font-bold text-neutral-900">
+              {navItems.find(item => item.id === tab)?.label}
+            </h1>
+          </header>
+
+          {/* Content area */}
+          <ViewContext.Provider value={{
+            scrollPositions,
+            setScrollPosition: (tab, position) => {
+              setScrollPositions(prev => ({
+                ...prev,
+                [tab]: position
+              }));
+            }
+          }}>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={tab}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-6"
+              >
+                {tab === "analytics" && <AnalyticsTab />}
+                {tab === "dishes" && <DishesTab />}
+                {tab === "restaurants" && <RestaurantsTab />}
+                {tab === "curation" && <CurationTab />}
+                {/* Additional tabs will be implemented here:
+                {tab === "municipalities" && <MunicipalitiesTab />}
+                {tab === "users" && <UsersTab />}
+                {tab === "media" && <MediaTab />}
+                {tab === "settings" && <SettingsTab />}
+                */}
+              </motion.div>
+            </AnimatePresence>
+          </ViewContext.Provider>
+        </div>
+      </main>
     </div>
   );
 }

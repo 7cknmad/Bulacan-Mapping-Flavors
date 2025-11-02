@@ -12,6 +12,7 @@ const cfg = {
   password: process.env.DB_PASSWORD ?? process.env.DB_PASS ?? '',
   database: process.env.DB_NAME || 'bulacan_flavors',
   multipleStatements: true,
+  charset: 'utf8mb4'
 };
 
 async function run() {
@@ -26,13 +27,40 @@ async function run() {
 
     console.log('Connecting to DB', cfg.host, cfg.database);
     const conn = await mysql.createConnection(cfg);
+    
+    // Create migrations table if it doesn't exist
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS migrations (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
     for (const f of sqlFiles) {
       const p = path.join(migrationsDir, f);
+      
+      // Check if migration has already been executed
+      const [rows] = await conn.query('SELECT * FROM migrations WHERE name = ?', [f]);
+      if (rows.length > 0) {
+        console.log('Skipping already executed migration:', f);
+        continue;
+      }
+      
       console.log('Running migration:', f);
-      const sql = String(await fs.readFile(p, 'utf8'));
+      const sqlContent = String(await fs.readFile(p, 'utf8'));
+      // Split SQL content into individual statements
+      const statements = sqlContent
+        .split(';')
+        .map(stmt => stmt.trim())
+        .filter(stmt => stmt.length > 0);
+      
       try {
-        await conn.query(sql);
+        for (const sql of statements) {
+          console.log('Executing statement:', sql.substring(0, 50) + '...');
+          await conn.query(sql);
+        }
+        await conn.query('INSERT INTO migrations (name) VALUES (?)', [f]);
         console.log('OK:', f);
       } catch (e) {
         console.error('FAILED:', f, e.message || e);

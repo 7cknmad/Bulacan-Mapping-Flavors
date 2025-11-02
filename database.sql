@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Oct 28, 2025 at 01:54 PM
+-- Generation Time: Nov 02, 2025 at 04:41 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -48,7 +48,8 @@ CREATE TABLE `dishes` (
   `featured` tinyint(1) NOT NULL DEFAULT 0,
   `featured_rank` tinyint(4) DEFAULT NULL,
   `avg_rating` float DEFAULT 0,
-  `total_ratings` int(11) DEFAULT 0
+  `total_ratings` int(11) DEFAULT 0,
+  `view_count` int(11) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -103,6 +104,21 @@ CREATE TABLE `dish_variants` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `dish_views`
+--
+
+CREATE TABLE `dish_views` (
+  `id` int(11) NOT NULL,
+  `dish_id` int(11) NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `viewed_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `session_id` varchar(255) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `images`
 --
 
@@ -113,6 +129,18 @@ CREATE TABLE `images` (
   `url` varchar(512) NOT NULL,
   `is_primary` tinyint(1) DEFAULT 0,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `migrations`
+--
+
+CREATE TABLE `migrations` (
+  `id` int(11) NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `executed_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -149,7 +177,15 @@ CREATE TABLE `ratings` (
   `rating` int(11) DEFAULT NULL CHECK (`rating` between 1 and 5),
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `comment` text DEFAULT NULL
+  `comment` text DEFAULT NULL,
+  `helpfulness_votes` int(11) DEFAULT 0,
+  `is_verified_visit` tinyint(1) DEFAULT 0,
+  `reported_count` int(11) DEFAULT 0,
+  `response_text` text DEFAULT NULL,
+  `response_date` timestamp NULL DEFAULT NULL,
+  `response_by` int(11) DEFAULT NULL,
+  `last_vote_date` timestamp NULL DEFAULT NULL,
+  `weight` decimal(4,3) DEFAULT 1.000
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -232,8 +268,64 @@ CREATE TABLE `restaurants` (
   `featured_rank` tinyint(3) UNSIGNED DEFAULT NULL,
   `avg_rating` float DEFAULT 0,
   `total_ratings` int(11) DEFAULT 0,
-  `location` point DEFAULT NULL
+  `location` point NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `review_votes`
+--
+
+CREATE TABLE `review_votes` (
+  `id` int(11) NOT NULL,
+  `review_id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `vote_type` enum('helpful','report') NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Triggers `review_votes`
+--
+DELIMITER $$
+CREATE TRIGGER `after_vote_delete` AFTER DELETE ON `review_votes` FOR EACH ROW UPDATE ratings 
+SET 
+  helpfulness_votes = (
+    SELECT COUNT(*) 
+    FROM review_votes 
+    WHERE review_id = OLD.review_id 
+    AND vote_type = 'helpful'
+  ),
+  reported_count = (
+    SELECT COUNT(*) 
+    FROM review_votes 
+    WHERE review_id = OLD.review_id 
+    AND vote_type = 'report'
+  ),
+  last_vote_date = IF(OLD.vote_type = 'helpful', NOW(), last_vote_date)
+WHERE id = OLD.review_id
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `after_vote_insert` AFTER INSERT ON `review_votes` FOR EACH ROW UPDATE ratings 
+SET 
+  helpfulness_votes = (
+    SELECT COUNT(*) 
+    FROM review_votes 
+    WHERE review_id = NEW.review_id 
+    AND vote_type = 'helpful'
+  ),
+  reported_count = (
+    SELECT COUNT(*) 
+    FROM review_votes 
+    WHERE review_id = NEW.review_id 
+    AND vote_type = 'report'
+  ),
+  last_vote_date = IF(NEW.vote_type = 'helpful', NOW(), last_vote_date)
+WHERE id = NEW.review_id
+$$
+DELIMITER ;
 
 -- --------------------------------------------------------
 
@@ -250,6 +342,21 @@ CREATE TABLE `users` (
   `role` varchar(20) NOT NULL DEFAULT 'user',
   `password_hash` varchar(255) DEFAULT NULL,
   `salt` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `user_favorites`
+--
+
+CREATE TABLE `user_favorites` (
+  `id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `item_id` int(11) NOT NULL,
+  `item_type` enum('dish','restaurant') NOT NULL,
+  `metadata` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`metadata`)),
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -293,11 +400,27 @@ ALTER TABLE `dish_variants`
   ADD KEY `fk_variant_dish` (`dish_id`);
 
 --
+-- Indexes for table `dish_views`
+--
+ALTER TABLE `dish_views`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `unique_view_per_session` (`dish_id`,`session_id`),
+  ADD KEY `idx_dish_views_dish_id` (`dish_id`),
+  ADD KEY `idx_dish_views_viewed_at` (`viewed_at`);
+
+--
 -- Indexes for table `images`
 --
 ALTER TABLE `images`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_img_owner` (`owner_type`,`owner_id`);
+
+--
+-- Indexes for table `migrations`
+--
+ALTER TABLE `migrations`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `name` (`name`);
 
 --
 -- Indexes for table `municipalities`
@@ -312,7 +435,11 @@ ALTER TABLE `municipalities`
 --
 ALTER TABLE `ratings`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `user_id` (`user_id`,`rateable_id`,`rateable_type`);
+  ADD UNIQUE KEY `user_id` (`user_id`,`rateable_id`,`rateable_type`),
+  ADD KEY `idx_helpfulness_votes` (`helpfulness_votes`),
+  ADD KEY `idx_reported_count` (`reported_count`),
+  ADD KEY `idx_is_verified` (`is_verified_visit`),
+  ADD KEY `response_by` (`response_by`);
 
 --
 -- Indexes for table `restaurants`
@@ -323,8 +450,16 @@ ALTER TABLE `restaurants`
   ADD KEY `fk_rest_muni` (`municipality_id`),
   ADD KEY `idx_rest_slug` (`slug`),
   ADD KEY `idx_restaurants_featured` (`featured`,`featured_rank`),
-  ADD KEY `idx_restaurants_updated` (`updated_at`);
+  ADD KEY `idx_restaurants_updated` (`updated_at`),
+  ADD SPATIAL KEY `idx_restaurants_location` (`location`);
 ALTER TABLE `restaurants` ADD FULLTEXT KEY `ft_rest_name_desc` (`name`,`description`);
+
+--
+-- Indexes for table `review_votes`
+--
+ALTER TABLE `review_votes`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `unique_vote` (`review_id`,`user_id`,`vote_type`);
 
 --
 -- Indexes for table `users`
@@ -332,6 +467,13 @@ ALTER TABLE `restaurants` ADD FULLTEXT KEY `ft_rest_name_desc` (`name`,`descript
 ALTER TABLE `users`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `email` (`email`);
+
+--
+-- Indexes for table `user_favorites`
+--
+ALTER TABLE `user_favorites`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `unique_favorite` (`user_id`,`item_id`,`item_type`);
 
 --
 -- AUTO_INCREMENT for dumped tables
@@ -356,10 +498,22 @@ ALTER TABLE `dish_variants`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `dish_views`
+--
+ALTER TABLE `dish_views`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `images`
 --
 ALTER TABLE `images`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `migrations`
+--
+ALTER TABLE `migrations`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `municipalities`
@@ -380,9 +534,21 @@ ALTER TABLE `restaurants`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `review_votes`
+--
+ALTER TABLE `review_votes`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `user_favorites`
+--
+ALTER TABLE `user_favorites`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
@@ -411,10 +577,22 @@ ALTER TABLE `dish_variants`
   ADD CONSTRAINT `fk_variant_rest` FOREIGN KEY (`restaurant_id`) REFERENCES `restaurants` (`id`) ON DELETE CASCADE;
 
 --
+-- Constraints for table `ratings`
+--
+ALTER TABLE `ratings`
+  ADD CONSTRAINT `ratings_ibfk_1` FOREIGN KEY (`response_by`) REFERENCES `users` (`id`);
+
+--
 -- Constraints for table `restaurants`
 --
 ALTER TABLE `restaurants`
   ADD CONSTRAINT `fk_rest_muni` FOREIGN KEY (`municipality_id`) REFERENCES `municipalities` (`id`) ON UPDATE CASCADE;
+
+--
+-- Constraints for table `user_favorites`
+--
+ALTER TABLE `user_favorites`
+  ADD CONSTRAINT `user_favorites_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

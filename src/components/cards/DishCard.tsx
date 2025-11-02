@@ -6,6 +6,9 @@ import { assetUrl } from "../../utils/assets";
 import { fetchRestaurants } from "../../utils/api";
 import VariantPreviewModal from "../VariantPreviewModal";
 import { useFavorites } from "../../hooks/useFavorites";
+import { useAuth } from "../../hooks/useAuth";
+import { useToast } from "../ToastProvider";
+import ConfirmModal from "../ConfirmModal";
 
 type AnyDish = {
   id?: number | string;
@@ -117,25 +120,37 @@ const DishCardInner: React.FC<DishCardProps> = ({ dish, compact = false, imageOv
   const muniLabel = dish.municipality_name || "";
 
   const { isFavorite, addFavorite, removeFavorite } = useFavorites();
+  const { user } = useAuth();
+  const addToast = useToast();
+  const navigate = useNavigate();
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const dishId = Number(dish.id ?? dish.slug ?? 0);
   const favorited = isFavorite(dishId, 'dish');
 
-  const handleFavoriteClick = useCallback((e: React.MouseEvent) => {
+  const handleFavoriteClick = useCallback(async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
-    if (favorited) {
-      removeFavorite(dishId, 'dish');
-    } else {
-      addFavorite({
-        id: dishId,
-        type: 'dish',
-        name: dish.name,
-        image_url: dish.image_url || dish.image || undefined,
-        municipality_name: dish.municipality_name || undefined
-      });
+    try {
+      if (favorited) {
+        await removeFavorite(dishId, 'dish');
+      } else {
+        await addFavorite({
+          id: dishId,
+          type: 'dish',
+          name: dish.name,
+          image_url: dish.image_url || dish.image || undefined,
+          municipality_name: dish.municipality_name || undefined
+        });
+      }
+    } catch (error: any) {
+      if (error?.code === 'LOGIN_REQUIRED') {
+        addToast('Please log in to manage favorites.', 'error');
+        navigate('/auth');
+        return;
+      }
+      addToast('Failed to update favorites.', 'error');
     }
-  }, [favorited, dishId, dish, addFavorite, removeFavorite]);
+  }, [favorited, dishId, dish, addFavorite, removeFavorite, addToast, navigate]);
 
   // resolved image sources (memoized)
   const imgSources = useMemo(() => getImageSources(dish, imageOverride), [dish, imageOverride]);
@@ -177,54 +192,12 @@ const DishCardInner: React.FC<DishCardProps> = ({ dish, compact = false, imageOv
       setLoadingPlaces(false);
     }
   };
-  const navigate = useNavigate();
-
-  if (compact) {
-    return (
-      <Link to={href} className="block">
-        <div className="flex items-center p-3 hover:bg-neutral-50 transition-colors rounded-lg gap-3">
-          <div className="w-16 h-16 flex-shrink-0 rounded-md overflow-hidden bg-neutral-100">
-            <img
-              src={renderedSrc}
-              srcSet={renderedSrcSet}
-              sizes={imgSources.sizes}
-              alt={dish.name}
-              loading="lazy"
-              decoding="async"
-              onError={handleImgError}
-              className="w-full h-full object-cover"
-            />
-          </div>
-
-                    <div className="flex-1 min-w-0">
-            <h3 className="font-medium text-neutral-900 truncate">{dish.name}</h3>
-            {muniLabel && <p className="text-xs text-neutral-500 truncate">{muniLabel}</p>}
-            <div className="flex items-center mt-1">
-              <Stars rating={rating} size={12} />
-              <span className="text-xs text-neutral-500 ml-1">{rating.toFixed(1)}</span>
-            </div>
-          </div>
-
-          <button
-            onClick={handleFavoriteClick}
-            className={`p-2 rounded-full hover:bg-neutral-100 transition-colors ${favorited ? 'text-red-500' : 'text-neutral-400'}`}
-          >
-            <Heart
-              size={20}
-              className={favorited ? 'fill-current' : ''}
-            />
-          </button>
-
-        </div>
-      </Link>
-    );
-  }
 
   return (
-    <Link to={href} className="block">
-      <article className="card group hover:scale-[1.02] transition-transform">
-        <div className="relative">
-          <div className="w-full aspect-[4/3] bg-neutral-100 overflow-hidden">
+    <>
+      <Link to={href} className="block">
+        <article className={`card group ${compact ? 'flex items-center p-3 hover:bg-neutral-50 rounded-lg gap-3 transition-colors' : 'hover:scale-[1.02] transition-transform'}`}>
+          <div className={compact ? "w-16 h-16 flex-shrink-0 rounded-md overflow-hidden bg-neutral-100" : "relative"}>
             <img
               src={renderedSrc}
               srcSet={renderedSrcSet}
@@ -233,106 +206,172 @@ const DishCardInner: React.FC<DishCardProps> = ({ dish, compact = false, imageOv
               loading="lazy"
               decoding="async"
               onError={handleImgError}
-              className="w-full h-full object-cover object-center"
+              className={compact ? "w-full h-full object-cover" : "w-full h-full object-cover object-center"}
             />
-          </div>
-
-          <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded-md text-xs font-medium flex items-center">
-            <StarIcon size={14} className="text-yellow-500 fill-yellow-500 mr-1" />
-            {rating.toFixed(1)}
-          </div>
-
-          <button
-            onClick={handleFavoriteClick}
-            className={`absolute top-2 left-2 p-2 rounded-full bg-white/90 transition-colors ${favorited ? 'text-red-500' : 'text-neutral-400 hover:text-neutral-600'}`}
-          >
-            <Heart
-              size={20}
-              className={favorited ? 'fill-current' : ''}
-            />
-          </button>
-
-          {muniLabel && (
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-              <span className="text-white text-xs font-medium">{muniLabel}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="p-4">
-          <h3 className="font-medium text-lg mb-1 group-hover:text-primary-600 transition-colors">
-            {dish.name}
-          </h3>
-
-          {dish.description && (
-            <p className="text-sm text-neutral-600 mb-3 line-clamp-2">{dish.description}</p>
-          )}
-
-          <div className="flex justify-between items-center">
-            <div className="flex items-center">
-              <Stars rating={rating} />
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePlaces(); }} className="text-sm px-3 py-1 bg-primary-600 text-white rounded">{places === undefined ? 'Show where to try' : places === null ? 'Hide places' : 'Hide places'}</button>
-              <span className="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded-full">{ingredientsCount} Ingredients</span>
-            </div>
-          </div>
-        </div>
-        {/* inline places panel (compact) */}
-        {places !== undefined && places ? (
-          <div className="p-3 border-t bg-neutral-50">
-            {loadingPlaces ? (
-              <div className="text-sm text-neutral-500">Loading places…</div>
-            ) : placesError ? (
-              <div className="text-sm text-red-600">{placesError}</div>
-            ) : places.length === 0 ? (
-              <div className="text-sm text-neutral-500">No places found for this dish.</div>
-            ) : (
-              <div className="space-y-2">
-                {places
-                  .slice()
-                  .sort((a,b) => (Number(b.avg_rating ?? b.rating ?? 0) - Number(a.avg_rating ?? a.rating ?? 0)))
-                  .slice(0,3)
-                  .map((r) => (
-                   <div key={r.id} onClick={(e)=>{ e.preventDefault(); e.stopPropagation(); navigate(`/restaurant/${encodeURIComponent(r.slug || String(r.id))}`); }} role="button" tabIndex={0} onKeyDown={(e)=>{ if(e.key==='Enter') { e.preventDefault(); e.stopPropagation(); navigate(`/restaurant/${encodeURIComponent(r.slug || String(r.id))}`); } }} className="p-2 bg-white rounded border flex items-start gap-3 cursor-pointer">
-                    <div className="flex-1">
-                      <div className="font-medium text-sm">{r.name}</div>
-                      <div className="text-xs text-neutral-500">{r.address}</div>
-                      {Array.isArray((r as any).variants) && (r as any).variants.length > 0 && (
-                        <div className="mt-2 grid gap-2">
-                          {(r as any).variants.map((v: any) => (
-                            <button key={v.id} type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedVariant(v); setSelectedRestaurantSlug(r.slug || String(r.id)); setShowVariantModal(true); }} className="w-full text-left flex items-center gap-3 p-2 border rounded bg-white hover:shadow-sm">
-                              {v.image_url ? (
-                                <img src={v.image_url} alt={v.name} className="w-10 h-10 object-cover rounded-md" onError={(e)=>((e.currentTarget.src='https://via.placeholder.com/40'))} />
-                              ) : (
-                                <div className="w-10 h-10 rounded-md bg-neutral-100 flex items-center justify-center text-xs text-neutral-500">No image</div>
-                              )}
-                              <div className="flex-1 text-sm">
-                                <div className="font-medium">{v.name}</div>
-                                <div className="text-xs text-neutral-500">{v.description}</div>
-                              </div>
-                              <div className="text-sm text-neutral-700">{v.price ? `₱${Number(v.price).toFixed(2)}` : ''}</div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-sm text-neutral-700">⭐ {Number(r.avg_rating ?? r.rating ?? 0).toFixed(1)}</div>
-                  </div>
-                ))}
-                {/* view all places link */}
-                <div>
-                  <a href={`/restaurants?dishId=${encodeURIComponent(String(dish.id ?? dish.slug ?? ''))}`} onClick={(e)=>{e.preventDefault(); e.stopPropagation(); window.location.hash = `/restaurants?dishId=${encodeURIComponent(String(dish.id ?? dish.slug ?? ''))}`; window.location.reload(); }} className="text-sm text-primary-600 hover:underline">View all places offering this dish →</a>
+            {!compact && (
+              <>
+                <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded-md text-xs font-medium flex items-center">
+                  <StarIcon size={14} className="text-yellow-500 fill-yellow-500 mr-1" />
+                  {rating.toFixed(1)}
                 </div>
-              </div>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!user) {
+                      setShowLoginModal(true);
+                      return;
+                    }
+                    handleFavoriteClick(e);
+                  }}
+                  className={`absolute top-2 left-2 p-2 rounded-full bg-white/90 transition-colors ${favorited ? 'text-red-500' : 'text-neutral-400 hover:text-neutral-600'}`}
+                >
+                  <Heart
+                    size={20}
+                    className={favorited ? 'fill-current' : ''}
+                  />
+                </button>
+                {muniLabel && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
+                    <span className="text-white text-xs font-medium">{muniLabel}</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
-        ) : null}
-
-        <VariantPreviewModal open={showVariantModal} onClose={() => setShowVariantModal(false)} variant={selectedVariant} restaurantSlug={selectedRestaurantSlug} />
-      </article>
-    </Link>
+            <div className={compact ? "flex-1 min-w-0" : "p-4"}>
+              <h3 className={compact ? "font-medium text-neutral-900 truncate" : "font-medium text-lg mb-1 group-hover:text-primary-600 transition-colors"}>{dish.name}</h3>
+              {compact && muniLabel && <p className="text-xs text-neutral-500 truncate">{muniLabel}</p>}
+              {/* Ratings and scores removed from card body; only shown at top right */}
+              {!compact && dish.description && (
+                <p className="text-sm text-neutral-600 mb-3 line-clamp-2">{dish.description}</p>
+              )}
+              {!compact && (
+                <div className="flex justify-between items-center">
+                  <div />
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePlaces(); }} className="text-sm px-3 py-1 bg-primary-600 text-white rounded">{places === undefined ? 'Show where to try' : places === null ? 'Hide places' : 'Hide places'}</button>
+                    <span className="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded-full">{ingredientsCount} Ingredients</span>
+                    {(dish as any).price && (
+                      <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">
+                        ₱{Number((dish as any).price).toFixed(2)}
+                      </span>
+                    )}
+                    {Array.isArray((dish as any).dietary_info) && (dish as any).dietary_info.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        {(dish as any).dietary_info.map((diet: string) => {
+                          const icon = {
+                            vegetarian: "🥗",
+                            vegan: "🌱",
+                            halal: "🌙",
+                            gluten_free: "🌾"
+                          }[diet];
+                          return icon ? (
+                            <span key={diet} className="text-sm" title={diet.charAt(0).toUpperCase() + diet.slice(1).replace('_', ' ')}>
+                              {icon}
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+                    {(dish as any).spicy_level && (dish as any).spicy_level !== 'not_spicy' && (
+                      <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full flex items-center gap-1">
+                        {(dish as any).spicy_level === 'very_hot' ? '🔥' : '🌶️'.repeat(
+                          {
+                            mild: 1,
+                            medium: 2,
+                            hot: 3
+                          }[(dish as any).spicy_level] || 1
+                        )}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+          </div>
+          {compact && (
+            <button
+              onClick={(e) => {
+                if (!user) {
+                  setShowLoginModal(true);
+                  return;
+                }
+                handleFavoriteClick(e);
+              }}
+              className={`p-2 rounded-full hover:bg-neutral-100 transition-colors ${favorited ? 'text-red-500' : 'text-neutral-400'}`}
+            >
+              <Heart
+                size={20}
+                className={favorited ? 'fill-current' : ''}
+              />
+            </button>
+          )}
+          {/* inline places panel (compact) */}
+          {!compact && places !== undefined && places ? (
+            <div className="p-3 border-t bg-neutral-50">
+              {loadingPlaces ? (
+                <div className="text-sm text-neutral-500">Loading places…</div>
+              ) : placesError ? (
+                <div className="text-sm text-red-600">{placesError}</div>
+              ) : places.length === 0 ? (
+                <div className="text-sm text-neutral-500">No places found for this dish.</div>
+              ) : (
+                <div className="space-y-2">
+                  {places
+                    .slice()
+                    .sort((a,b) => (Number(b.avg_rating ?? b.rating ?? 0) - Number(a.avg_rating ?? a.rating ?? 0)))
+                    .slice(0,3)
+                    .map((r) => (
+                     <div key={r.id} onClick={(e)=>{ e.preventDefault(); e.stopPropagation(); navigate(`/restaurant/${encodeURIComponent(r.slug || String(r.id))}`); }} role="button" tabIndex={0} onKeyDown={(e)=>{ if(e.key==='Enter') { e.preventDefault(); e.stopPropagation(); navigate(`/restaurant/${encodeURIComponent(r.slug || String(r.id))}`); } }} className="p-2 bg-white rounded border flex items-start gap-3 cursor-pointer">
+                      <div className="flex-1">
+                        <div className="font-medium text-sm">{r.name}</div>
+                        <div className="text-xs text-neutral-500">{r.address}</div>
+                        {Array.isArray((r as any).variants) && (r as any).variants.length > 0 && (
+                          <div className="mt-2 grid gap-2">
+                            {(r as any).variants.map((v: any) => (
+                              <button key={v.id} type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedVariant(v); setSelectedRestaurantSlug(r.slug || String(r.id)); setShowVariantModal(true); }} className="w-full text-left flex items-center gap-3 p-2 border rounded bg-white hover:shadow-sm">
+                                {v.image_url ? (
+                                  <img src={v.image_url} alt={v.name} className="w-10 h-10 object-cover rounded-md" onError={(e)=>((e.currentTarget.src='https://via.placeholder.com/40'))} />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-md bg-neutral-100 flex items-center justify-center text-xs text-neutral-500">No image</div>
+                                )}
+                                <div className="flex-1 text-sm">
+                                  <div className="font-medium">{v.name}</div>
+                                  <div className="text-xs text-neutral-500">{v.description}</div>
+                                </div>
+                                <div className="text-sm text-neutral-700">{v.price ? `₱${Number(v.price).toFixed(2)}` : ''}</div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-sm text-neutral-700">⭐ {Number(r.avg_rating ?? r.rating ?? 0).toFixed(1)}</div>
+                    </div>
+                  ))}
+                  {/* view all places link */}
+                  <div>
+                    <a href={`/restaurants?dishId=${encodeURIComponent(String(dish.id ?? dish.slug ?? ''))}`} onClick={(e)=>{e.preventDefault(); e.stopPropagation(); window.location.hash = `/restaurants?dishId=${encodeURIComponent(String(dish.id ?? dish.slug ?? ''))}`; window.location.reload(); }} className="text-sm text-primary-600 hover:underline">View all places offering this dish →</a>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
+          <VariantPreviewModal open={showVariantModal} onClose={() => setShowVariantModal(false)} variant={selectedVariant} restaurantSlug={selectedRestaurantSlug} />
+        </article>
+      </Link>
+      <ConfirmModal
+        open={showLoginModal}
+        title="Login Required"
+        message="You need to log in to manage favorites. Would you like to proceed to the login page?"
+        confirmLabel="Go to Login"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setShowLoginModal(false);
+          navigate('/auth');
+        }}
+        onCancel={() => setShowLoginModal(false)}
+      />
+    </>
   );
 };
 

@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft as ArrowLeftIcon, Star as StarIcon, MapPin as MapPinIcon, Phone as PhoneIcon, Globe as GlobeIcon, Clock as ClockIcon, Facebook as FacebookIcon, Instagram as InstagramIcon, Utensils as UtensilsIcon } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import { fetchRestaurants, fetchReviews, postReview, updateReview, deleteReview, API, Variant, fetchRestaurantVariants, fetchDishes } from "../utils/api";
+import { fetchRestaurants, fetchReviews, postReview, updateReview, deleteReview, API, Variant, fetchRestaurantVariants, fetchDishes, calculateAverageRating } from "../utils/api";
 import { useAuth } from '../hooks/useAuth';
 import { useRecentVisits } from '../hooks/useRecentVisits.ts';
 import { useToast } from '../components/ToastProvider';
@@ -138,6 +138,13 @@ function RestaurantDetails() {
     },
     retryDelay: (attemptIndex) => Math.min(1000 * (2 ** attemptIndex), 30000),
   });
+
+    // Increment popularity when restaurant is viewed
+    useEffect(() => {
+      if (restaurantQ.data?.id) {
+        fetch(`/api/restaurants/${restaurantQ.data.id}/view`, { method: 'POST' }).catch(() => {});
+      }
+    }, [restaurantQ.data?.id]);
   // Reviews state (must be after restaurantQ)
   // Add to recent visits when viewing details
   const { addVisit } = useRecentVisits();
@@ -471,7 +478,8 @@ function RestaurantDetails() {
   const r = restaurantQ.data!;
   const cuisines = toArray((r as any).cuisine_types);
   const coords: [number, number] = [Number(r.lat) || 14.84, Number(r.lng) || 120.81];
-  const rating = Number((r as any).avg_rating ?? r.rating ?? 0);
+  // Consistent average rating calculation
+  const rating = reviewsQ.data ? calculateAverageRating(reviewsQ.data) : Number((r as any).avg_rating ?? r.rating ?? 0);
   // Use restaurant's hero image if available, fallback to category-based default
   const defaultHeroImages = {
     restaurant: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=1600&auto=format&fit=crop",
@@ -586,7 +594,7 @@ function RestaurantDetails() {
                     )}
                   </div>
 
-                  {/* Rating Badge */}
+                  {/* Rating Badge (consistent, accurate) */}
                   <div className="flex items-center gap-2">
                     <span className="px-3 py-1.5 bg-white/90 text-neutral-900 rounded-full flex items-center gap-1.5 font-medium">
                       <StarIcon size={16} className="text-yellow-500 fill-yellow-500" />

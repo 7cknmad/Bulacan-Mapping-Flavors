@@ -9,16 +9,22 @@ export interface Municipality {
 }
 // Dish types
 export interface Dish {
-  id: string;
+  id: number;
   name: string;
-  description: string;
-  history: string;
-  culturalSignificance: string;
-  ingredients: string[];
-  image: string;
-  municipalityId: string;
-  restaurantIds: string[]; // IDs of restaurants serving this dish
-  rating: number;
+  slug: string;
+  description?: string;
+  image_url?: string;
+  municipality_id: number;
+  category?: 'food' | 'delicacy' | 'drink';
+  signature?: boolean;
+  panel_rank?: number;
+  popularity?: number;
+  rating?: number;
+  avg_rating?: number;
+  total_ratings?: number;
+  is_featured?: boolean;
+  flavor_profile?: string[];
+  ingredients?: string[];
 }
 // Restaurant types
 export interface Restaurant {

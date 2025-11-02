@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import StarRating from './StarRating';
 import { postReview } from '../utils/api';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from './ToastProvider';
 import ConfirmModal from './ConfirmModal';
 import { containsProfanity, filterProfanity, RATE_LIMIT } from '../utils/content-filter';
@@ -15,6 +16,7 @@ const MIN_COMMENT_LENGTH = 10;
 const MAX_COMMENT_LENGTH = 500;
 
 const RatingForm: React.FC<RatingFormProps> = ({ rateableId, rateableType }) => {
+  const navigate = useNavigate();
   const [rating, setRating] = useState<number>(0);
   const [message, setMessage] = useState<string | null>(null);
   const [comment, setComment] = useState<string>('');
@@ -187,7 +189,7 @@ const RatingForm: React.FC<RatingFormProps> = ({ rateableId, rateableType }) => 
     try {
       setMessage(null);
       setLoading(true);
-      mutation.mutate({ rateable_id: rateableId, rateable_type: rateableType, rating, comment: comment?.trim() || undefined });
+      await mutation.mutateAsync({ rateable_id: rateableId, rateable_type: rateableType, rating, comment: comment?.trim() || undefined });
       // Track the review for rate limiting
       const reviews = JSON.parse(localStorage.getItem('user_reviews') || '[]');
       reviews.push({
@@ -196,16 +198,20 @@ const RatingForm: React.FC<RatingFormProps> = ({ rateableId, rateableType }) => 
         rateableType
       });
       localStorage.setItem('user_reviews', JSON.stringify(reviews));
-      
       setMessage('Thank you for your rating!');
-      // reset form
       setRating(0);
       setComment('');
-  addToast('Rating submitted — thanks!', 'success');
-    } catch (error) {
+      addToast('Rating submitted — thanks!', 'success');
+    } catch (error: any) {
+      if (error?.code === 'LOGIN_REQUIRED') {
+        setMessage('You must be logged in to submit a review.');
+        addToast('Please log in to submit a review.', 'error');
+        navigate('/auth');
+        return;
+      }
       console.error('Error submitting rating:', error);
       setMessage('Failed to submit rating. Please try again later.');
-  addToast('Failed to submit rating', 'error');
+      addToast('Failed to submit rating', 'error');
     } finally {
       setLoading(false);
     }

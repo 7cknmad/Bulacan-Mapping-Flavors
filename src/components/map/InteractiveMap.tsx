@@ -9,7 +9,7 @@ import UserLocationMarker from './UserLocationMarker';
 import RestaurantMarker from './RestaurantMarker';
 import MarkerClusterGroup from './MarkerClusterGroup';
 import MunicipalityLabel from './MunicipalityLabel';
-import DistanceControls from './DistanceControls';
+import MapControlPanel from './MapControlPanel';
 import RadiusOverlay from './RadiusOverlay';
 import './map.css';
 // Component to handle map background clicks
@@ -64,6 +64,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
   const { selected: selectedMunicipality, select, clear } = useSelectedMunicipality<UIMunicipality>();
   const [hoveredName, setHoveredName] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number]>(bulacanCenter);
+  const [focusedRestaurants, setFocusedRestaurants] = useState<RestMarker[]>([]);
   const [mapZoom, setMapZoom] = useState<number>(10);
   const mapRef = useRef<L.Map | null>(null);
   const MAP_MIN_ZOOM = 8;
@@ -111,6 +112,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
       }, 100);
     }
   }, [restaurantMarkers]);
+
 
   // Local component: instructions shown to first-time visitors
   const InstructionsKey = 'bulacan_map_instructions_dismissed_v1';
@@ -572,6 +574,55 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
       setHighlightedIndex(-1);
     }
   };
+
+  // Listen for municipality restaurant show events
+  useEffect(() => {
+    const handleShowRestaurants = async (e: CustomEvent<{ municipalityId: number }>) => {
+      if (!e.detail.municipalityId) return;
+      
+      try {
+        const resp = await fetchRestaurantsCached({ 
+          municipalityId: e.detail.municipalityId,
+          perPage: 100
+        });
+        
+        if (resp.rows && resp.rows.length) {
+          const restaurants = resp.rows.map(r => ({
+            id: r.id,
+            name: r.name,
+            lat: r.lat,
+            lng: r.lng,
+            address: r.address
+          }));
+          
+          setFocusedRestaurants(restaurants);
+          
+          // Fit map bounds to show all restaurants
+          const bounds = new L.LatLngBounds(
+            restaurants
+              .filter(m => typeof m.lat === 'number' && typeof m.lng === 'number')
+              .map(m => [m.lat!, m.lng!])
+          );
+          
+          if (bounds.isValid()) {
+            mapRef.current?.fitBounds(bounds, { padding: [50, 50] });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch restaurants:', err);
+      }
+    };
+
+    window.addEventListener('map:showRestaurants' as any, handleShowRestaurants as any);
+    return () => window.removeEventListener('map:showRestaurants' as any, handleShowRestaurants as any);
+  }, []);
+
+  // Clear focused restaurants when municipality is deselected
+  useEffect(() => {
+    if (!selectedMunicipality) {
+      setFocusedRestaurants([]);
+    }
+  }, [selectedMunicipality]);
 
   const handleLocate = async () => {
     if (!mapRef.current) return;
@@ -1056,44 +1107,28 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
         />
       </div>
 
-  {/* Floating right controls: view-direction and quick actions (responsive: bottom on small screens) */}
-  <div className="absolute z-[800] md:right-4 md:top-4 right-4 md:bottom-auto bottom-4 flex flex-col gap-2 items-end">
-        <div className="bg-white/95 p-2 rounded shadow text-sm w-56">
-          <div className="flex items-center justify-between mb-2">
-            <div className="font-medium">View-direction</div>
-            <label className="inline-flex items-center gap-2 text-xs">
-              <input type="checkbox" checked={viewDirectionEnabled} onChange={(e) => setViewDirectionEnabled(e.target.checked)} />
-              <span>On</span>
-            </label>
-          </div>
-          <div className="text-xs mb-2">Bearing: <strong>{bearingDeg}°</strong></div>
-          <input aria-label={`Bearing ${bearingDeg} degrees`} type="range" min={0} max={359} value={bearingDeg} onChange={(e) => setBearingDeg(Number(e.target.value))} className="w-full" />
-          <div className="text-xs mt-2">Cone width: <strong>{coneWidthDeg}°</strong></div>
-          <input aria-label={`Cone width ${coneWidthDeg} degrees`} type="range" min={10} max={180} value={coneWidthDeg} onChange={(e) => setConeWidthDeg(Number(e.target.value))} className="w-full" />
-          <div className="flex items-center justify-between mt-2 gap-2">
-            <button aria-pressed={useDeviceCompass} aria-label={useDeviceCompass ? 'Disable device compass' : 'Enable device compass'} className="px-2 py-1 bg-gray-100 rounded text-xs" onClick={() => setUseDeviceCompass((s) => !s)}>{useDeviceCompass ? 'Compass: on' : 'Compass: off'}</button>
-            <button className="px-2 py-1 bg-gray-100 rounded text-xs" onClick={() => { setBearingDeg(0); setConeWidthDeg(60); }}>Reset</button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <div className="bg-white/95 p-2 rounded shadow flex flex-col gap-2">
-            <button onClick={handleLocate} title="Locate me" aria-label="Locate me" className="px-3 py-1 bg-primary-600 text-white rounded text-sm">Locate</button>
-            <button onClick={toggleTile} title="Toggle tile" aria-pressed={tileStyle === 'voyager'} aria-label={`Toggle map tile style, currently ${tileStyle}`} className="px-3 py-1 bg-gray-100 rounded text-sm">Tile</button>
-            <button onClick={resetMap} title="Reset" aria-label="Reset map view" className="px-3 py-1 bg-gray-100 rounded text-sm">Reset</button>
-          </div>
-
-          {/* Distance controls */}
-          <DistanceControls
-            radiusKm={searchRadius}
-            onRadiusChange={setSearchRadius}
-            onSortByDistance={() => setSortByDistance(!sortByDistance)}
-            isSortedByDistance={sortByDistance}
-            userLocation={userLocation}
-            className="w-56"
-          />
-        </div>
-      </div>
+  {/* Map Controls Panel */}
+  <div className="absolute z-[800] md:right-4 md:top-4 right-4 md:bottom-auto bottom-4">
+    <MapControlPanel
+      searchRadius={searchRadius}
+      onSearchRadiusChange={setSearchRadius}
+      sortByDistance={sortByDistance}
+      onSortByDistanceChange={() => setSortByDistance(!sortByDistance)}
+      viewDirectionEnabled={viewDirectionEnabled}
+      onViewDirectionChange={setViewDirectionEnabled}
+      bearingDeg={bearingDeg}
+      onBearingChange={setBearingDeg}
+      coneWidthDeg={coneWidthDeg}
+      onConeWidthChange={setConeWidthDeg}
+      useDeviceCompass={useDeviceCompass}
+      onUseDeviceCompassChange={setUseDeviceCompass}
+      userLocation={userLocation}
+      onLocate={handleLocate}
+      onMapStyleChange={toggleTile}
+      onMapReset={resetMap}
+      className="w-[320px]"
+    />
+  </div>
 
         <MapContainer
         center={mapCenter}
@@ -1125,6 +1160,34 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
         )}
 
         {/* Render filtered restaurant markers with clustering */}
+        {/* Render focused restaurants from municipality */}
+        {focusedRestaurants.length > 0 && (
+          <MarkerClusterGroup
+            {...({ chunkedLoading: true } as any)}
+            maxClusterRadius={40}
+            spiderfyOnMaxZoom={true}
+            showCoverageOnHover={false}
+            zoomToBoundsOnClick={true}
+          >
+            {focusedRestaurants.map((r) => {
+              if (typeof r.lat !== 'number' || typeof r.lng !== 'number') return null;
+              return (
+                <RestaurantMarker
+                  key={`fr-${r.id}`}
+                  restaurant={r}
+                  userLocation={userLocation}
+                  onClick={() => {
+                    setHighlightedPlaceCoords([r.lat!, r.lng!]);
+                    setHighlightedPlaceName(r.name);
+                    setHighlightedPlaceType('restaurant');
+                    mapRef.current?.flyTo([r.lat!, r.lng!], 15, { duration: 0.6 });
+                  }}
+                />
+              );
+            })}
+          </MarkerClusterGroup>
+        )}
+
         {/* Render GeoJSON for municipality boundaries - hidden when showing restaurants */}
         {geoJsonPolygons && showPolygons && (
           <>
@@ -1211,7 +1274,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
         )}
 
         <MarkerClusterGroup
-          chunkedLoading
+          {...({ chunkedLoading: true } as any)}
           maxClusterRadius={40}
           spiderfyOnMaxZoom={true}
           showCoverageOnHover={false}
@@ -1294,29 +1357,31 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
       {/* Map instructions overlay (first-time visitors) */}
       <MapInstructions />
 
-      {/* Recent visits and saved places panels */}
-      <div className="absolute left-4 bottom-4 z-[900] w-[320px] flex flex-col gap-2">
-        <SavedPlacesPanel
-          onSelect={(item) => {
-            if (item.lat && item.lng) {
-              mapRef.current?.flyTo([item.lat, item.lng], 15);
-              setHighlightedPlaceCoords([item.lat, item.lng]);
-              setHighlightedPlaceName(item.name);
-              setHighlightedPlaceType(item.type);
-            }
-          }}
-        />
-        <RecentVisitsPanel
-          onSelect={(visit) => {
-            if (visit.lat && visit.lng) {
-              mapRef.current?.flyTo([visit.lat, visit.lng], 15);
-              setHighlightedPlaceCoords([visit.lat, visit.lng]);
-              setHighlightedPlaceName(visit.name);
-              setHighlightedPlaceType('restaurant');
-            }
-          }}
-        />
-      </div>
+      {/* Recent visits and saved places panels: only show when not fullscreen */}
+      {!fullScreen && (
+        <div className="absolute left-4 bottom-4 z-[900] w-[320px] flex flex-col gap-2">
+          <SavedPlacesPanel
+            onSelect={(item) => {
+              if (item.lat && item.lng) {
+                mapRef.current?.flyTo([item.lat, item.lng], 15);
+                setHighlightedPlaceCoords([item.lat, item.lng]);
+                setHighlightedPlaceName(item.name);
+                setHighlightedPlaceType(item.type);
+              }
+            }}
+          />
+          <RecentVisitsPanel
+            onSelect={(visit) => {
+              if (visit.lat && visit.lng) {
+                mapRef.current?.flyTo([visit.lat, visit.lng], 15);
+                setHighlightedPlaceCoords([visit.lat, visit.lng]);
+                setHighlightedPlaceName(visit.name);
+                setHighlightedPlaceType('restaurant');
+              }
+            }}
+          />
+        </div>
+      )}
 
       {/* Municipality details panel (modal) */}
       <AnimatePresence>

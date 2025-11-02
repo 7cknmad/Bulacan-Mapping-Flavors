@@ -12,18 +12,39 @@ export type FavoriteItem = {
   image_url?: string;
   municipality_name?: string;
   saved_at: string;
-};
-
+}
 // Convert from API response to internal format
 function convertFavorite(fav: UserFavorite): FavoriteItem {
+  // Parse metadata if it's a string
+  let metadataObj: any = {};
+  if (typeof fav.metadata === 'string') {
+    try {
+      metadataObj = JSON.parse(fav.metadata);
+    } catch {
+      metadataObj = {};
+    }
+  } else if (typeof fav.metadata === 'object' && fav.metadata !== null) {
+    metadataObj = fav.metadata;
+  }
+
+  // Prefer top-level name, then metadata.name, then item_name
+  let name = '';
+  if (fav.name) {
+    name = fav.name;
+  } else if (metadataObj.name) {
+    name = metadataObj.name;
+  } else if (fav.item_name) {
+    name = fav.item_name;
+  }
+
   return {
     id: fav.favoriteable_id,
     type: fav.favoriteable_type,
-    name: fav.name,
-    lat: fav.lat,
-    lng: fav.lng,
-    image_url: fav.image_url,
-    municipality_name: fav.municipality_name,
+    name,
+    lat: fav.lat ?? metadataObj.lat,
+    lng: fav.lng ?? metadataObj.lng,
+    image_url: fav.image_url ?? metadataObj.image_url ?? fav.item_image_url,
+    municipality_name: fav.municipality_name ?? metadataObj.municipality_name,
     saved_at: fav.created_at
   };
 }
@@ -216,6 +237,11 @@ export function useFavorites() {
     ? (favoritesQuery.data?.map(convertFavorite) || [])
     : guestFavorites;
 
+  // Compatibility helper: return favorites filtered by type
+  const getFavoritesByType = (type: 'restaurant' | 'dish') => {
+    return favorites.filter(f => f.type === type);
+  };
+
   return {
     favorites,
     addFavorite,
@@ -223,6 +249,7 @@ export function useFavorites() {
     isFavorite,
     checkFavorites,
     clearAllFavorites,
+    getFavoritesByType,
     isLoading: favoritesQuery.isLoading
   };
 }

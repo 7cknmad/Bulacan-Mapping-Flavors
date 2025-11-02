@@ -1,16 +1,46 @@
+// Helper: calculate average rating from reviews array
+export function calculateAverageRating(reviews: Array<{ rating?: number }>): number {
+  if (!reviews || !reviews.length) return 0;
+  const valid = reviews.map(r => Number(r.rating ?? 0)).filter(n => !isNaN(n));
+  if (!valid.length) return 0;
+  return valid.reduce((a, b) => a + b, 0) / valid.length;
+}
 // src/utils/api.ts — public client, safe for admin builds too
 
 const env = (import.meta as any).env || {};
-export const API = (
-  env.VITE_ADMIN_API_URL ||  // prefer admin base in admin builds
-  env.VITE_API_URL ||        // public base otherwise
-  "http://localhost:3002"
-).replace(/\/+$/, "");
+export const API = (() => {
+  const base = (
+    env.VITE_ADMIN_API_URL ||  // prefer admin base in admin builds
+    env.VITE_API_URL ||        // public base otherwise
+    "http://localhost:3002"
+  ).replace(/\/+$/, "");
+  
+  console.log('[API] Using base URL:', {
+    VITE_ADMIN_API_URL: env.VITE_ADMIN_API_URL,
+    VITE_API_URL: env.VITE_API_URL,
+    base
+  });
+  
+  return base;
+})();
 
 // Send cookies only when needed (auth/admin)
 function needsCreds(path: string) {
   const p = path.startsWith("http") ? new URL(path).pathname : path;
   return p.startsWith("/auth") || p.startsWith("/admin");
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status?: number,
+    public statusText?: string,
+    public data?: any,
+    public url?: string
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -22,14 +52,66 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (token) headers['Authorization'] = `Bearer ${token}`;
   } catch {}
 
-  const res = await fetch(url, {
-    credentials: needsCreds(path) ? "include" : "omit",
-    headers,
-    ...init,
-  });
-  const text = await res.text().catch(() => "");
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url}\n${text.slice(0, 300)}`);
-  try { return JSON.parse(text) as T; } catch { return text as unknown as T; }
+  console.log(`[API] ${init?.method || 'GET'} ${url}`);
+  
+  const startTime = Date.now();
+  try {
+    const res = await fetch(url, {
+      credentials: needsCreds(path) ? "include" : "omit",
+      headers,
+      ...init,
+    });
+    
+    const text = await res.text().catch(() => "");
+    const endTime = Date.now();
+    
+    console.log(`[API] Response for ${url} (${endTime - startTime}ms):`, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: Object.fromEntries(res.headers.entries()),
+      bodyPreview: text.slice(0, 200)
+    });
+
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      if (!res.ok) {
+        throw new ApiError(
+          `HTTP ${res.status} ${res.statusText}`,
+          res.status,
+          res.statusText,
+          text,
+          url
+        );
+      }
+      return text as unknown as T;
+    }
+
+    if (!res.ok) {
+      throw new ApiError(
+        data.message || `HTTP ${res.status} ${res.statusText}`,
+        res.status,
+        res.statusText,
+        data,
+        url
+      );
+    }
+
+    return data as T;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    console.error(`[API] Request failed for ${url}:`, error);
+    throw new ApiError(
+      error instanceof Error ? error.message : 'Unknown error occurred',
+      undefined,
+      undefined,
+      error,
+      url
+    );
+  }
 }
 
 export const get  = <T,>(p: string) => request<T>(p);
@@ -38,7 +120,25 @@ export const del  = <T,>(p: string) => request<T>(p, { method: "DELETE" });
 
 /* ================== Types (same as yours, keep as-is or trim) ================== */
 export type Municipality = { id: number; name: string; slug: string; description?: string|null; province?: string; lat?: number; lng?: number; image_url?: string|null };
-export type Dish = { id: number; slug: string; name: string; description?: string|null; image_url?: string|null; rating?: number|null; avg_rating?: number|null; total_ratings?: number|null; popularity?: number|null; flavor_profile?: string[]|null; ingredients?: string[]|null; municipality_id: number; municipality_name?: string; category?: "food"|"delicacy"|"drink" };
+export type Dish = { 
+  id: number; 
+  slug: string; 
+  name: string; 
+  description?: string|null; 
+  image_url?: string|null; 
+  rating?: number|null; 
+  avg_rating?: number|null; 
+  total_ratings?: number|null; 
+  popularity?: number|null; 
+  flavor_profile?: string[]|null; 
+  ingredients?: string[]|null; 
+  municipality_id: number; 
+  municipality_name?: string; 
+  category?: "food"|"delicacy"|"drink";
+  price?: number|null;
+  dietary_info?: Array<"vegetarian"|"vegan"|"halal"|"gluten_free">;
+  spicy_level?: "not_spicy"|"mild"|"medium"|"hot"|"very_hot";
+};
 export type Restaurant = { id: number; name: string; slug: string; kind?: 'restaurant'|'stall'|'store'|'dealer'|'market'|'home-based'; description?: string|null; address?: string; phone?: string|null; website?: string|null; facebook?: string|null; instagram?: string|null; opening_hours?: string|null; price_range?: "budget"|"moderate"|"expensive"; cuisine_types?: string[]|null; rating?: number|null; avg_rating?: number|null; total_ratings?: number|null; lat?: number; lng?: number; image_url?: string|null; municipality_name?: string };
 
 export type Variant = {
@@ -166,10 +266,17 @@ export const postReview = async (data: {
   comment?: string;
   // optional: user_id (will be filled from localStorage if not provided)
 }) => {
-  // Server now requires auth and derives user id from the JWT. Only send rateable data.
-  const body: any = { rateable_id: data.rateable_id, rateable_type: data.rateable_type, rating: data.rating, comment: data.comment };
-  return post('/api/reviews', body);
-};
+    // Check for login
+    const token = localStorage.getItem('auth_token');
+    const user = localStorage.getItem('auth_user');
+    if (!token || !user) {
+      const err: any = new Error('You must be logged in to post a review.');
+      err.code = 'LOGIN_REQUIRED';
+      throw err;
+    }
+    const body: any = { rateable_id: data.rateable_id, rateable_type: data.rateable_type, rating: data.rating, comment: data.comment };
+    return post('/api/reviews', body);
+  };
 
 // Edit a review
 export const updateReview = async (id: number, data: { rating: number; comment?: string }) => {
@@ -187,12 +294,28 @@ export const deleteReview = async (id: number) => {
 export const fetchUserFavorites = () => get<Array<{item_id: number, item_type: 'dish'|'restaurant'}>>(`/api/user/favorites`);
 
 // Add an item to favorites
-export const addToFavorites = (itemType: 'dish'|'restaurant', itemId: number) => 
-  post(`/api/user/favorites`, { itemType, itemId });
+export const addToFavorites = async (itemType: 'dish'|'restaurant', itemId: number) => {
+  const token = localStorage.getItem('auth_token');
+  const user = localStorage.getItem('auth_user');
+  if (!token || !user) {
+    const err: any = new Error('You must be logged in to add favorites.');
+    err.code = 'LOGIN_REQUIRED';
+    throw err;
+  }
+  return post(`/api/user/favorites`, { itemType, itemId });
+};
 
 // Remove an item from favorites
-export const removeFromFavorites = (itemType: 'dish'|'restaurant', itemId: number) =>
-  del(`/api/user/favorites/${itemType}/${itemId}`);
+export const removeFromFavorites = async (itemType: 'dish'|'restaurant', itemId: number) => {
+  const token = localStorage.getItem('auth_token');
+  const user = localStorage.getItem('auth_user');
+  if (!token || !user) {
+    const err: any = new Error('You must be logged in to remove favorites.');
+    err.code = 'LOGIN_REQUIRED';
+    throw err;
+  }
+  return del(`/api/user/favorites/${itemType}/${itemId}`);
+};
 
 // Check favorite status for multiple items at once
 export const checkFavoritesStatus = (items: Array<{itemType: 'dish'|'restaurant', itemId: number}>) =>

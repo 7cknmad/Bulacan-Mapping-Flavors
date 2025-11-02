@@ -1,5 +1,5 @@
 
-const BASE = (import.meta as any).env?.VITE_ADMIN_API_URL?.replace(/\/$/, "") || "";
+const BASE = ((import.meta as any).env?.VITE_ADMIN_API_URL || (import.meta as any).env?.VITE_API_URL || "http://localhost:3002")?.replace(/\/$/, "");
 
 /* ------------------------ Token storage (no cookies) ----------------------- */
 const TOK_KEY = "bmf_admin_token";
@@ -155,14 +155,14 @@ export function coerceStringArray(x: unknown): string[] | null {
 /* ---------------------------------- Auth ---------------------------------- */
 // Use these in your AuthGate (or wherever you sign in/out).
 export async function login(email: string, password: string) {
-  const res: any = await http(`/auth/login`, {
+  const res: any = await http(`/api/auth/login`, {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
   if (res?.token) setAdminToken(res.token);
   return res;
 }
-export async function me() { return http(`/auth/me`); }
+export async function me() { return http(`/api/auth/me`); }
 export function logout() { setAdminToken(null); }
 
 export async function listDishCategories(): Promise<any[]> {
@@ -214,15 +214,68 @@ export async function deleteRestaurant(id: number): Promise<void> {
 
 /* ------------------------------ Analytics API ----------------------------- */
 export async function getAnalyticsSummary(): Promise<{ dishes: number; restaurants: number; municipalities: number }> {
-  const raw = await http(`/admin/analytics/summary`);
+  let raw;
+  
+  // Try admin endpoint first
+  try {
+    raw = await http(`/admin/analytics/summary`);
+  } catch (e) {
+    console.log('Admin analytics failed, trying public endpoint');
+    try {
+      // Try public endpoint as fallback
+      raw = await http(`/api/analytics/summary`);
+    } catch (e2) {
+      console.log('Public analytics failed, trying stats endpoint');
+      try {
+        // Try stats endpoint as last resort
+        raw = await http(`/api/stats`);
+      } catch (e3) {
+        console.error('All analytics endpoints failed');
+        raw = null;
+      }
+    }
+  }
+
+  console.log('Raw analytics data:', raw);
+  
   const payload = raw ?? {};
+  console.log('Payload:', payload);
 
   // server may return { counts: { ... }, ... } or top-level fields
-  const countsSource: any = payload.counts ?? payload;
+  const countsSource: any = payload.counts ?? payload.data ?? payload;
+  console.log('Counts source:', countsSource);
 
-  const dishes = Number(countsSource.dishes ?? countsSource.dishCount ?? countsSource.dish_count ?? countsSource.dish ?? 0);
-  const restaurants = Number(countsSource.restaurants ?? countsSource.restCount ?? countsSource.rest_count ?? countsSource.restaurant ?? 0);
-  const municipalities = Number(countsSource.municipalities ?? countsSource.muniCount ?? countsSource.muni_count ?? countsSource.municipality ?? 0);
+  // Try to get counts from various possible response shapes
+  const dishes = Number(
+    countsSource.dishes ?? 
+    countsSource.dishCount ?? 
+    countsSource.dish_count ?? 
+    countsSource.dish ??
+    countsSource.totalDishes ?? 
+    payload.dishCount ??
+    0
+  );
+
+  const restaurants = Number(
+    countsSource.restaurants ?? 
+    countsSource.restCount ?? 
+    countsSource.rest_count ?? 
+    countsSource.restaurant ??
+    countsSource.totalRestaurants ?? 
+    payload.restCount ??
+    0
+  );
+
+  const municipalities = Number(
+    countsSource.municipalities ?? 
+    countsSource.muniCount ?? 
+    countsSource.muni_count ?? 
+    countsSource.municipality ??
+    countsSource.totalMunicipalities ?? 
+    21 // Bulacan has 21 municipalities
+  );
+
+  console.log('Parsed values:', { dishes, restaurants, municipalities });
 
   return { dishes, restaurants, municipalities };
 }
@@ -580,7 +633,40 @@ export async function bulkUnlinkDishesFromRestaurants(dishIds: number[], restaur
 
 // Get link statistics
 export async function getLinkStats(): Promise<any> {
-  return http(`/api/restaurant-dish-links/stats`);
+  let stats;
+  
+  // Try each endpoint in sequence until we get data
+  const endpoints = [
+    '/api/restaurant-dish-links/stats',
+    '/admin/restaurant-dish-links/stats',
+    '/api/stats/reviews',
+    '/api/stats'
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      stats = await http(endpoint);
+      if (stats) break;
+    } catch (e) {
+      console.log(`Failed to fetch stats from ${endpoint}:`, e);
+    }
+  }
+
+  console.log('Link stats:', stats);
+
+  // Normalize the response to ensure we always return the expected shape
+  if (!stats) return { totalReviews: 0 };
+
+  return {
+    totalReviews: Number(
+      stats.totalReviews ?? 
+      stats.total_reviews ?? 
+      stats.reviews ?? 
+      stats.review_count ?? 
+      stats.reviewCount ?? 
+      0
+    )
+  };
 }
 
 /* -------------------- Admin versions of linking endpoints ------------------- */

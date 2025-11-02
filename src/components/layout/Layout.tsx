@@ -7,14 +7,17 @@ import Footer from './Footer';
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const isAdmin = pathname.startsWith('/admin');
+  const isMapPage = pathname === '/map' || pathname.startsWith('/map/');
 
   return (
     <div className="min-h-screen flex flex-col bg-neutral-50">
+      {/* Show header everywhere except admin routes */}
       {!isAdmin && <Header />}
       <main className={isAdmin ? '' : 'flex-1'}>
         {children}
       </main>
-      {!isAdmin && <Footer />}
+      {/* Show footer everywhere except admin and map routes */}
+      {!isAdmin && !isMapPage && <Footer />}
     </div>
   );
 }

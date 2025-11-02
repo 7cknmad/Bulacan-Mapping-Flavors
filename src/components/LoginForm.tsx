@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
 export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: string) => void }) {
@@ -9,6 +10,8 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -16,7 +19,7 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
     setSuccess(false);
     setLoading(true);
     try {
-  const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/auth/login`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -24,9 +27,15 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Login failed");
       setSuccess(true);
+
       // Use central auth handler to persist and notify the app
       try {
         login(data.user, data.token);
+        // Redirect admin users to the admin dashboard or the from location
+        if (data.user.role === 'admin' || data.user.role === 'owner') {
+          const from = (location.state as any)?.from?.pathname || '/admin';
+          navigate(from, { replace: true });
+        }
       } catch {}
       if (onLogin) onLogin(data.user, data.token);
     } catch (e: any) {

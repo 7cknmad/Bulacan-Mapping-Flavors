@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // The API server exposes a bearer-check at /auth/me and uses /api/auth/refresh for refresh tokens.
     if (t) {
       try {
-        const res = await fetch(`${API}/auth/me`, {
+        const res = await fetch(`${API}/api/auth/me`, {
           headers: { Authorization: `Bearer ${t}` },
         });
         if (res.ok) {

@@ -23,7 +23,11 @@ function useDebounced<T>(value: T, delay = 250) {
 
 const MIN_QUERY = 2;
 
-const SearchBar: React.FC = () => {
+interface SearchBarProps {
+  onClose?: () => void;
+}
+
+const SearchBar: React.FC<SearchBarProps> = ({ onClose }) => {
   const nav = useNavigate();
   const [term, setTerm] = useState("");
   const q = useDebounced(term.trim(), 300);
@@ -107,6 +111,7 @@ const SearchBar: React.FC = () => {
             onClick={() => {
               setTerm("");
               setOpen(false);
+              onClose?.();
             }}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-neutral-500 hover:text-neutral-700"
             aria-label="Clear"
@@ -181,6 +186,7 @@ const SearchBar: React.FC = () => {
                     onClick={() => {
                       nav(`/dishes?q=${encodeURIComponent(q)}`);
                       setOpen(false);
+                      onClose?.();
                     }}
                   >
                     View all results for “{q}”

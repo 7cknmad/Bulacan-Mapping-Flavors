@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Heart, Trash2 } from 'lucide-react';
 import { useFavorites } from '../../hooks/useFavorites';
+import { useAuth } from '../../hooks/useAuth';
+import { useToast } from '../ToastProvider';
+import { useNavigate } from 'react-router-dom';
 
 export default function SavedPanel() {
+  const { user } = useAuth();
   const { favorites, getFavoritesByType, removeFavorite, clearAllFavorites } = useFavorites();
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const addToast = useToast();
+  const navigate = useNavigate();
 
   const savedRestaurants = getFavoritesByType('restaurant');
   const savedDishes = getFavoritesByType('dish');
@@ -19,6 +25,19 @@ export default function SavedPanel() {
   };
 
   const cancelClear = () => setConfirmClearOpen(false);
+
+  const handleRemoveFavorite = async (id: number|string, type: string) => {
+    try {
+  await removeFavorite(Number(id), type as 'restaurant' | 'dish');
+    } catch (error: any) {
+      if (error?.code === 'LOGIN_REQUIRED') {
+        addToast('Please log in to manage favorites.', 'error');
+        navigate('/auth');
+        return;
+      }
+      addToast('Failed to update favorites.', 'error');
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -82,8 +101,14 @@ export default function SavedPanel() {
                   <button
                     aria-label={`Remove ${r.name} from favorites`}
                     title={`Remove ${r.name}`}
-                    onClick={() => removeFavorite(r.id, 'restaurant')}
-                    className="p-1 rounded hover:bg-neutral-100 text-red-500"
+                    onClick={() => {
+                      if (!user) {
+                        addToast('Please log in to manage favorites.', 'error');
+                        return;
+                      }
+                      handleRemoveFavorite(r.id, 'restaurant');
+                    }}
+                    className={`p-1 rounded hover:bg-neutral-100 text-red-500`}
                   >
                     <Heart size={14} className="fill-current" />
                   </button>
@@ -117,8 +142,14 @@ export default function SavedPanel() {
                   <button
                     aria-label={`Remove ${d.name} from favorites`}
                     title={`Remove ${d.name}`}
-                    onClick={() => removeFavorite(d.id, 'dish')}
-                    className="p-1 rounded hover:bg-neutral-100 text-red-500"
+                    onClick={() => {
+                      if (!user) {
+                        addToast('Please log in to manage favorites.', 'error');
+                        return;
+                      }
+                      handleRemoveFavorite(d.id, 'dish');
+                    }}
+                    className={`p-1 rounded hover:bg-neutral-100 text-red-500`}
                   >
                     <Heart size={14} className="fill-current" />
                   </button>
