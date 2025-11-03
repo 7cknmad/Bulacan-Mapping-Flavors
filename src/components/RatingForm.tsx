@@ -1,46 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import StarRating from './StarRating';
-import { postReview, type Review } from '../utils/api';
+import { postReview, deleteReview as apiDeleteReview, fetchReviews, type Review } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from './ToastProvider';
 import ConfirmModal from './ConfirmModal';
 import { containsProfanity } from '../utils/content-filter';
-import { useAuth } from '../hooks/useAuth';
-import { deleteReview } from '../utils/api';
 
 interface RatingFormProps {
   id: number;
   type: 'dish' | 'restaurant';
-  currentReview?: Review;
-  onDeleteReview?: () => void;
 }
 
 const MIN_COMMENT_LENGTH = 10;
 const MAX_COMMENT_LENGTH = 500;
 
-const RatingForm: React.FC<RatingFormProps> = ({ id, type, currentReview, onDeleteReview }) => {
+const RatingForm: React.FC<RatingFormProps> = ({ id, type }) => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [rating, setRating] = useState<number>(currentReview?.rating || 0);
+  const [rating, setRating] = useState<number>(0);
   const [message, setMessage] = useState<string | null>(null);
-  const [comment, setComment] = useState<string>(currentReview?.comment || '');
+  const [comment, setComment] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [errors, setErrors] = useState<{ comment?: string; rating?: string }>({});
-  // Always derive formMode from props
-  const formMode: 'create' | 'edit' = currentReview?.id ? 'edit' : 'create';
+  const [myReview, setMyReview] = useState<Review | null>(null);
   const qc = useQueryClient();
-
-  // Reset form when currentReview changes
-  useEffect(() => {
-    if (currentReview?.id) {
-      setRating(currentReview.rating || 0);
-      setComment(currentReview.comment || '');
-    } else {
-      setRating(0);
-      setComment('');
-    }
-  }, [currentReview?.id]);
 
   console.log('RatingForm props:', { id, type });
   const addToast = useToast();
@@ -50,116 +33,39 @@ const RatingForm: React.FC<RatingFormProps> = ({ id, type, currentReview, onDele
   const mutation = useMutation<Review, Error, NewReviewPayload, MutationContext>({
     mutationFn: async (payload: NewReviewPayload) => {
       try {
-        console.log('Submitting review to API:', payload);
-        const response = await postReview(payload);
-        console.log('API response:', response);
-        return response;
+        return await postReview(payload);
       } catch (err: any) {
         console.error('Mutation error:', err);
         throw err;
       }
     },
     // run before the mutation is sent
-    onMutate: async (newReview: NewReviewPayload) => {
+    onMutate: async (_newReview: NewReviewPayload) => {
         setMessage(null);
-    // cancel any outgoing refetches for all possible rateable types
-    await qc.cancelQueries({ queryKey: ['dish-reviews', newReview.id] });
-    await qc.cancelQueries({ queryKey: ['restaurant-reviews', newReview.id] });
-    await qc.cancelQueries({ queryKey: ['variant-reviews', newReview.id] });
-
-    // snapshot previous values depending on type
-  let prevReviews: any[] = [];
-  if (newReview.type === 'dish') prevReviews = qc.getQueryData<any[]>(['dish-reviews', newReview.id]) || [];
-  else if (newReview.type === 'restaurant') prevReviews = qc.getQueryData<any[]>(['restaurant-reviews', newReview.id]) || [];
-  else prevReviews = qc.getQueryData<any[]>(['variant-reviews', newReview.id]) || [];
-
-  const prevDish = qc.getQueryData<any>(['dish', newReview.id]);
-  const prevRestaurant = qc.getQueryData<any>(['restaurant', newReview.id]);
-  const prevVariant = qc.getQueryData<any>(['variant', newReview.id]);
-
-        if (!user || !user.id) {
-          throw new Error('User must be logged in to submit a review');
-        }
-
-        // Create an optimistic review entry (id is temporary)
-        const optimistic: Review = {
-          id: Math.floor(Math.random() * 1e9) * -1, // negative temp id
-          user_id: Number(user.id),
-          user_name: user.displayName || user.email || 'You',
-          user_email: user.email,
-          rateable_id: newReview.id,
-          rateable_type: newReview.type as 'dish' | 'restaurant' | 'variant',
-          rating: newReview.rating,
-          comment: newReview.comment || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          helpfulness_votes: 0,
-          is_verified_visit: false,
-          reported_count: 0,
-          weight: 1,
-          helpful_votes: 0,
-          report_votes: 0,
-          helpful_user_ids: [],
-          reported_user_ids: []
-        };
-
-        // optimistically update the appropriate reviews cache
-        if (newReview.type === 'dish') {
-          qc.setQueryData(['dish-reviews', newReview.id], (old: any[] | undefined) => {
-            return [optimistic, ...(old || [])];
-          });
-          // also bump dish aggregates locally
-          if (prevDish) {
-            const total = (prevDish.total_ratings || 0) + 1;
-            const avg = ((prevDish.avg_rating || 0) * (total - 1) + newReview.rating) / total;
-            qc.setQueryData(['dish', newReview.id], { ...prevDish, total_ratings: total, avg_rating: avg, rating: Number(avg).toFixed(1) });
-          }
-        } else if (newReview.type === 'restaurant') {
-          qc.setQueryData(['restaurant-reviews', newReview.id], (old: any[] | undefined) => {
-            return [optimistic, ...(old || [])];
-          });
-          if (prevRestaurant) {
-            const total = (prevRestaurant.total_ratings || 0) + 1;
-            const avg = ((prevRestaurant.avg_rating || 0) * (total - 1) + newReview.rating) / total;
-            qc.setQueryData(['restaurant', newReview.id], { ...prevRestaurant, total_ratings: total, avg_rating: avg, rating: Number(avg).toFixed(1) });
-          }
-        } else if (newReview.type === 'variant') {
-          qc.setQueryData(['variant-reviews', newReview.id], (old: any[] | undefined) => {
-            return [optimistic, ...(old || [])];
-          });
-          // bump variant aggregates locally if present
-          if (prevVariant) {
-            const total = (prevVariant.total_ratings || 0) + 1;
-            const avg = ((prevVariant.avg_rating || 0) * (total - 1) + newReview.rating) / total;
-            qc.setQueryData(['variant', newReview.id], { ...prevVariant, total_ratings: total, avg_rating: avg, rating: Number(avg).toFixed(1) });
-          }
-  }
-
-  return { prevReviews, prevDish, prevRestaurant, prevVariant };
+        // No optimistic updates; rely on server response and invalidations
+        return { prevReviews: [] };
       },
-  onError: (_err: any, newReview: NewReviewPayload, context: MutationContext | undefined) => {
-  addToast('Failed to submit rating', 'error');
-        // rollback
-        if (newReview.type === 'dish') {
-          qc.setQueryData(['dish-reviews', newReview.id], context?.prevReviews || []);
-          if (context?.prevDish) qc.setQueryData(['dish', newReview.id], context.prevDish);
-        } else if (newReview.type === 'restaurant') {
-          qc.setQueryData(['restaurant-reviews', newReview.id], context?.prevReviews || []);
-          if (context?.prevRestaurant) qc.setQueryData(['restaurant', newReview.id], context.prevRestaurant);
-        } else if (newReview.type === 'variant') {
-          qc.setQueryData(['variant-reviews', newReview.id], context?.prevReviews || []);
-          if (context?.prevVariant) qc.setQueryData(['variant', newReview.id], context.prevVariant);
-        }
+      onSuccess: (data) => {
+        // ensure myReview points to the real saved review
+        if (data && data.id) setMyReview(data);
       },
-      onSettled: (_data: any, _error: any, variables?: NewReviewPayload) => {
+  onError: (_err: any) => {
+        addToast('Failed to submit rating', 'error');
+      },
+      onSettled: async (_data: any, _error: any, variables?: NewReviewPayload) => {
         // Invalidate so server truth is re-fetched
         if (!variables) return;
         if (variables.type === 'dish') {
           qc.invalidateQueries({ queryKey: ['dish-reviews', variables.id] });
-          qc.invalidateQueries({ queryKey: ['dish', variables.id] });
+          // Invalidate all dish queries to catch slug- or id-based keys
+          await qc.invalidateQueries({ queryKey: ['dish'] });
+          // Force immediate refetch of any active dish queries for snappy UI updates
+          await qc.refetchQueries({ queryKey: ['dish'], type: 'active' });
         } else if (variables.type === 'restaurant') {
           qc.invalidateQueries({ queryKey: ['restaurant-reviews', variables.id] });
-          qc.invalidateQueries({ queryKey: ['restaurant', variables.id] });
+          // Invalidate all restaurant queries to catch slug- or id-based keys
+          await qc.invalidateQueries({ queryKey: ['restaurant'] });
+          await qc.refetchQueries({ queryKey: ['restaurant'], type: 'active' });
         } else if (variables.type === 'variant') {
           qc.invalidateQueries({ queryKey: ['variant-reviews', variables.id] });
           qc.invalidateQueries({ queryKey: ['variant', variables.id] });
@@ -168,8 +74,40 @@ const RatingForm: React.FC<RatingFormProps> = ({ id, type, currentReview, onDele
     }
   );
 
-  // Component mounted - can be used for any initialization if needed
-  useEffect(() => {}, []);
+  // Component mounted - detect if current user already has a review for this item
+  useEffect(() => {
+    const detectMyReview = async () => {
+      try {
+        const userRaw = localStorage.getItem('auth_user');
+        if (!userRaw) { setMyReview(null); return; }
+        const user = JSON.parse(userRaw);
+        const userId = Number(user?.id);
+        if (!userId) { setMyReview(null); return; }
+
+        // Try to find from cache first
+        let cached: Review[] | undefined;
+        if (type === 'dish') cached = qc.getQueryData<Review[]>(['dish-reviews', id]);
+        else if (type === 'restaurant') cached = qc.getQueryData<Review[]>(['restaurant-reviews', id]);
+
+        let mine: Review | undefined = cached?.find(r => Number(r.user_id) === userId && Number(r.rateable_id) === Number(id));
+        if (!mine) {
+          // Fetch from server as fallback (broaden page size to improve chances of finding older reviews)
+          const fresh = await fetchReviews(id, type, { perPage: 100 });
+          mine = fresh.find(r => Number(r.user_id) === userId && Number(r.rateable_id) === Number(id));
+          // Warm cache if absent
+          if (!cached) {
+            const key = type === 'dish' ? ['dish-reviews', id] : ['restaurant-reviews', id];
+            qc.setQueryData(key, fresh);
+          }
+        }
+        setMyReview(mine || null);
+      } catch (_e) {
+        setMyReview(null);
+      }
+    };
+    detectMyReview();
+  // Re-evaluate when id or type changes
+  }, [id, type, qc]);
 
   const validateForm = () => {
     const newErrors: { comment?: string; rating?: string; general?: string } = {};
@@ -222,48 +160,17 @@ const RatingForm: React.FC<RatingFormProps> = ({ id, type, currentReview, onDele
       setLoading(true);
       
       // Validate auth before submission
-      if (!user) {
+      const token = localStorage.getItem('auth_token');
+      const user = localStorage.getItem('auth_user');
+      if (!token || !user) {
         setMessage('You must be logged in to submit a review.');
         addToast('Please log in to submit a review.', 'error');
         navigate('/auth');
         return;
       }
 
-      // Additional validation that user ID exists
-      if (!user.id) {
-        setMessage('Invalid user account. Please try logging in again.');
-        addToast('Invalid user account', 'error');
-        navigate('/auth');
-        return;
-      }
-
-      // Log more detailed user info
-      console.log('Submitting review with data:', { 
-        type, 
-        id, 
-        rating, 
-        comment,
-        user: {
-          id: user.id,
-          email: user.email,
-          displayName: user.displayName
-        }
-      });
-
-      // Submit the review
-      const response = await mutation.mutateAsync({ 
-        type,
-        id,
-        rating,
-        comment: comment?.trim() || undefined
-      });
-
-      // Log the response to verify the user_id is set correctly
-      console.log('Review submitted successfully:', response);
-      
-      // Force refresh the reviews list to ensure we get the latest data
-      qc.invalidateQueries({ queryKey: [`${type}-reviews`, id] });
-      qc.invalidateQueries({ queryKey: [type, id] });
+      console.log('Submitting review with data:', { type, id, rating, comment });
+      await mutation.mutateAsync({ type, id, rating, comment: comment?.trim() || undefined });
       
       setMessage('Thank you for your rating!');
       setRating(0);
@@ -294,39 +201,43 @@ const RatingForm: React.FC<RatingFormProps> = ({ id, type, currentReview, onDele
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  // Delete mutation
-  const deleteMutation = useMutation({
-    mutationFn: async (reviewId: number) => {
-      try {
-        await deleteReview(reviewId);
-        // Force refresh the reviews list
-        qc.invalidateQueries({ queryKey: [`${type}-reviews`, id] });
-        qc.invalidateQueries({ queryKey: [type, id] });
-        addToast('Review deleted successfully', 'success');
-        if (onDeleteReview) {
-          onDeleteReview();
-        }
-      } catch (error: any) {
-        console.error('Error deleting review:', error);
-        addToast(error?.message || 'Failed to delete review', 'error');
-        throw error;
-      }
-    }
-  });
-
-  const handleDelete = async () => {
-    // Prevent deletion of optimistic reviews (negative IDs)
-    if (!currentReview?.id || currentReview.id < 1) {
-      addToast('Cannot delete review: Review not yet saved or invalid.', 'error');
-      setShowDeleteModal(false);
-      return;
-    }
-
+  // Delete review logic
+  const deleteMyReview = async () => {
     try {
-      await deleteMutation.mutateAsync(currentReview.id);
+      const token = localStorage.getItem('auth_token');
+      const userRaw = localStorage.getItem('auth_user');
+      if (!token || !userRaw) {
+        addToast('Please log in to delete your review.', 'error');
+        navigate('/auth');
+        return;
+      }
+      // Resolve real review id (in case of optimistic negative IDs)
+      let reviewId = myReview?.id;
+      if (!reviewId || reviewId < 0) {
+        const fresh = await fetchReviews(id, type);
+        const user = JSON.parse(userRaw);
+        const userId = Number(user?.id);
+        const found = fresh.find(r => Number(r.user_id) === userId && Number(r.rateable_id) === Number(id));
+        reviewId = found?.id;
+        if (!reviewId || reviewId < 0) {
+          addToast('Your review was not found on the server yet. Please try again shortly.', 'error');
+          return;
+        }
+      }
+
+      // Call API (no optimistic updates)
+      await apiDeleteReview(reviewId);
+
+      // Invalidate to sync with server truth
+      const key = type === 'dish' ? ['dish-reviews', id] : ['restaurant-reviews', id];
+      const prevEntityKey = type === 'dish' ? ['dish', id] : ['restaurant', id];
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: prevEntityKey });
+      setMyReview(null);
+      addToast('Your review has been deleted', 'success');
       setShowDeleteModal(false);
-    } catch (error) {
-      // Error is handled in the mutation
+    } catch (err: any) {
+      addToast(err?.data?.error || err?.message || 'Failed to delete review', 'error');
       setShowDeleteModal(false);
     }
   };
@@ -400,11 +311,21 @@ const RatingForm: React.FC<RatingFormProps> = ({ id, type, currentReview, onDele
             'Submit Rating'
           )}
         </button>
-        <span className="text-sm text-gray-500">
-          {rating ? `Your rating: ${rating} star${rating !== 1 ? 's' : ''}` : 'Select a rating'}
-        </span>
+        <div className="flex items-center gap-3">
+          {myReview && (
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              className={`px-3 py-2 text-white rounded transition-all duration-200 ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'}`}
+              disabled={loading}
+            >
+              Delete My Review
+            </button>
+          )}
+          <span className="text-sm text-gray-500">
+            {rating ? `Your rating: ${rating} star${rating !== 1 ? 's' : ''}` : 'Select a rating'}
+          </span>
+        </div>
       </div>
-      {/* Submit Review Modal */}
       <ConfirmModal
         open={showConfirmModal}
         title="Submit review"
@@ -414,35 +335,15 @@ const RatingForm: React.FC<RatingFormProps> = ({ id, type, currentReview, onDele
         onConfirm={() => handleSubmit()}
         onCancel={() => setShowConfirmModal(false)}
       />
-
-      {/* Delete Review Modal */}
       <ConfirmModal
         open={showDeleteModal}
-        title="Delete Review"
-        message="Are you sure you want to delete this review? This action cannot be undone."
+        title="Delete your review"
+        message="Are you sure you want to delete your review? This action cannot be undone."
         confirmLabel="Delete"
         cancelLabel="Cancel"
-        variant="danger"
-        onConfirm={() => handleDelete()}
+        onConfirm={() => deleteMyReview()}
         onCancel={() => setShowDeleteModal(false)}
       />
-
-  {/* Delete Button: Always show for user's own review in edit mode, regardless of id value */}
-  {formMode === 'edit' && currentReview && user?.id === currentReview.user_id && !loading && !mutation.isPending && (
-    <div className="mt-4 border-t pt-4">
-      <button
-        onClick={() => setShowDeleteModal(true)}
-        className="flex items-center gap-1 px-3 py-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors text-sm"
-        disabled={deleteMutation.isPending}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-        </svg>
-        {deleteMutation.isPending ? 'Deleting...' : 'Delete Review'}
-      </button>
-    </div>
-  )}
-
       {message && <p className="mt-2 text-sm">{message}</p>}
     </div>
   );

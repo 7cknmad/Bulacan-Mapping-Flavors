@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import StarRating from './StarRating';
 import { useToast } from './ToastProvider';
 import ConfirmModal from './ConfirmModal';
-import { updateReview, deleteReview } from '../utils/api';
+import { updateReview, deleteReview, fetchReviews } from '../utils/api';
 import { containsProfanity } from '../utils/content-filter';
 
 const MIN_COMMENT_LENGTH = 10;
@@ -16,6 +16,7 @@ interface EditReviewFormProps {
     comment?: string | null;
     rateable_id: number;
     rateable_type: 'dish' | 'restaurant' | 'variant';
+    user_id?: number | string;
   };
   onCancel: () => void;
   onSave: () => void;
@@ -67,19 +68,16 @@ const EditReviewForm: React.FC<EditReviewFormProps> = ({ review, onCancel, onSav
     mutationFn: (data: { rating: number; comment?: string }) =>
       updateReview(review.id, data),
     onMutate: async ({ rating, comment }) => {
-      // Cancel any outgoing refetches
       await queryClient.cancelQueries({ queryKey: [
         `${review.rateable_type}-reviews`,
         review.rateable_id
       ] });
 
-      // Snapshot previous value
       const previousReviews = queryClient.getQueryData([
         `${review.rateable_type}-reviews`,
         review.rateable_id
       ]);
 
-      // Optimistically update
       queryClient.setQueryData(
         [`${review.rateable_type}-reviews`, review.rateable_id],
         (old: any[] = []) => {
@@ -98,59 +96,67 @@ const EditReviewForm: React.FC<EditReviewFormProps> = ({ review, onCancel, onSav
       onSave();
     },
     onError: (_, __, context: any) => {
-      // Rollback on failure
       queryClient.setQueryData(
         [`${review.rateable_type}-reviews`, review.rateable_id],
         context.previousReviews
       );
       addToast('Failed to update review', 'error');
     },
-    onSettled: () => {
+    onSettled: async () => {
       queryClient.invalidateQueries({
         queryKey: [`${review.rateable_type}-reviews`, review.rateable_id]
       });
+      // Ensure entity header stats refresh (handles slug/id key mismatches)
+      await queryClient.invalidateQueries({ queryKey: [review.rateable_type] });
+      // Force immediate refetch of any active entity queries so header updates instantly
+      await queryClient.refetchQueries({ queryKey: [review.rateable_type], type: 'active' });
       setLoading(false);
     },
   });
 
-  // Delete mutation
+  // Delete mutation (server-first, no optimistic cache modification)
   const deleteMutation = useMutation({
-    mutationFn: () => deleteReview(review.id),
-    onMutate: async () => {
-      await queryClient.cancelQueries({
-        queryKey: [`${review.rateable_type}-reviews`, review.rateable_id]
-      });
-
-      const previousReviews = queryClient.getQueryData([
-        `${review.rateable_type}-reviews`,
-        review.rateable_id
-      ]);
-
-      queryClient.setQueryData(
-        [`${review.rateable_type}-reviews`, review.rateable_id],
-        (old: any[] = []) => old.filter((r) => r.id !== review.id)
-      );
-
-      return { previousReviews };
-    },
+    mutationFn: (id: number) => deleteReview(id),
     onSuccess: () => {
       addToast('Review deleted successfully', 'success');
       onCancel();
     },
-    onError: (_, __, context: any) => {
-      queryClient.setQueryData(
-        [`${review.rateable_type}-reviews`, review.rateable_id],
-        context.previousReviews
-      );
+    onError: () => {
       addToast('Failed to delete review', 'error');
     },
-    onSettled: () => {
+    onSettled: async () => {
       queryClient.invalidateQueries({
         queryKey: [`${review.rateable_type}-reviews`, review.rateable_id]
       });
+      // Ensure entity header stats refresh (handles slug/id key mismatches)
+      await queryClient.invalidateQueries({ queryKey: [review.rateable_type] });
+      await queryClient.refetchQueries({ queryKey: [review.rateable_type], type: 'active' });
       setLoading(false);
     },
   });
+
+  // Helper to resolve server id for optimistic/negative ids
+  const resolveRealReviewId = async (maybeId: number) => {
+    if (maybeId && Number(maybeId) > 0) return maybeId;
+
+    const key = `${review.rateable_type}-reviews`;
+    const cached = queryClient.getQueryData<any[]>([key, review.rateable_id]) || [];
+    if (Array.isArray(cached)) {
+      const found = cached.find(r => Number(r.user_id) === Number(review.user_id) && Number(r.id) > 0);
+      if (found) return Number(found.id);
+    }
+
+    try {
+      const fresh = await fetchReviews(review.rateable_id, review.rateable_type as any);
+      queryClient.setQueryData([key, review.rateable_id], fresh);
+      const after = fresh || [];
+      const found2 = after.find(r => Number(r.user_id) === Number(review.user_id) && Number(r.id) > 0);
+      if (found2) return Number(found2.id);
+    } catch (e) {
+      // ignore fetch error
+    }
+    return null;
+  };
 
   const handleSave = async () => {
     if (!validateForm()) {
@@ -182,9 +188,7 @@ const EditReviewForm: React.FC<EditReviewFormProps> = ({ review, onCancel, onSav
           Comment
         </label>
         <textarea
-          className={`w-full border rounded p-2 ${
-            errors.comment ? 'border-red-500' : 'border-gray-300'
-          }`}
+          className={`w-full border rounded p-2 ${errors.comment ? 'border-red-500' : 'border-gray-300'}`}
           rows={4}
           value={comment}
           onChange={(e) => {
@@ -217,7 +221,7 @@ const EditReviewForm: React.FC<EditReviewFormProps> = ({ review, onCancel, onSav
           <button
             type="button"
             onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
             disabled={loading}
           >
             Cancel
@@ -225,11 +229,7 @@ const EditReviewForm: React.FC<EditReviewFormProps> = ({ review, onCancel, onSav
           <button
             type="button"
             onClick={handleSave}
-            className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 ${
-              loading
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-primary-600 hover:bg-primary-700'
-            }`}
+            className={`px-4 py-2 text-sm font-medium text-white rounded-md ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-primary-600 hover:bg-primary-700'}`}
             disabled={loading}
           >
             {loading ? 'Saving...' : 'Save Changes'}
@@ -261,10 +261,20 @@ const EditReviewForm: React.FC<EditReviewFormProps> = ({ review, onCancel, onSav
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
-        onConfirm={() => {
+        onConfirm={async () => {
+          // Resolve real id then delete (no optimistic updates)
           setShowDeleteConfirm(false);
           setLoading(true);
-          deleteMutation.mutate();
+          try {
+            const realId = await resolveRealReviewId(review.id);
+            if (!realId) {
+              addToast('Review not yet saved on the server. Please wait a moment and try again.', 'error');
+              return;
+            }
+            await deleteMutation.mutateAsync(realId);
+          } finally {
+            setLoading(false);
+          }
         }}
         onCancel={() => setShowDeleteConfirm(false)}
       />

@@ -131,8 +131,8 @@ const panelTransition: any = { type: "spring", stiffness: 260, damping: 26 };
   const [delicsErr, setDelicsErr] = useState<string | null>(null);
   const [restos, setRestos] = useState<Restaurant[] | null>(null);
   const [restosErr, setRestosErr] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'dishes' | 'delicacies' | 'restaurants' | 'info'>('dishes');
-  const [prevTab, setPrevTab] = useState<'dishes' | 'delicacies' | 'restaurants' | 'info'>('dishes');
+  const [activeTab, setActiveTab] = useState<'dishes' | 'restaurants' | 'info'>('dishes');
+  const [prevTab, setPrevTab] = useState<'dishes' | 'restaurants' | 'info'>('dishes');
 
   const heroSrc = municipality.image_url
     ? (municipality.image_url.startsWith("http") ? municipality.image_url : assetUrl(municipality.image_url))
@@ -150,7 +150,7 @@ const panelTransition: any = { type: "spring", stiffness: 260, damping: 26 };
     onClose?.(); setTimeout(() => navigate(url), 200);
   };
   // Animate tab change
-  function handleTabChange(tab: 'dishes' | 'delicacies' | 'restaurants' | 'info') {
+  function handleTabChange(tab: 'dishes' | 'restaurants' | 'info') {
     setPrevTab(activeTab);
     setActiveTab(tab);
   }
@@ -439,8 +439,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
             aria-label="Municipality details tabs"
           >
             {[
-              { id: 'dishes', icon: Utensils, label: 'Dishes' },
-              { id: 'delicacies', icon: Star, label: 'Delicacies' },
+              { id: 'dishes', icon: Utensils, label: 'Dishes & Delicacies' },
               { id: 'restaurants', icon: Utensils, label: 'Restaurants' },
               { id: 'info', icon: Info, label: 'Info' }
             ].map((tab) => (
@@ -487,8 +486,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
                 >
                   <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div>
-                      <h2 className="text-xl md:text-2xl font-bold text-primary-700 mb-2">Dishes in {municipality.name}</h2>
-                      <p className="text-[15px] leading-relaxed text-neutral-800/95 max-w-prose mb-1">{shortDesc || "—"}</p>
+                      <h2 className="text-xl md:text-2xl font-bold text-primary-700 mb-2">Dishes And Delicacies in {municipality.name}</h2>
                     </div>
                     <button
                       onClick={goToAll}
@@ -501,7 +499,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     {/* Recommended Dish column */}
                     <div>
-                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Recommended Dish</h3>
+                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Recommended Dish And Delicacy</h3>
                       {dishSummaryErr ? (
                         <div className="p-4 rounded-lg bg-red-50 border border-red-200">
                           <div className="text-sm text-red-600">{dishSummaryErr}</div>
@@ -521,7 +519,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
                     </div>
                     {/* Top Rated Dishes column */}
                     <div>
-                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Rated Dishes</h3>
+                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Rated Dishes And Delicacies</h3>
                       {dishSummaryErr ? (
                         <div className="p-4 rounded-lg bg-red-50 border border-red-200">
                           <div className="text-sm text-red-600">{dishSummaryErr}</div>
@@ -540,18 +538,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
                       )}
                     </div>
                   </div>
-                </motion.div>
-              )}
-              {activeTab === 'delicacies' && (
-                <motion.div
-                  key="delicacies"
-                  initial={{ opacity: 0, x: 30 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -30 }}
-                  transition={{ duration: 0.25, ease: 'easeOut' }}
-                >
-                  <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Delicacies</h3>
-                  <DishGrid dishes={delics} error={delicsErr} placeholder="images/placeholders/delicacy.jpg" onHighlightPlace={onHighlightPlace} />
+                  
                 </motion.div>
               )}
               {activeTab === 'restaurants' && (
@@ -563,7 +550,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
                   transition={{ duration: 0.25, ease: 'easeOut' }}
                 >
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-lg font-semibold text-primary-700">Featured Restaurants</h3>
+                    <h3 className="text-lg font-semibold text-primary-700">Top Rated Restaurants</h3>
                     <button
                       onClick={() => window.dispatchEvent(new CustomEvent('map:showRestaurants', {
                         detail: { municipalityId: municipality.id }

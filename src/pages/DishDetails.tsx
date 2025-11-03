@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   fetchDishes,
+  fetchDishBySlug,
   fetchMunicipalities,
   fetchRestaurants,
   fetchReviews,
@@ -27,7 +28,6 @@ import StarRating from "../components/StarRating";
 import ConfirmModal from "../components/ConfirmModal";
 import { updateReview, deleteReview } from "../utils/api";
 import { useToast } from "../components/ToastProvider";
-import EditReviewForm from "../components/EditReviewForm";
 
 /** Safely coerce DB JSON columns into arrays */
 function toArray(v: unknown): string[] {
@@ -49,26 +49,14 @@ export default function DishDetails() {
   const idOrSlug = (params.slug ?? params.id ?? "").toString();
   const isNumericId = /^\d+$/.test(idOrSlug);
   const [tab, setTab] =
-    useState<"overview" | "history" | "ingredients" | "restaurants" | "reviews" | "edit-review">(
+    useState<"overview" | "history" | "ingredients" | "restaurants" | "reviews">(
       "overview"
     );
 
   const dishQ = useQuery<Dish>({
     queryKey: ["dish", idOrSlug],
     enabled: !!idOrSlug,
-    queryFn: async () => {
-      // Try: exact slug match via q=
-      const byQuery = await fetchDishes({ q: idOrSlug });
-      let d = byQuery.find((x) => x.slug === idOrSlug);
-
-      // Fallback: numeric id lookup (last resort)
-      if (!d && isNumericId) {
-        const all = await fetchDishes();
-        d = all.find((x) => String(x.id) === idOrSlug);
-      }
-      if (!d) throw new Error("Dish not found");
-      return d;
-    },
+    queryFn: () => fetchDishBySlug(idOrSlug),
     staleTime: 60_000,
     retry: 0,
   });
@@ -91,61 +79,9 @@ export default function DishDetails() {
   const { user } = useAuth();
   const addToast = useToast();
 
-  // Debug user authentication
-  useEffect(() => {
-    if (user) {
-      console.log('Authenticated user:', { 
-        id: user.id, 
-        email: user.email,
-        role: user.role 
-      });
-    } else {
-      console.log('No authenticated user');
-    }
-  }, [user]);
-
-  // Cache the last user review so it's not lost during refetch
-  const [cachedReview, setCachedReview] = useState<any>(null);
-  // Always use cachedReview while loading, and update cache only when a new review is found
-  const myReview = useMemo(() => {
-    if (!user?.id) return null;
-    if (reviewsQ.isLoading) return cachedReview;
-    if (!reviewsQ.data) return cachedReview;
-    const review = reviewsQ.data.find((r: any) => {
-      const reviewUserId = r.user_id ? Number(r.user_id) : null;
-      const currentUserId = Number(user.id);
-      return reviewUserId === currentUserId;
-    });
-    return review?.id ? review : cachedReview;
-  }, [user, reviewsQ.data, reviewsQ.isLoading, cachedReview]);
-
-  // Update cachedReview only when a new review is found
-  useEffect(() => {
-    if (reviewsQ.data && user?.id) {
-      const review = reviewsQ.data.find((r: any) => Number(r.user_id) === Number(user.id));
-      if (review?.id && (!cachedReview || cachedReview.id !== review.id)) {
-        setCachedReview(review);
-      }
-    }
-  }, [reviewsQ.data, user?.id]);
-
-  const [reviewToDelete, setReviewToDelete] = useState<any>(null);
+  const myReview = user && reviewsQ.data?.find((r: any) => Number(r.user_id) === Number(user.id));
 
   const qc = useQueryClient();
-
-  const deleteMutation = useMutation({
-    mutationFn: async (reviewId: number) => {
-      await deleteReview(reviewId);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["dish-reviews", dishQ.data?.id] });
-      addToast("Review deleted successfully", "success");
-      setReviewToDelete(null);
-    },
-    onError: () => {
-      addToast("Failed to delete review", "error");
-    }
-  });
 
   const muniQ = useQuery<Municipality[]>({
     queryKey: ["municipalities"],
@@ -386,16 +322,6 @@ export default function DishDetails() {
               <StarIcon size={18} className="inline mr-2" />
               Reviews
             </button>
-            {tab === "edit-review" && (
-              <button
-                className="px-6 py-3 font-medium text-sm whitespace-nowrap text-primary-600 border-b-2 border-primary-600"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="inline h-4 w-4 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                </svg>
-                Edit Review
-              </button>
-            )}
           </div>
         </div>
 
@@ -502,42 +428,6 @@ export default function DishDetails() {
             </div>
           )}
 
-          {/* EDIT REVIEW TAB */}
-          {tab === "edit-review" && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                  </svg>
-                  Edit Your Review
-                </h2>
-                <button
-                  onClick={() => setTab('reviews')}
-                  className="text-sm text-neutral-600 hover:text-neutral-900"
-                >
-                  ← Back to Reviews
-                </button>
-              </div>
-              {myReview ? (
-                <EditReviewForm
-                  review={myReview}
-                  onCancel={() => {
-                    setTab('reviews');
-                    qc.invalidateQueries({ queryKey: ["dish-reviews", dish.id] });
-                  }}
-                  onSave={() => {
-                    setTab('reviews');
-                    addToast('Your review has been updated successfully', 'success');
-                    qc.invalidateQueries({ queryKey: ["dish-reviews", dish.id] });
-                  }}
-                />
-              ) : (
-                <div className="text-neutral-600">Review not found.</div>
-              )}
-            </div>
-          )}
-
           {/* REVIEWS TAB */}
           {tab === "reviews" && (
             <div>
@@ -549,19 +439,8 @@ export default function DishDetails() {
               {user ? (
                 <div className="mb-6">
                   <RatingForm
-                    key={`review-form-${myReview?.id || 'new'}-${reviewsQ.dataUpdatedAt}`}
                     id={dish.id}
                     type="dish"
-                    currentReview={myReview}
-                    onDeleteReview={() => {
-                      // Optimistically remove the review locally first
-                      qc.setQueryData(['dish-reviews', dish.id], (old: any[] | undefined) => 
-                        old?.filter(r => r.id !== myReview?.id) || []
-                      );
-                      // Then invalidate to get fresh data
-                      qc.invalidateQueries({ queryKey: ["dish-reviews", dish.id] });
-                      qc.invalidateQueries({ queryKey: ["dish", dish.id] });
-                    }}
                   />
                 </div>
               ) : (
@@ -610,27 +489,10 @@ export default function DishDetails() {
                       <div className="flex items-center justify-between gap-2 mb-2">
                         <div className="flex items-center gap-2">
                           <span className="font-semibold">{r.user_name || "User"}</span>
-                          {user && Number(r.user_id) === Number(user.id) && (
+                          {r.id === myReview?.id && (
                             <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">Your Review</span>
                           )}
                         </div>
-                        {(() => {
-                          // Ensure both user and review user ID exist and can be compared
-                          const canManageReview = user?.id && r.user_id && Number(r.user_id) === Number(user.id);
-                          return canManageReview ? (
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => setTab('edit-review')}
-                                className="text-sm px-3 py-1.5 text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors duration-150 flex items-center gap-1"
-                              >
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                  <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                                </svg>
-                                Edit
-                              </button>
-                            </div>
-                          ) : null;
-                        })()}
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <span className="flex items-center text-yellow-500">
@@ -652,19 +514,6 @@ export default function DishDetails() {
           )}
         </div>
       </div>
-
-      {/* Delete Review Confirmation Modal */}
-      {reviewToDelete && (
-        <ConfirmModal
-          title="Delete Review"
-          message="Are you sure you want to delete this review? This action cannot be undone."
-          confirmLabel="Delete"
-          variant="danger"
-          open={!!reviewToDelete}
-          onConfirm={() => deleteMutation.mutate(reviewToDelete.id)}
-          onCancel={() => setReviewToDelete(null)}
-        />
-      )}
     </motion.div>
   );
 }

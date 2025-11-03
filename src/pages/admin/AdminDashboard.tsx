@@ -14,12 +14,7 @@ import {
   Plus,
   Filter
 } from "lucide-react";
-import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "./ui";
-
-import { motion, AnimatePresence } from "framer-motion";
-import { useAuth } from "../../hooks/useAuth";
-import { useNavigate, useLocation } from "react-router-dom";
-import RecommendationsPage from "./RecommendationsPage";
+import type { Municipality, Dish, Restaurant } from "../../utils/adminApi";
 import {
   listMunicipalities, listDishes, listRestaurants,
   createDish, updateDish, deleteDish,
@@ -28,8 +23,7 @@ import {
   linkDishRestaurant, unlinkDishRestaurant,
   setDishCuration, setRestaurantCuration, listDishCategories,
   getAnalyticsSummary, getPerMunicipalityCounts,
-  type Municipality, type Dish, type Restaurant,
-  coerceStringArray, slugify,
+  coerceStringArray, slugify, getAdminToken,
   getRestaurantFeaturedDishes,
   setRestaurantDishFeatured,
   addDishToRestaurant,
@@ -45,9 +39,15 @@ import {
   bulkUnlinkDishesFromRestaurants,
   getLinkStats
 } from "../../utils/adminApi";
+import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "./ui";
+
+import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "../../hooks/useAuth";
+import { useNavigate, useLocation } from "react-router-dom";
+import RecommendationsPage from "./RecommendationsPage";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid
+  BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, Cell
 } from "recharts";
 
 /* -------------------- tiny helpers -------------------- */
@@ -329,7 +329,10 @@ function AnalyticsTab() {
                         }))} 
                       dataKey="value" 
                       nameKey="name" 
-                      label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(0)}%)`}
+                      label={({ name, value, percent }) => {
+                        const pct = typeof percent === 'number' ? percent : 0;
+                        return `${name}: ${value} (${(pct * 100).toFixed(0)}%)`;
+                      }}
                       labelLine={false}
                       outerRadius={110}
                       animationDuration={750}
@@ -356,7 +359,10 @@ function AnalyticsTab() {
                         }))} 
                       dataKey="value" 
                       nameKey="name" 
-                      label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(0)}%)`}
+                      label={({ name, value, percent }) => {
+                        const pct = typeof percent === 'number' ? percent : 0;
+                        return `${name}: ${value} (${(pct * 100).toFixed(0)}%)`;
+                      }}
                       labelLine={false}
                       innerRadius={120} 
                       outerRadius={160}
@@ -624,7 +630,7 @@ function AnalyticsTab() {
 function DishesTab() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
-  const [filters, setFilters] = useState({ municipality_id: 0, category_id: 0 });
+  const [filters, setFilters] = useState<{ municipality_id?: number | undefined; category_id?: number | undefined }>({});
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<any>({ 
     name: "", 
@@ -653,65 +659,138 @@ function DishesTab() {
   
   const dishesQ = useQuery({ 
     queryKey: ["dishes", q, filters], 
-    queryFn: () => listDishes({ q, ...filters }), 
-    keepPreviousData: true 
+    queryFn: async () => {
+      console.log('🔄 Fetching dishes with:', { q, ...filters });
+      try {
+        const token = getAdminToken();
+        console.log('🔑 Using token:', token?.slice(0, 20) + '...');
+        const data = await listDishes({ 
+          q, 
+          municipality_id: filters.municipality_id || undefined,
+          category_id: filters.category_id || undefined
+        });
+        console.log('✅ Dishes response:', data);
+        return data;
+      } catch (error) {
+        console.error('❌ Error fetching dishes:', error);
+        throw error;
+      }
+    }, 
+    keepPreviousData: true,
+    staleTime: 30000
   });
 
   // Validation function
   const validateForm = (formData: any, isEdit: boolean = false) => {
     const errors: Record<string, string> = {};
-    
+
+    // Required fields
     if (!formData.name?.trim()) {
       errors.name = "Name is required";
-    } else if (formData.name.trim().length < 2) {
-      errors.name = "Name must be at least 2 characters";
+    } else if (formData.name.trim().length > 180) {
+      errors.name = "Name must be 180 characters or less";
     }
-    
+
     if (!isEdit && (!formData.municipality_id || formData.municipality_id === 0)) {
       errors.municipality_id = "Municipality is required";
     }
-    
-    if (!formData.category_id || formData.category_id === 0) {
+
+    if (!formData.category_id && !formData.category) {
       errors.category_id = "Category is required";
     }
-    
-    if (formData.rating !== null && (formData.rating < 0 || formData.rating > 5)) {
-      errors.rating = "Rating must be between 0 and 5";
+
+    // Optional field validations
+    if (formData.phone && formData.phone.length > 40) {
+      errors.phone = "Phone must be 40 characters or less";
     }
-    
-    if (formData.popularity !== null && (formData.popularity < 0 || formData.popularity > 100)) {
-      errors.popularity = "Popularity must be between 0 and 100";
+
+    if (formData.email) {
+      if (formData.email.length > 120) {
+        errors.email = "Email must be 120 characters or less";
+      } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+        errors.email = "Invalid email format";
+      }
+    }
+
+    if (formData.website && formData.website.length > 300) {
+      errors.website = "Website URL must be 300 characters or less";
+    }
+
+    if (formData.facebook && formData.facebook.length > 300) {
+      errors.facebook = "Facebook URL must be 300 characters or less";
+    }
+
+    if (formData.instagram && formData.instagram.length > 300) {
+      errors.instagram = "Instagram URL must be 300 characters or less";
+    }
+
+    if (formData.opening_hours && formData.opening_hours.length > 240) {
+      errors.opening_hours = "Opening hours must be 240 characters or less";
+    }
+
+    // Price range validation
+    if (formData.price_range && !['budget', 'moderate', 'expensive'].includes(formData.price_range)) {
+      errors.price_range = "Invalid price range";
+    }
+
+    // Cuisine types validation
+    if (formData.cuisine_types) {
+      if (typeof formData.cuisine_types === 'string') {
+        try {
+          const parsed = JSON.parse(`[${formData.cuisine_types}]`);
+          if (!Array.isArray(parsed)) {
+            errors.cuisine_types = "Cuisine types must be a comma-separated list";
+          }
+        } catch (e) {
+          errors.cuisine_types = "Cuisine types must be a valid comma-separated list";
+        }
+      } else if (!Array.isArray(formData.cuisine_types)) {
+        errors.cuisine_types = "Cuisine types must be an array";
+      }
     }
     
     return errors;
   };
 
   const createM = useMutation({
-    mutationFn: (payload: any) => createDish(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["dishes"] });
-      setForm({ 
-        name: "", 
-        slug: "", 
-        municipality_id: 0, 
-        category_id: 0,
-        rating: null, 
-        popularity: null, 
-        description: "",
-        flavor_profile: [],
-        ingredients: [],
-        history: "",
-        image_url: "",
-        autoSlug: true 
-      });
-      setServerError(null);
-      setFieldErrors({});
-      alert("Dish created.");
-    },
-    onError: (e: any) => setServerError(e?.message || "Create failed."),
-  });
-
-  const updateM = useMutation({
+  mutationFn: (payload: any) => createDish(payload),
+  onSuccess: () => {
+    qc.invalidateQueries({ queryKey: ["dishes"] });
+    setForm({ 
+      name: "", 
+      slug: "", 
+      municipality_id: 0, 
+      category_id: 0,
+      rating: null, 
+      popularity: null, 
+      description: "",
+      flavor_profile: [],
+      ingredients: [],
+      history: "",
+      image_url: "",
+      autoSlug: true 
+    });
+    setServerError(null);
+    setFieldErrors({});
+    alert("Dish created successfully.");
+  },
+  onError: (e: any) => {
+    console.error('Create dish error:', e);
+    let errorMessage = "Failed to create dish. ";
+    
+    // Try to extract validation errors from response
+    if (e?.response?.data?.errors) {
+      const validationErrors = e.response.data.errors;
+      setFieldErrors(validationErrors);
+      errorMessage += Object.values(validationErrors).join(", ");
+    } else {
+      // Try to get other error details
+      errorMessage += e?.response?.data?.details || e?.message || "An unknown error occurred.";
+    }
+    
+    setServerError(errorMessage);
+  },
+});  const updateM = useMutation({
     mutationFn: ({ id, payload }: { id: number; payload: any }) => updateDish(id, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dishes"] });
@@ -742,11 +821,21 @@ function DishesTab() {
   }
 
   function applyFilters(newFilters: any) {
-    setFilters(prev => ({ ...prev, ...newFilters }));
+    console.log('🔄 Applying filters:', { current: filters, new: newFilters });
+    setFilters(prev => {
+      const updated = { ...prev, ...newFilters };
+      // Convert 0 values to undefined so they don't get sent in the query
+      const filtered = Object.fromEntries(
+        Object.entries(updated).map(([k, v]) => [k, v === 0 ? undefined : v])
+      );
+      console.log('✅ Updated filters:', filtered);
+      return filtered;
+    });
   }
 
   function clearFilters() {
-    setFilters({ municipality_id: 0, category_id: 0 });
+    console.log('🧹 Clearing filters');
+    setFilters({ municipality_id: undefined, category_id: undefined });
     setQ("");
   }
 
@@ -757,22 +846,31 @@ const handleCreate = () => {
     return;
   }
   
+  // Find the selected category code
+  const selectedCategory = (categoriesQ.data ?? []).find((c: any) => c.id === form.category_id);
+  if (!selectedCategory) {
+    setFieldErrors({ category_id: "Please select a valid category" });
+    return;
+  }
+
   const payload = {
-    name: String(form.name).trim(), 
-    slug: String(form.slug), 
-    municipality_id: Number(form.municipality_id), 
+    name: String(form.name).trim(),
+    municipality_id: Number(form.municipality_id),
     category_id: Number(form.category_id),
-    rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5), 
-    popularity: form.popularity == null ? null : clamp(Number(form.popularity), 0, 100),
     description: form.description?.trim() || null,
-    history: form.history?.trim() || null,
     image_url: form.image_url?.trim() || null,
     flavor_profile: coerceStringArray(form.flavor_profile),
-    ingredients: coerceStringArray(form.ingredients)
+    ingredients: coerceStringArray(form.ingredients),
+    is_signature: form.is_signature ? 1 : 0,
+    panel_rank: form.panel_rank == null ? null : Number(form.panel_rank),
+    featured: form.featured ? 1 : 0,
+    featured_rank: form.featured_rank == null ? null : Number(form.featured_rank),
+    rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5),
+    popularity: form.popularity == null ? null : clamp(Number(form.popularity), 0, 100),
+    history: form.history?.trim() || null
   };
   
   console.log('🔄 Sending dish creation payload:', payload);
-  
   createM.mutate(payload);
 };
 
@@ -985,10 +1083,12 @@ const shouldShowBadge = (value: any): boolean => {
             <div className="flex gap-2 flex-wrap">
               <select 
                 className="rounded-xl border px-3 py-2 text-sm"
-                value={filters.municipality_id}
-                onChange={(e) => applyFilters({ municipality_id: Number(e.target.value) })}
+                value={filters.municipality_id || ""}
+                onChange={(e) => applyFilters({ 
+                  municipality_id: e.target.value ? Number(e.target.value) : undefined 
+                })}
               >
-                <option value={0}>All Municipalities</option>
+                <option value="">All Municipalities</option>
                 {(muniQ.data ?? []).map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
@@ -996,10 +1096,12 @@ const shouldShowBadge = (value: any): boolean => {
               
               <select 
                 className="rounded-xl border px-3 py-2 text-sm"
-                value={filters.category_id}
-                onChange={(e) => applyFilters({ category_id: Number(e.target.value) })}
+                value={filters.category_id || ""}
+                onChange={(e) => applyFilters({ 
+                  category_id: e.target.value ? Number(e.target.value) : undefined 
+                })}
               >
-                <option value={0}>All Categories</option>
+                <option value="">All Categories</option>
                 {(categoriesQ.data ?? []).map((c) => (
                   <option key={c.id} value={c.id}>{c.display_name}</option>
                 ))}
@@ -1025,12 +1127,12 @@ const shouldShowBadge = (value: any): boolean => {
                 <div key={d.id} className="border rounded-xl p-4 hover:shadow-sm transition">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
-<div className="font-semibold flex items-center gap-2 mb-1">
-  {d.name}
-  {shouldShowBadge(d.is_signature) && <Badge variant="solid">Signature</Badge>}
-  {shouldShowBadge(d.panel_rank) && <Badge variant="solid">Top {d.panel_rank}</Badge>}
-  {shouldShowBadge(d.featured) && <Badge variant="outline">Featured</Badge>}
-</div>
+                      <div className="font-semibold flex items-center gap-2 mb-1">
+                        {d.name}
+                        {shouldShowBadge(d.is_signature) && <Badge variant="solid">Signature</Badge>}
+                        {shouldShowBadge(d.panel_rank) && <Badge variant="solid">Top {d.panel_rank}</Badge>}
+                        {shouldShowBadge(d.featured) && <Badge variant="outline">Featured</Badge>}
+                      </div>
                       <div className="text-xs text-neutral-500 mb-2">
                         {d.category} • {d.municipality_name || `Muni ID: ${d.municipality_id}`}
                       </div>
@@ -1224,19 +1326,23 @@ function RestaurantsTab() {
     name: "", 
     slug: "", 
     municipality_id: 0, 
-    address: "", 
+    address: "",
     kind: "restaurant",
-    phone: "",
-    email: "",
-    website: "",
-    facebook: "",
-    instagram: "",
-    opening_hours: "",
+    description: null,
+    image_url: null,
+    phone: null,
+    email: null,
+    website: null,
+    facebook: null,
+    instagram: null,
+    opening_hours: null,
     price_range: "moderate",
     cuisine_types: [],
     lat: null, 
-    lng: null, 
-    rating: null, 
+    lng: null,
+    featured: 0,
+    featured_rank: null,
+    panel_rank: null,
     autoSlug: true 
   });
   const [serverError, setServerError] = useState<string | null>(null);
@@ -1253,33 +1359,80 @@ function RestaurantsTab() {
   // Validation function
   const validateForm = (formData: any, isEdit: boolean = false) => {
     const errors: Record<string, string> = {};
-    
+
+    // Required fields
     if (!formData.name?.trim()) {
       errors.name = "Name is required";
-    } else if (formData.name.trim().length < 2) {
-      errors.name = "Name must be at least 2 characters";
+    } else if (formData.name.trim().length > 180) {
+      errors.name = "Name must be 180 characters or less";
     }
-    
+
+    if (!formData.kind || !['restaurant', 'stall', 'store', 'dealer', 'market', 'home-based'].includes(formData.kind)) {
+      errors.kind = "Invalid restaurant type";
+    }
+
     if (!isEdit && (!formData.municipality_id || formData.municipality_id === 0)) {
       errors.municipality_id = "Municipality is required";
     }
-    
+
     if (!formData.address?.trim()) {
       errors.address = "Address is required";
+    } else if (formData.address.trim().length > 300) {
+      errors.address = "Address must be 300 characters or less";
     }
-    
-    if (formData.rating !== null && (formData.rating < 0 || formData.rating > 5)) {
-      errors.rating = "Rating must be between 0 and 5";
+
+    // Validate lat/lng for location point
+    if (formData.lat === null || formData.lat === "" || isNaN(Number(formData.lat))) {
+      errors.lat = "Latitude is required and must be a valid number";
     }
-    
-    if (formData.email && !/\S+@\S+\.\S+/.test(formData.email)) {
-      errors.email = "Email is invalid";
+    if (formData.lng === null || formData.lng === "" || isNaN(Number(formData.lng))) {
+      errors.lng = "Longitude is required and must be a valid number";
     }
-    
-    if (formData.phone && !/^[\d\s\-\+\(\)]+$/.test(formData.phone)) {
-      errors.phone = "Phone number is invalid";
+
+    // Optional field validations
+    if (formData.phone && formData.phone.length > 40) {
+      errors.phone = "Phone number must be 40 characters or less";
     }
-    
+
+    if (formData.email) {
+      if (formData.email.length > 120) {
+        errors.email = "Email must be 120 characters or less";
+      } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+        errors.email = "Email is invalid";
+      }
+    }
+
+    if (formData.website && formData.website.length > 300) {
+      errors.website = "Website URL must be 300 characters or less";
+    }
+
+    if (formData.facebook && formData.facebook.length > 300) {
+      errors.facebook = "Facebook URL must be 300 characters or less";
+    }
+
+    if (formData.instagram && formData.instagram.length > 300) {
+      errors.instagram = "Instagram URL must be 300 characters or less";
+    }
+
+    if (formData.opening_hours && formData.opening_hours.length > 240) {
+      errors.opening_hours = "Opening hours must be 240 characters or less";
+    }
+
+    if (formData.price_range && !['budget', 'moderate', 'expensive'].includes(formData.price_range)) {
+      errors.price_range = "Invalid price range";
+    }
+
+    // Validate cuisine_types JSON array
+    if (formData.cuisine_types) {
+      try {
+        if (typeof formData.cuisine_types === 'string') {
+          JSON.parse(formData.cuisine_types);
+        }
+      } catch (e) {
+        errors.cuisine_types = "Cuisine types must be valid JSON array";
+      }
+    }
+
     return errors;
   };
 
@@ -1288,9 +1441,26 @@ function RestaurantsTab() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["rests"] });
       setForm({ 
-        name: "", slug: "", municipality_id: 0, address: "", kind: "restaurant",
-        phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
-        price_range: "moderate", cuisine_types: [], lat: null, lng: null, rating: null,
+        name: "", 
+        slug: "", 
+        municipality_id: 0, 
+        address: "",
+        kind: "restaurant",
+        description: null,
+        image_url: null,
+        phone: null,
+        email: null,
+        website: null,
+        facebook: null,
+        instagram: null,
+        opening_hours: null,
+        price_range: "moderate",
+        cuisine_types: [],
+        lat: null, 
+        lng: null,
+        featured: 0,
+        featured_rank: null,
+        panel_rank: null,
         autoSlug: true 
       });
       setServerError(null);
@@ -1340,33 +1510,75 @@ function RestaurantsTab() {
   }
 
   const handleCreate = () => {
+    // Validate form
     const errors = validateForm(form);
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
     }
+
+    // Validate coordinates
+    const lat = form.lat === "" || form.lat === null ? null : Number(form.lat);
+    const lng = form.lng === "" || form.lng === null ? null : Number(form.lng);
     
-    createM.mutate({
-      name: String(form.name).trim(), 
-      slug: String(form.slug), 
-      municipality_id: Number(form.municipality_id), 
-      address: String(form.address).trim(),
+    if (!lat || !lng) {
+      setFieldErrors({ location: "Both latitude and longitude are required" });
+      return;
+    }
+
+    // Prepare payload with proper location format
+    const payload = {
+      name: String(form.name).trim(),
       kind: form.kind,
+      description: form.description?.trim() || null,
+      image_url: form.image_url?.trim() || null,
+      municipality_id: Number(form.municipality_id),
+      address: String(form.address).trim(),
       phone: form.phone?.trim() || null,
       email: form.email?.trim() || null,
       website: form.website?.trim() || null,
       facebook: form.facebook?.trim() || null,
       instagram: form.instagram?.trim() || null,
       opening_hours: form.opening_hours?.trim() || null,
-      price_range: form.price_range,
-      cuisine_types: coerceStringArray(form.cuisine_types),
-      lat: form.lat === "" ? null : Number(form.lat), 
-      lng: form.lng === "" ? null : Number(form.lng), 
-      rating: form.rating == null ? null : clamp(Number(form.rating), 0, 5),
-      description: form.description?.trim() || null,
-      image_url: form.image_url?.trim() || null
-    });
+      price_range: form.price_range || 'moderate',
+      cuisine_types: Array.isArray(form.cuisine_types) ? form.cuisine_types : 
+                    typeof form.cuisine_types === 'string' ? form.cuisine_types.split(',').map(s => s.trim()).filter(Boolean) : [],
+      lat: lat,
+      lng: lng,
+      featured: form.featured ? 1 : 0,
+      featured_rank: form.featured_rank === "" ? null : Number(form.featured_rank),
+      panel_rank: form.panel_rank === "" ? null : Number(form.panel_rank),
+      status: "active",
+      metadata: {},
+      location: `POINT(${lng} ${lat})` // MySQL POINT format
+    };
+
+    console.log('Creating restaurant with payload:', payload);
+    createM.mutate(payload);
   };
+
+  const processFormData = (data: any) => ({
+    name: String(data.name).trim(),
+    kind: data.kind,
+    description: data.description?.trim() || null,
+    image_url: data.image_url?.trim() || null,
+    municipality_id: Number(data.municipality_id),
+    address: String(data.address).trim(),
+    phone: data.phone?.trim() || null,
+    email: data.email?.trim() || null,
+    website: data.website?.trim() || null,
+    facebook: data.facebook?.trim() || null,
+    instagram: data.instagram?.trim() || null,
+    opening_hours: data.opening_hours?.trim() || null,
+    price_range: data.price_range,
+    cuisine_types: Array.isArray(data.cuisine_types) ? data.cuisine_types : 
+                  typeof data.cuisine_types === 'string' ? data.cuisine_types.split(',').map(s => s.trim()).filter(Boolean) : [],
+    lat: data.lat === "" ? null : Number(data.lat),
+    lng: data.lng === "" ? null : Number(data.lng),
+    featured: data.featured ? 1 : 0,
+    featured_rank: data.featured_rank || null,
+    panel_rank: data.panel_rank || null
+  });
 
   const handleUpdate = () => {
     if (!form.id) return;
@@ -1379,22 +1591,7 @@ function RestaurantsTab() {
     
     updateM.mutate({ 
       id: form.id, 
-      payload: { 
-        ...form,
-        name: form.name.trim(),
-        address: form.address.trim(),
-        phone: form.phone?.trim() || null,
-        email: form.email?.trim() || null,
-        website: form.website?.trim() || null,
-        facebook: form.facebook?.trim() || null,
-        instagram: form.instagram?.trim() || null,
-        opening_hours: form.opening_hours?.trim() || null,
-        description: form.description?.trim() || null,
-        image_url: form.image_url?.trim() || null,
-        cuisine_types: coerceStringArray(form.cuisine_types),
-        lat: form.lat === "" ? null : Number(form.lat),
-        lng: form.lng === "" ? null : Number(form.lng)
-      } 
+      payload: processFormData(form)
     });
   };
 
@@ -1403,228 +1600,295 @@ function RestaurantsTab() {
       {/* Create Restaurant Form */}
       <Card title="Create Restaurant" className="lg:col-span-1">
         <div className="space-y-3">
-          <Field label="Name" error={fieldErrors.name}>
-            <Input 
-              value={form.name} 
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter restaurant name"
-            />
-          </Field>
-          
-          <Field label="Municipality" error={fieldErrors.municipality_id}>
-            <select 
-              className="w-full rounded-xl border px-3 py-2" 
-              value={form.municipality_id} 
-              onChange={(e) => {
-                setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }));
-                if (fieldErrors.municipality_id) {
-                  setFieldErrors(prev => ({ ...prev, municipality_id: "" }));
-                }
-              }}
-            >
-              <option value={0}>Select Municipality…</option>
-              {(muniQ.data ?? []).map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </Field>
+          {/* Required Fields Section */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-500 mb-3">Required Information</h3>
+            <div className="space-y-3">
+              <Field label="Name" error={fieldErrors.name}>
+                <Input 
+                  value={form.name} 
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Enter restaurant name"
+                  maxLength={180}
+                />
+              </Field>
+              
+              <Field label="Municipality" error={fieldErrors.municipality_id}>
+                <select 
+                  className="w-full rounded-xl border px-3 py-2" 
+                  value={form.municipality_id} 
+                  onChange={(e) => {
+                    setForm((f: any) => ({ ...f, municipality_id: Number(e.target.value) }));
+                    if (fieldErrors.municipality_id) {
+                      setFieldErrors(prev => ({ ...prev, municipality_id: "" }));
+                    }
+                  }}
+                >
+                  <option value={0}>Select Municipality…</option>
+                  {(muniQ.data ?? []).map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </Field>
 
-          <Field label="Kind">
-            <select 
-              className="w-full rounded-xl border px-3 py-2" 
-              value={form.kind} 
-              onChange={(e) => setForm((f: any) => ({ ...f, kind: e.target.value }))}
-            >
-              <option value="restaurant">Restaurant</option>
-              <option value="stall">Stall</option>
-              <option value="store">Store</option>
-              <option value="dealer">Dealer</option>
-              <option value="market">Market</option>
-              <option value="home-based">Home-based</option>
-            </select>
-          </Field>
+              <Field label="Type" error={fieldErrors.kind}>
+                <select 
+                  className="w-full rounded-xl border px-3 py-2" 
+                  value={form.kind} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, kind: e.target.value }))}
+                >
+                  <option value="restaurant">Restaurant</option>
+                  <option value="stall">Stall</option>
+                  <option value="store">Store</option>
+                  <option value="dealer">Dealer</option>
+                  <option value="market">Market</option>
+                  <option value="home-based">Home-based</option>
+                </select>
+              </Field>
 
-          <Field label="Address" error={fieldErrors.address}>
-            <Input 
-              value={form.address} 
-              onChange={(e) => {
-                setForm((f: any) => ({ ...f, address: e.target.value }));
-                if (fieldErrors.address) {
-                  setFieldErrors(prev => ({ ...prev, address: "" }));
-                }
-              }}
-              placeholder="Enter full address"
-            />
-          </Field>
-          
-          <Field label="Phone" error={fieldErrors.phone}>
-            <Input 
-              value={form.phone} 
-              onChange={(e) => {
-                setForm((f: any) => ({ ...f, phone: e.target.value }));
-                if (fieldErrors.phone) {
-                  setFieldErrors(prev => ({ ...prev, phone: "" }));
-                }
-              }}
-              placeholder="Phone number"
-            />
-          </Field>
-          
-          <Field label="Email" error={fieldErrors.email}>
-            <Input 
-              type="email" 
-              value={form.email} 
-              onChange={(e) => {
-                setForm((f: any) => ({ ...f, email: e.target.value }));
-                if (fieldErrors.email) {
-                  setFieldErrors(prev => ({ ...prev, email: "" }));
-                }
-              }}
-              placeholder="Email address"
-            />
-          </Field>
-          
-          <Field label="Price Range">
-            <select 
-              className="w-full rounded-xl border px-3 py-2" 
-              value={form.price_range} 
-              onChange={(e) => setForm((f: any) => ({ ...f, price_range: e.target.value }))}
-            >
-              <option value="budget">Budget</option>
-              <option value="moderate">Moderate</option>
-              <option value="expensive">Expensive</option>
-            </select>
-          </Field>
+              <Field label="Address" error={fieldErrors.address}>
+                <Input 
+                  value={form.address} 
+                  onChange={(e) => {
+                    setForm((f: any) => ({ ...f, address: e.target.value }));
+                    if (fieldErrors.address) {
+                      setFieldErrors(prev => ({ ...prev, address: "" }));
+                    }
+                  }}
+                  placeholder="Enter full address"
+                  maxLength={300}
+                />
+              </Field>
 
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Latitude">
-              <Input 
-                type="number" 
-                step="any" 
-                value={form.lat ?? ""} 
-                onChange={(e) => setForm((f: any) => ({ 
-                  ...f, 
-                  lat: e.target.value === "" ? null : Number(e.target.value) 
-                }))} 
-                placeholder="e.g., 14.123456"
-              />
-            </Field>
-            <Field label="Longitude">
-              <Input 
-                type="number" 
-                step="any" 
-                value={form.lng ?? ""} 
-                onChange={(e) => setForm((f: any) => ({ 
-                  ...f, 
-                  lng: e.target.value === "" ? null : Number(e.target.value) 
-                }))} 
-                placeholder="e.g., 121.123456"
-              />
-            </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Latitude" error={fieldErrors.lat}>
+                  <Input 
+                    type="number" 
+                    step="any"
+                    value={form.lat ?? ""} 
+                    onChange={(e) => setForm((f: any) => ({ 
+                      ...f, 
+                      lat: e.target.value === "" ? null : Number(e.target.value) 
+                    }))}
+                  />
+                </Field>
+                <Field label="Longitude" error={fieldErrors.lng}>
+                  <Input 
+                    type="number" 
+                    step="any"
+                    value={form.lng ?? ""} 
+                    onChange={(e) => setForm((f: any) => ({ 
+                      ...f, 
+                      lng: e.target.value === "" ? null : Number(e.target.value) 
+                    }))}
+                  />
+                </Field>
+              </div>
+            </div>
           </div>
 
-          <Field label="Rating (0–5)" error={fieldErrors.rating}>
-            <Input 
-              type="number" 
-              step="0.1" 
-              min={0} 
-              max={5} 
-              value={form.rating ?? ""} 
-              onChange={(e) => {
-                setForm((f: any) => ({ 
-                  ...f, 
-                  rating: e.target.value === "" ? null : Number(e.target.value) 
-                }));
-                if (fieldErrors.rating) {
-                  setFieldErrors(prev => ({ ...prev, rating: "" }));
-                }
-              }}
-              placeholder="0-5"
-            />
-          </Field>
-
-          <Field label="Opening Hours">
-            <Input 
-              value={form.opening_hours} 
-              onChange={(e) => setForm((f: any) => ({ ...f, opening_hours: e.target.value }))}
-              placeholder="e.g., 9AM-6PM Mon-Sat"
-            />
-          </Field>
-
-          <Field label="Website">
-            <Input 
-              value={form.website} 
-              onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))}
-              placeholder="Website URL"
-            />
-          </Field>
-
-          <Field label="Facebook">
-            <Input 
-              value={form.facebook} 
-              onChange={(e) => setForm((f: any) => ({ ...f, facebook: e.target.value }))}
-              placeholder="Facebook page URL"
-            />
-          </Field>
-
-          <Field label="Instagram">
-            <Input 
-              value={form.instagram} 
-              onChange={(e) => setForm((f: any) => ({ ...f, instagram: e.target.value }))}
-              placeholder="Instagram handle"
-            />
-          </Field>
-
-          <Field label="Cuisine Types (comma separated)">
-            <Input 
-              value={Array.isArray(form.cuisine_types) ? form.cuisine_types.join(", ") : (form.cuisine_types ?? "")} 
-              onChange={(e) => setForm((f: any) => ({ ...f, cuisine_types: e.target.value }))}
-              placeholder="Filipino, Asian, Western, etc."
-            />
-          </Field>
-
-          <Field label="Description">
-            <textarea 
-              className="w-full rounded-xl border px-3 py-2" 
-              rows={3}
-              value={form.description} 
-              onChange={(e) => setForm((f: any) => ({ ...f, description: e.target.value }))}
-              placeholder="Enter restaurant description"
-            />
-          </Field>
-
-          <Field label="Image URL">
-            <Input 
-              value={form.image_url} 
-              onChange={(e) => setForm((f: any) => ({ ...f, image_url: e.target.value }))}
-              placeholder="Enter image URL"
-            />
-          </Field>
-
-          <div className="flex gap-2">
-            <Button 
-              variant="primary" 
-              onClick={handleCreate}
-            >
-              {createM.isLoading ? "Saving..." : "Create Restaurant"}
-            </Button>
-            <Button 
-              variant="soft" 
-              onClick={() => { 
-                setForm({ 
-                  name: "", slug: "", municipality_id: 0, address: "", kind: "restaurant",
-                  phone: "", email: "", website: "", facebook: "", instagram: "", opening_hours: "",
-                  price_range: "moderate", cuisine_types: [], lat: null, lng: null, 
-                  rating: null, description: "", image_url: "", autoSlug: true 
-                }); 
-                setServerError(null); 
-                setFieldErrors({});
-              }}
-                    >
-              Reset
-            </Button>
+          {/* Contact Information */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-500 mb-3">Contact Information</h3>
+            <div className="space-y-3">
+              <Field label="Phone" error={fieldErrors.phone}>
+                <Input 
+                  value={form.phone ?? ""} 
+                  onChange={(e) => {
+                    setForm((f: any) => ({ ...f, phone: e.target.value }));
+                    if (fieldErrors.phone) {
+                      setFieldErrors(prev => ({ ...prev, phone: "" }));
+                    }
+                  }}
+                  placeholder="Phone number"
+                  maxLength={40}
+                />
+              </Field>
+              
+              <Field label="Email" error={fieldErrors.email}>
+                <Input 
+                  type="email" 
+                  value={form.email ?? ""} 
+                  onChange={(e) => {
+                    setForm((f: any) => ({ ...f, email: e.target.value }));
+                    if (fieldErrors.email) {
+                      setFieldErrors(prev => ({ ...prev, email: "" }));
+                    }
+                  }}
+                  placeholder="Email address"
+                  maxLength={120}
+                />
+              </Field>
+            </div>
           </div>
-          {serverError && <p className="text-sm text-red-600">{serverError}</p>}
+
+          {/* Business Information */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-500 mb-3">Business Information</h3>
+            <div className="space-y-3">
+              <Field label="Price Range">
+                <select 
+                  className="w-full rounded-xl border px-3 py-2" 
+                  value={form.price_range} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, price_range: e.target.value }))}
+                >
+                  <option value="budget">Budget</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="expensive">Expensive</option>
+                </select>
+              </Field>
+
+              <Field label="Opening Hours">
+                <Input 
+                  value={form.opening_hours ?? ""} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, opening_hours: e.target.value }))}
+                  placeholder="e.g., Mon-Sat 9AM-9PM"
+                  maxLength={240}
+                />
+              </Field>
+
+              <Field label="Cuisine Types">
+                <Input 
+                  value={Array.isArray(form.cuisine_types) ? form.cuisine_types.join(", ") : (form.cuisine_types ?? "")} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, cuisine_types: e.target.value }))}
+                  placeholder="Filipino, Asian, Western, etc. (comma-separated)"
+                />
+              </Field>
+
+              <Field label="Description">
+                <textarea 
+                  className="w-full rounded-xl border px-3 py-2" 
+                  rows={3}
+                  value={form.description ?? ""} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, description: e.target.value }))}
+                  placeholder="Enter restaurant description"
+                />
+              </Field>
+            </div>
+          </div>
+
+          {/* Online Presence */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-500 mb-3">Online Presence</h3>
+            <div className="space-y-3">
+              <Field label="Website">
+                <Input 
+                  value={form.website ?? ""} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))}
+                  placeholder="https://example.com"
+                  maxLength={300}
+                />
+              </Field>
+
+              <Field label="Facebook">
+                <Input 
+                  value={form.facebook ?? ""} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, facebook: e.target.value }))}
+                  placeholder="Facebook page URL"
+                  maxLength={300}
+                />
+              </Field>
+
+              <Field label="Instagram">
+                <Input 
+                  value={form.instagram ?? ""} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, instagram: e.target.value }))}
+                  placeholder="Instagram profile URL"
+                  maxLength={300}
+                />
+              </Field>
+            </div>
+          </div>
+
+          {/* Visibility Settings */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-500 mb-3">Visibility Settings</h3>
+            <div className="space-y-3">
+              <Field label="Featured">
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="checkbox"
+                    className="rounded border-gray-300"
+                    checked={form.featured === 1}
+                    onChange={(e) => setForm((f: any) => ({ ...f, featured: e.target.checked ? 1 : 0 }))}
+                  />
+                  <span className="text-sm text-gray-600">Show in featured section</span>
+                </div>
+              </Field>
+
+              {form.featured === 1 && (
+                <Field label="Featured Rank">
+                  <Input 
+                    type="number"
+                    min={1}
+                    value={form.featured_rank ?? ""} 
+                    onChange={(e) => setForm((f: any) => ({ 
+                      ...f, 
+                      featured_rank: e.target.value === "" ? null : Number(e.target.value)
+                    }))}
+                    placeholder="Display order in featured section"
+                  />
+                </Field>
+              )}
+
+              <Field label="Image URL">
+                <Input 
+                  value={form.image_url ?? ""} 
+                  onChange={(e) => setForm((f: any) => ({ ...f, image_url: e.target.value }))}
+                  placeholder="https://example.com/image.jpg"
+                  maxLength={255}
+                />
+              </Field>
+            </div>
+          </div>
+
+          {/* Form Actions */}
+          <div className="pt-4 border-t border-gray-200">
+            <div className="flex gap-2">
+              <Button 
+                variant="primary" 
+                onClick={handleCreate}
+              >
+                {createM.isLoading ? "Saving..." : "Create Restaurant"}
+              </Button>
+              <Button 
+                variant="soft" 
+                onClick={() => { 
+                  setForm({ 
+                    name: "", 
+                    slug: "", 
+                    municipality_id: 0, 
+                    address: "",
+                    kind: "restaurant",
+                    description: null,
+                    image_url: null,
+                    phone: null,
+                    email: null,
+                    website: null,
+                    facebook: null,
+                    instagram: null,
+                    opening_hours: null,
+                    price_range: "moderate",
+                    cuisine_types: [],
+                    lat: null, 
+                    lng: null,
+                    location: null, // POINT MySQL spatial data
+                    featured: 0,
+                    featured_rank: null,
+                    panel_rank: null,
+                    status: "active",
+                    metadata: {},
+                    autoSlug: true 
+                  }); 
+                  setServerError(null); 
+                  setFieldErrors({});
+                }}
+              >
+                Reset
+              </Button>
+            </div>
+            {serverError && <p className="mt-2 text-sm text-red-600">{serverError}</p>}
+          </div>
         </div>
       </Card>
 
@@ -3349,7 +3613,8 @@ const ViewContext = React.createContext<{
     users: 0,
     municipalities: 0,
     media: 0,
-    settings: 0
+    settings: 0,
+    recommendations: 0,
   },
   setScrollPosition: () => {},
 });

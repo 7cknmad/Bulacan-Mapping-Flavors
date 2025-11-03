@@ -6,6 +6,12 @@ import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import initReviewsRoutes from './routes/reviews.js';
+import dishesRouter from './routes/dishes.js';
+import adminRouter from './routes/admin.js';
+import restaurantsRouter from './routes/restaurants.js';
+import topRatedRouter from './routes/top-rated.js';
+import { adminAuthRequired } from './middleware/adminAuth.js';
+
 const app = express();
 /* ---------------- CORS (GH Pages + local + tunnel) ---------------- */
 const allowed = new Set([
@@ -39,6 +45,13 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 app.set('trust proxy', 1);
+app.use('/api', adminRouter);
+// Mount and protect all admin routes under /admin
+app.use('/admin', adminAuthRequired);
+// Mount restaurants router
+app.use(restaurantsRouter);
+// Mount top-rated router
+app.use(topRatedRouter);
 
 // Add diagnostic routes directly
 app.get('/admin/dish-recommendation-check', async (req, res) => {
@@ -275,39 +288,45 @@ app.post('/api/user/favorites/check', authRequired, async (req, res) => {
 });
 
 function sign(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, ADMIN_JWT_SECRET, { expiresIn: '7d' });
 }
 function signRefresh(payload) {
   // refresh tokens longer lived
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign(payload, ADMIN_JWT_SECRET, { expiresIn: '30d' });
 }
 function readBearer(req) {
   const h = req.headers.authorization || '';
   const m = /^Bearer\s+(.+)$/i.exec(h);
   return m ? m[1] : null;
 }
+
+
 function authRequired(req, res, next) {
   const token = readBearer(req);
   if (!token) return res.status(401).json({ error: 'unauthorized' });
   
+  // Check URL path to determine which type of token to expect
+  const isAdminRoute = req.path.startsWith('/admin/');
+  
   try {
-    // Verify token regardless of environment
-    const decoded = jwt.verify(token, JWT_SECRET);
-    if (!decoded) {
-      return res.status(401).json({ error: 'invalid_token' });
+    if (isAdminRoute) {
+      // Admin routes require admin token
+      req.user = jwt.verify(token, ADMIN_JWT_SECRET);
+      if (req.user.role !== 'admin' && req.user.role !== 'owner') {
+        return res.status(403).json({ error: 'forbidden', message: 'Admin access required' });
+      }
+    } else {
+      // Regular routes require user token
+      req.user = jwt.verify(token, JWT_SECRET);
+      // Optionally reject admin tokens for regular user routes if needed
+      if (req.user.role === 'admin' || req.user.role === 'owner') {
+        // Allow admin users to access regular routes too, or return error if you prefer:
+        // return res.status(403).json({ error: 'forbidden', message: 'Please use regular user account for this feature' });
+      }
     }
-    
-    // Ensure we have a consistent user object structure
-    req.user = {
-      uid: decoded.id || decoded.uid,
-      email: decoded.email,
-      displayName: decoded.displayName || decoded.name,
-      role: decoded.role || 'user'
-    };
-    
-    next();
-  } catch (e) {
-    console.error('Token verification failed:', e);
+    return next();
+  } catch (error) {
+    console.error('Token verification failed:', error);
     return res.status(401).json({ error: 'invalid_token' });
   }
 }
@@ -391,6 +410,10 @@ async function loadSchemaInfo() {
   app.use(reviewRouter);
   
   console.log('✅ Review routes initialized');
+
+  // Mount dishes router after pool is initialized
+  app.use(dishesRouter);
+  console.log('✅ Dishes routes initialized');
 
   // Start the server
   const port = process.env.PORT || 3002;
@@ -500,16 +523,20 @@ async function loginHandler(req, res) {
 
     if (!authenticated) return res.status(401).json({ error: 'invalid_credentials' });
 
+    // Use different secrets for admin and regular users
+    const isAdmin = user.role === 'admin' || user.role === 'owner';
+    const tokenSecret = isAdmin ? ADMIN_JWT_SECRET : JWT_SECRET;
+    
     const token = jwt.sign({ 
       uid: user.id, 
       email: user.email, 
       displayName: user.display_name,
       role: user.role || 'user'
-    }, JWT_SECRET, { expiresIn: '7d' });
+    }, tokenSecret, { expiresIn: '7d' });
     
     // issue a refresh token as httpOnly cookie for optional cookie-based session
     try {
-      const refresh = jwt.sign({ uid: user.id }, JWT_SECRET, { expiresIn: '30d' });
+      const refresh = jwt.sign({ uid: user.id }, tokenSecret, { expiresIn: '30d' });
       res.cookie('refresh_token', refresh, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -518,7 +545,22 @@ async function loginHandler(req, res) {
         maxAge: 30 * 24 * 60 * 60 * 1000,
       });
     } catch (e) { console.error('Failed to set refresh cookie', e); }
-    return res.json({ ok: true, token, user: { id: user.id, email: user.email, name: user.display_name, role: user.role || 'user' } });
+    
+    // For admin users, send both tokens
+    if (isAdmin) {
+      return res.json({ 
+        ok: true, 
+        token: token, // This will be used as admin token
+        userToken: jwt.sign({ ...user, role: 'user' }, JWT_SECRET, { expiresIn: '7d' }), // Regular user token
+        user: { id: user.id, email: user.email, name: user.display_name, role: user.role || 'user' }
+      });
+    }
+
+    return res.json({ 
+      ok: true, 
+      token, 
+      user: { id: user.id, email: user.email, name: user.display_name, role: user.role || 'user' } 
+    });
   } catch (err) {
     console.error('Login error:', err && err.message ? err.message : err);
     res.status(500).json({ error: 'login_failed' });
@@ -575,11 +617,14 @@ async function registerHandler(req, res) {
 
 app.get('/api/auth/me', authRequired, (req, res) => {
   console.log('[/api/auth/me] User from token:', req.user);
+  // Check if this was an admin token
+  const isAdminToken = req.user.role === 'admin' || req.user.role === 'owner';
+  
   res.json({ 
     user: { 
       id: req.user.uid, 
       email: req.user.email, 
-      name: req.user.displayName || 'Administrator',
+      name: req.user.displayName || (isAdminToken ? 'Administrator' : req.user.email),
       role: req.user.role || 'user'
     } 
   });
@@ -625,10 +670,65 @@ app.post('/api/auth/refresh', async (req, res) => {
 });
 
 // Logout: clear refresh cookie
+// Regular user logout
 app.post('/api/auth/logout', (req, res) => {
   try {
-    res.cookie('refresh_token', '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api', maxAge: 0 });
-  } catch (e) {}
+    // Clear all auth-related cookies with different paths
+    res.cookie('refresh_token', '', { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'lax', 
+      path: '/api', 
+      maxAge: 0 
+    });
+    res.cookie('refresh_token', '', { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'lax', 
+      path: '/', 
+      maxAge: 0 
+    });
+    // Set a temporary logout flag to prevent auto-login
+    res.cookie('logging_out', '1', { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'lax', 
+      maxAge: 2000 // 2 seconds
+    });
+  } catch (e) {
+    console.error('Error clearing cookies:', e);
+  }
+  res.json({ ok: true });
+});
+
+// Admin logout endpoint
+app.post('/api/auth/admin/logout', (req, res) => {
+  try {
+    // Clear all auth-related cookies with different paths
+    res.cookie('refresh_token', '', { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'lax', 
+      path: '/api', 
+      maxAge: 0 
+    });
+    res.cookie('refresh_token', '', { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'lax', 
+      path: '/', 
+      maxAge: 0 
+    });
+    // Set a temporary logout flag to prevent auto-login
+    res.cookie('logging_out', '1', { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'lax', 
+      maxAge: 2000 // 2 seconds
+    });
+  } catch (e) {
+    console.error('Error clearing cookies:', e);
+  }
   res.json({ ok: true });
 });
 
@@ -1331,7 +1431,7 @@ app.get('/api/restaurants', async (req, res) => {
 });
 
 // Admin: list dishes (admin UI expects this at /admin/dishes)
-app.get('/admin/dishes', authRequired, async (req, res) => {
+app.get('/admin/dishes', async (req, res) => {
   try {
     const { municipality_id, municipalityId, q, limit = 500, category, category_id, sort = 'ranking' } = req.query;
     const muni = municipality_id ?? municipalityId;
@@ -1377,7 +1477,7 @@ app.get('/admin/dishes', authRequired, async (req, res) => {
 });
 
 // Admin: list restaurants (admin UI expects this at /admin/restaurants)
-app.get('/admin/restaurants', authRequired, async (req, res) => {
+app.get('/admin/restaurants', async (req, res) => {
   try {
     const { municipality_id, municipalityId, q, kind, limit = 1000 } = req.query;
     const muni = municipality_id ?? municipalityId;
@@ -1453,7 +1553,7 @@ app.get('/api/restaurants/:id/variants', async (req, res) => {
 });
 
 // Admin: create a variant
-app.post('/admin/variants', authRequired, async (req, res) => {
+app.post('/admin/variants', async (req, res) => {
   try {
     const { dish_id, restaurant_id, name, description = null, price = null, is_available = 1 } = req.body || {};
     if (!dish_id || !restaurant_id || !name) return res.status(400).json({ error: 'dish_id, restaurant_id and name are required' });
@@ -1470,7 +1570,7 @@ app.post('/admin/variants', authRequired, async (req, res) => {
 });
 
 // Admin: update a variant
-app.put('/admin/variants/:id', authRequired, async (req, res) => {
+app.put('/admin/variants/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
@@ -1492,7 +1592,7 @@ app.put('/admin/variants/:id', authRequired, async (req, res) => {
 });
 
 // Admin: delete a variant
-app.delete('/admin/variants/:id', authRequired, async (req, res) => {
+app.delete('/admin/variants/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
@@ -1624,6 +1724,7 @@ app.get('/admin/dishes/:id/restaurants', async (req, res) => {
   res.json(rows);
   
 });
+
 app.get('/admin/restaurants/:id/dishes', async (req, res) => {
   const id = Number(req.params.id);
   const [rows] = await pool.query(`
@@ -1670,6 +1771,204 @@ app.delete('/admin/links', async (req, res) => {
   await pool.query(`DELETE FROM dish_restaurants WHERE dish_id=? AND restaurant_id=?`, [dishId, restaurantId]);
   res.json({ ok: true });
 });
+
+
+// Admin: create a dish
+// Admin: update a dish
+app.patch('/admin/dishes/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid dish id' });
+
+    // Accept all updatable fields
+    const allowed = [
+      'name', 'slug', 'municipality_id', 'category', 'category_id', 'description', 'image_url',
+      'flavor_profile', 'ingredients', 'is_signature', 'panel_rank', 'featured', 'featured_rank',
+      'rating', 'popularity', 'history'
+    ];
+    const up = {};
+    for (const k of allowed) {
+      if (k in req.body) {
+        if (k === 'flavor_profile' || k === 'ingredients') up[k] = jsonOrNull(parseMaybeJsonArray(req.body[k]));
+        else if (k === 'is_signature' || k === 'featured') up[k] = req.body[k] ? 1 : 0;
+        else up[k] = req.body[k];
+      }
+    }
+    if ('name' in req.body && !('slug' in req.body)) up.slug = slugify(req.body.name);
+
+    // Handle category/category_id
+    if ('category' in req.body && !('category_id' in req.body)) {
+      const [[catRow]] = await pool.query(
+        'SELECT id FROM dish_categories WHERE code = ? OR display_name = ? LIMIT 1',
+        [req.body.category, req.body.category]
+      );
+      if (catRow && catRow.id) {
+        up.category_id = catRow.id;
+      } else {
+        return res.status(400).json({ error: 'Invalid category', details: `Category '${req.body.category}' does not exist.` });
+      }
+    } else if ('category_id' in req.body) {
+      up.category_id = req.body.category_id;
+    }
+
+    const sets = Object.keys(up).map(k => `${k}=?`);
+    const values = Object.keys(up).map(k => up[k]);
+    if (!sets.length) return res.json({ ok: true, id });
+
+    await pool.query(`UPDATE dishes SET ${sets.join(', ')} WHERE id=?`, [...values, id]);
+    const [[row]] = await pool.query('SELECT * FROM dishes WHERE id = ? LIMIT 1', [id]);
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update dish', detail: String(e?.message || e) });
+  }
+});
+
+// Admin: delete a dish
+app.delete('/admin/dishes/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid dish id' });
+    // Remove links to restaurants first
+    await pool.query('DELETE FROM dish_restaurants WHERE dish_id=?', [id]);
+    await pool.query('DELETE FROM dishes WHERE id=?', [id]);
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete dish', detail: String(e?.message || e) });
+  }
+});
+
+app.post('/admin/dishes', async (req, res) => {
+  try {
+    console.log('📝 CREATE DISH REQUEST BODY:', req.body);
+
+    // Accept all fields, set defaults if missing
+    const {
+      name,
+      slug,
+      municipality_id,
+      category,
+      category_id,
+      description = null,
+      image_url = null,
+      flavor_profile = null,
+      ingredients = null,
+      is_signature = false,
+      panel_rank = null,
+      featured = false,
+      featured_rank = null,
+      rating = null,
+      popularity = null,
+      history = null
+    } = req.body;
+
+    // Use category_id if provided, otherwise resolve category name/code to id
+    let finalCategoryId = category_id;
+    if (!finalCategoryId && category) {
+      // Try to resolve category name/code to id
+      const [[catRow]] = await pool.query(
+        'SELECT id FROM dish_categories WHERE code = ? OR display_name = ? LIMIT 1',
+        [category, category]
+      );
+      if (catRow && catRow.id) {
+        finalCategoryId = catRow.id;
+      } else {
+        // If not found, return error
+        return res.status(400).json({
+          error: 'Invalid category',
+          details: `Category '${category}' does not exist in dish_categories table.`
+        });
+      }
+    }
+
+    // Enhanced validation with detailed messages
+    const errors = [];
+    if (!name) errors.push('name is required');
+    if (!municipality_id) errors.push('municipality_id is required');
+    if (!finalCategoryId) errors.push('category_id is required');
+
+    if (errors.length > 0) {
+      console.log('❌ VALIDATION ERRORS:', errors);
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors,
+        received: req.body
+      });
+    }
+
+    // Check if municipality exists
+    const [[municipality]] = await pool.query(
+      'SELECT id FROM municipalities WHERE id = ?',
+      [municipality_id]
+    );
+
+    if (!municipality) {
+      return res.status(400).json({
+        error: 'Invalid municipality_id',
+        details: `Municipality with id ${municipality_id} does not exist`
+      });
+    }
+
+    // Generate slug from name if not provided
+    const finalSlug = slug ? String(slug) : slugify(name);
+
+    console.log('✅ VALIDATION PASSED - Creating dish...');
+
+    // Insert all fields, using category_id
+    const [result] = await pool.query(
+      `INSERT INTO dishes (
+        name, slug, municipality_id, category_id, description, image_url,
+        flavor_profile, ingredients, is_signature, panel_rank, featured, featured_rank,
+        rating, popularity, history
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(name),
+        finalSlug,
+        Number(municipality_id),
+        Number(finalCategoryId),
+        description,
+        image_url,
+        jsonOrNull(parseMaybeJsonArray(flavor_profile)),
+        jsonOrNull(parseMaybeJsonArray(ingredients)),
+        is_signature ? 1 : 0,
+        panel_rank,
+        featured ? 1 : 0,
+        featured_rank,
+        rating,
+        popularity,
+        history
+      ]
+    );
+
+    // Return the created dish
+    const [[newDish]] = await pool.query(
+      `SELECT d.*, m.name as municipality_name 
+       FROM dishes d 
+       LEFT JOIN municipalities m ON d.municipality_id = m.id 
+       WHERE d.id = ?`,
+      [result.insertId]
+    );
+
+    // Format response
+    const formattedDish = {
+      ...newDish,
+      is_signature: Boolean(newDish.is_signature),
+      featured: Boolean(newDish.featured),
+      flavor_profile: newDish.flavor_profile ? JSON.parse(newDish.flavor_profile) : [],
+      ingredients: newDish.ingredients ? JSON.parse(newDish.ingredients) : []
+    };
+
+    console.log('✅ DISH CREATED SUCCESSFULLY:', formattedDish.id);
+    res.status(201).json(formattedDish);
+  } catch (error) {
+    console.error('❌ Error creating dish:', error);
+    res.status(500).json({
+      error: 'Failed to create dish',
+      details: error.message,
+      sqlMessage: error.sqlMessage
+    });
+  }
+});
+
 
 app.post('/admin/dishes/:dishId/unlink-restaurants', async (req, res) => {
   try {
@@ -3244,3 +3543,5 @@ app.get('/admin/test-unlinking', async (req, res) => {
 import municipalitiesRouter from './routes/municipalities.js';
 
 app.use('/api/municipalities', municipalitiesRouter);
+
+

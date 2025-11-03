@@ -1,7 +1,7 @@
 // src/App.tsx (only public routes)
 import { Suspense } from "react";
 import { HashRouter as Router, Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AnimatePresence } from "framer-motion";
 import Layout from "./components/layout/Layout";
 import { useAuth } from "./hooks/useAuth";
@@ -12,13 +12,13 @@ function RequireAdminAuth({ children }: { children: React.ReactNode }) {
   const location = useLocation();
 
   if (!user) {
-    // Not logged in, redirect to login page with return path
-    return <Navigate to="/auth" state={{ from: location }} replace />;
+    // Not logged in, redirect to admin login page with return path
+    return <Navigate to="/auth" state={{ from: location, isAdmin: true }} replace />;
   }
 
   if (user.role !== 'admin' && user.role !== 'owner') {
-    // Logged in but not admin, redirect to home
-    return <Navigate to="/" replace />;
+    // Logged in but not admin, redirect home with message
+    return <Navigate to="/" state={{ error: "Admin access required" }} replace />;
   }
 
   // Authorized, render children
@@ -97,14 +97,23 @@ function Routed() {
           <Route path="/dishes/top" element={<PageTransition><TopDishes /></PageTransition>} />
           <Route path="/dish/:slug" element={<PageTransition><DishDetails /></PageTransition>} />
           <Route path="/restaurants" element={<PageTransition><RestaurantList /></PageTransition>} />
+          {/* Admin routes */}
+          <Route path="/admin" element={
+            <RequireAdminAuth>
+              <AdminDashboard />
+            </RequireAdminAuth>
+          } />
           <Route path="/admin/*" element={
             <RequireAdminAuth>
               <AdminDashboard />
             </RequireAdminAuth>
           } />
-          <Route path="/restaurant/:slug" element={<PageTransition><RestaurantDetails /></PageTransition>} />
+          
+          {/* Auth routes */}
           <Route path="/auth" element={<PageTransition><AuthPage /></PageTransition>} />
-          {/* Admin temporarily removed while we rebuild it in a separate app */}
+          
+          {/* Other routes */}
+          <Route path="/restaurant/:slug" element={<PageTransition><RestaurantDetails /></PageTransition>} />
         </Routes>
       </Layout>
     </AnimatePresence>

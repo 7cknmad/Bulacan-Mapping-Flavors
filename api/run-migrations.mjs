@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import mysql from 'mysql2/promise';
 
 // Migration runner: executes all .sql files in api/migrations in filename order.
@@ -16,7 +17,9 @@ const cfg = {
 };
 
 async function run() {
-  const migrationsDir = path.resolve('.', 'migrations');
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const migrationsDir = path.resolve(__dirname, 'migrations');
   try {
     const files = await fs.readdir(migrationsDir);
     const sqlFiles = files.filter(f => f.endsWith('.sql')).sort();
@@ -48,18 +51,18 @@ async function run() {
       }
       
       console.log('Running migration:', f);
-      const sqlContent = String(await fs.readFile(p, 'utf8'));
-      // Split SQL content into individual statements
-      const statements = sqlContent
-        .split(';')
-        .map(stmt => stmt.trim())
-        .filter(stmt => stmt.length > 0);
+      let sqlContent = String(await fs.readFile(p, 'utf8'));
+      // Normalize line endings
+      sqlContent = sqlContent.replace(/\r\n/g, '\n');
+      // Remove DELIMITER directives often used in .sql files (mysql client only)
+      sqlContent = sqlContent.replace(/^\s*DELIMITER\s+.*$/gmi, '');
+      // Replace end-of-block '//' delimiters with ';'
+      sqlContent = sqlContent.replace(/\s*\/\/\s*$/gm, ';');
       
       try {
-        for (const sql of statements) {
-          console.log('Executing statement:', sql.substring(0, 50) + '...');
-          await conn.query(sql);
-        }
+        // Execute the whole file at once; multipleStatements is enabled
+        console.log('Executing file content (truncated):', sqlContent.substring(0, 120).replace(/\n/g, ' ') + '...');
+        await conn.query(sqlContent);
         await conn.query('INSERT INTO migrations (name) VALUES (?)', [f]);
         console.log('OK:', f);
       } catch (e) {

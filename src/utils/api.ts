@@ -177,6 +177,8 @@ export type Variant = {
 /* ================== Public endpoints ================== */
 export const fetchMunicipalities = () => get<Municipality[]>(`/api/municipalities`);
 
+export const fetchDishBySlug = async (slug: string) => get<Dish>(`/api/dish/${slug}`);
+
 export const fetchDishes = (opts: { municipalityId?: number; category?: string; q?: string } = {}) => {
   const qs = new URLSearchParams();
   if (opts.municipalityId) qs.set("municipalityId", String(opts.municipalityId));
@@ -305,9 +307,15 @@ export type ReviewStats = {
 };
 
 // Fetch all reviews for a dish or restaurant
-export const fetchReviews = (rateable_id: number, rateable_type: 'dish'|'restaurant', opts?: { sort?: 'helpfulness'|'recent'|'rating' }) => {
+export const fetchReviews = (
+  rateable_id: number,
+  rateable_type: 'dish'|'restaurant',
+  opts?: { sort?: 'helpfulness'|'recent'|'rating'; page?: number; perPage?: number }
+) => {
   const qs = new URLSearchParams();
-  if (opts?.sort) qs.set('sort', opts.sort);
+  if (opts?.sort) qs.set('sort', String(opts.sort));
+  if (opts?.page != null) qs.set('page', String(opts.page));
+  if (opts?.perPage != null) qs.set('perPage', String(opts.perPage));
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return get<Review[]>(`/api/reviews/${rateable_type}/${rateable_id}${suffix}`);
 };

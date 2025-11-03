@@ -24,52 +24,133 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    // On mount, check localStorage for token
-    // Restore user immediately from localStorage (fast UI) then validate token with server
-    try {
-      const rawUser = localStorage.getItem("auth_user");
-      if (rawUser) {
-        setUser(JSON.parse(rawUser));
+    const initializeAuth = async () => {
+      // First try to restore from localStorage for immediate UI
+      try {
+        const rawUser = localStorage.getItem("auth_user");
+        const storedToken = localStorage.getItem("auth_token");
+        
+        if (rawUser && storedToken) {
+          const parsedUser = JSON.parse(rawUser);
+          setUser(parsedUser);
+          setToken(storedToken);
+        }
+      } catch (e) {
+        console.error('Error restoring auth from localStorage:', e);
       }
-    } catch {}
 
-    const t = localStorage.getItem("auth_token");
-    if (t) {
-      setToken(t);
-      checkSession(t);
-    }
-    // eslint-disable-next-line
+      // Then validate with server
+      try {
+        await checkSession();
+      } catch (e) {
+        console.error('Error checking session:', e);
+      }
+    };
+
+    initializeAuth();
   }, []);
 
   async function checkSession(existingToken?: string) {
-    const t = existingToken || token;
+    // Don't attempt to restore session if we're in the process of logging out
+    if (document.cookie.includes('logging_out=1')) {
+      return;
+    }
 
-    // Try 1: if we have a bearer token, validate it against the server's bearer endpoint
-    // The API server exposes a bearer-check at /auth/me and uses /api/auth/refresh for refresh tokens.
-    if (t) {
+    const currentToken = existingToken || token || localStorage.getItem("auth_token");
+    const adminToken = localStorage.getItem("bmf_admin_token");
+    
+    // Detect if we're on an admin route
+    let isAdminRoute = false;
+    try {
+      isAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
+    } catch {}
+
+    // If NOT on admin route, try regular user token first
+    if (!isAdminRoute && currentToken) {
       try {
         const res = await fetch(`${API}/api/auth/me`, {
-          headers: { Authorization: `Bearer ${t}` },
+          headers: { Authorization: `Bearer ${currentToken}` },
+          credentials: 'include' // Important: include credentials for session handling
         });
         if (res.ok) {
           const data = await res.json();
-          // server may return { user } or the user object directly
           const u = data.user || data;
-          setUser(u as any);
-          setToken(t);
-          try {
-            localStorage.setItem("auth_token", t);
-            localStorage.setItem("auth_user", JSON.stringify(u));
-          } catch {}
-          return;
+          // Only accept non-admin users on regular routes
+          if (u && u.role !== 'admin' && u.role !== 'owner') {
+            setUser(u as any);
+            setToken(currentToken);
+            try {
+              localStorage.setItem("auth_token", currentToken);
+              localStorage.setItem("auth_user", JSON.stringify(u));
+            } catch {}
+            return; // Successfully restored user session
+          }
+        } else if (res.status === 401) {
+          // Token is invalid, clear it
+          localStorage.removeItem("auth_token");
+          localStorage.removeItem("auth_user");
         }
-        // if 401, fall through to refresh attempt
+      } catch (e) {
+        console.error('Error checking regular token:', e);
+      }
+    }
+
+    // If on admin route and admin token exists, use admin token
+    if (isAdminRoute && adminToken) {
+      try {
+        const res = await fetch(`${API}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${adminToken}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const u = data.user || data;
+          if (u && (u.role === 'admin' || u.role === 'owner')) {
+            setUser(u as any);
+            setToken(adminToken);
+            try {
+              localStorage.setItem("auth_token", adminToken);
+              localStorage.setItem("auth_user", JSON.stringify(u));
+            } catch {}
+            return;
+          }
+        }
+      } catch (e) {
+        // continue to regular token
+      }
+    }
+
+    // If we're not on an admin route, clear admin token and data
+    if (!isAdminRoute) {
+      try {
+        localStorage.removeItem("bmf_admin_token");
+      } catch {}
+    }
+    
+    // If no regular token and ON admin route, try admin token
+    if (!currentToken && isAdminRoute && adminToken) {
+      try {
+        const res = await fetch(`${API}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${adminToken}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const u = data.user || data;
+          if (u && (u.role === 'admin' || u.role === 'owner')) {
+            setUser(u as any);
+            setToken(adminToken);
+            try {
+              localStorage.setItem("auth_token", adminToken);
+              localStorage.setItem("auth_user", JSON.stringify(u));
+            } catch {}
+            return;
+          }
+        }
       } catch (e) {
         // continue to refresh attempt
       }
     }
 
-    // Try 2: refresh endpoint (exchanges httpOnly refresh cookie for a new access token)
+    // Try refresh token
     try {
       const r = await fetch(`${API}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
       if (r.ok) {
@@ -95,35 +176,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function login(user: User, token?: string) {
+    const isAdmin = user.role === 'admin' || user.role === 'owner';
+    
     setUser(user);
+    
     if (user.guest) {
       setToken(null);
       localStorage.removeItem("auth_token");
-      try { localStorage.removeItem("auth_user"); } catch {}
+      localStorage.removeItem("bmf_admin_token");
+      localStorage.removeItem("auth_user");
     } else if (token) {
       setToken(token);
-      localStorage.setItem("auth_token", token);
-      try { localStorage.setItem("auth_user", JSON.stringify(user)); } catch {}
+      // Store admin token in a different key than user token
+      if (isAdmin) {
+        localStorage.setItem("bmf_admin_token", token);
+        // Remove any existing user token when logging in as admin
+        localStorage.removeItem("auth_token");
+      } else {
+        localStorage.setItem("auth_token", token);
+        // Remove any existing admin token when logging in as user
+        localStorage.removeItem("bmf_admin_token");
+      }
+      localStorage.setItem("auth_user", JSON.stringify(user));
     }
   }
 
   async function logout() {
-    // Call logout endpoint to clear refresh token cookie
+    const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+    setUser(null);
+    setToken(null);
+
+    // Clear all auth-related storage
     try {
-      await fetch(`${API}/api/auth/logout`, {
-        method: 'POST',
-        credentials: 'include'
-      });
+      // Clear tokens
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("bmf_admin_token");
+      
+      // Clear user data
+      localStorage.removeItem("auth_user");
+      
+      // Clear any cookies with different paths to ensure complete cleanup
+      document.cookie = "refresh_token=; Path=/api; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+      document.cookie = "refresh_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+      
+      // Call appropriate server-side logout endpoint
+      if (isAdmin) {
+        try {
+          await fetch(`${API}/api/auth/admin/logout`, { 
+            method: 'POST',
+            credentials: 'include' // Important: include credentials to clear cookies
+          });
+        } catch (e) {
+          console.error('Admin logout error:', e);
+        }
+      } else {
+        try {
+          await fetch(`${API}/api/auth/logout`, { 
+            method: 'POST',
+            credentials: 'include' // Important: include credentials to clear cookies
+          });
+        } catch (e) {
+          console.error('User logout error:', e);
+        }
+      }
+
+      // Ensure admin API also clears its state
+      try {
+        const adminApi = await import('../utils/adminApi');
+        adminApi.logout();
+      } catch (e) {
+        console.error('Admin API logout error:', e);
+      }
+
+      // Force reload the page to ensure clean state
+      window.location.href = '/';
     } catch (e) {
       console.error('Logout error:', e);
     }
-
-    setUser(null);
-    setToken(null);
-    try {
-      localStorage.removeItem("auth_token");
-      localStorage.removeItem("auth_user");
-    } catch {}
   }
 
   return (

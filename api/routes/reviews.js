@@ -54,23 +54,69 @@ export default function initReviewsRoutes(pool) {
         );
       }
 
-      // The triggers will automatically update avg_rating and total_ratings
+      // Proactively recalculate aggregates (avg_rating, total_ratings) to avoid relying on triggers
+      if (type === 'dish') {
+        await pool.query(
+          `UPDATE dishes d SET 
+             d.avg_rating = (
+               SELECT COALESCE(SUM(r.rating * COALESCE(r.weight,1)) / NULLIF(SUM(COALESCE(r.weight,1)), 0), 0)
+               FROM ratings r
+               WHERE r.rateable_type = 'dish' AND r.rateable_id = ?
+             ),
+             d.total_ratings = (
+               SELECT COUNT(*) FROM ratings r WHERE r.rateable_type = 'dish' AND r.rateable_id = ?
+             )
+           WHERE d.id = ?`,
+          [id, id, id]
+        );
+      } else if (type === 'restaurant') {
+        await pool.query(
+          `UPDATE restaurants rtab SET 
+             rtab.avg_rating = (
+               SELECT COALESCE(SUM(r.rating * COALESCE(r.weight,1)) / NULLIF(SUM(COALESCE(r.weight,1)), 0), 0)
+               FROM ratings r
+               WHERE r.rateable_type = 'restaurant' AND r.rateable_id = ?
+             ),
+             rtab.total_ratings = (
+               SELECT COUNT(*) FROM ratings r WHERE r.rateable_type = 'restaurant' AND r.rateable_id = ?
+             )
+           WHERE rtab.id = ?`,
+          [id, id, id]
+        );
+      }
 
-      // Get updated rating stats
-      const [[stats]] = await pool.query(
-        `SELECT avg_rating, total_ratings
-         FROM ${table}
-         WHERE id = ?`,
-        [id]
+      // Return the full saved/updated review row so clients can identify "my review"
+      const [[review]] = await pool.query(
+        `SELECT 
+           r.id,
+           r.user_id,
+           r.rateable_id,
+           r.rateable_type,
+           r.rating,
+           r.comment,
+           r.weight,
+           r.is_verified_visit,
+           r.response_text,
+           r.response_date,
+           r.created_at,
+           r.updated_at,
+           u.display_name as user_name,
+           COALESCE((SELECT COUNT(*) FROM review_votes WHERE review_id = r.id AND vote_type = 'helpful'), 0) as helpful_votes,
+           COALESCE((SELECT COUNT(*) FROM review_votes WHERE review_id = r.id AND vote_type = 'report'), 0) as report_votes,
+           '[]' as helpful_user_ids,
+           '[]' as reported_user_ids
+         FROM ratings r
+         LEFT JOIN users u ON r.user_id = u.id
+         WHERE r.user_id = ? AND r.rateable_id = ? AND r.rateable_type = ?
+         LIMIT 1`,
+        [userId, id, type]
       );
 
-      res.json({ 
-        message: existing ? 'Review updated' : 'Review added',
-        stats: {
-          avg_rating: stats.avg_rating,
-          total_ratings: stats.total_ratings
-        }
-      });
+      if (!review) {
+        return res.status(500).json({ error: 'Failed to retrieve saved review' });
+      }
+
+      res.json(review);
 
     } catch (error) {
       console.error('Review creation error:', error);
@@ -135,6 +181,9 @@ export default function initReviewsRoutes(pool) {
       const [reviews] = await pool.query(
         `SELECT 
            r.id,
+           r.user_id,
+           r.rateable_id,
+           r.rateable_type,
            r.rating,
            r.comment,
            r.weight,
@@ -206,13 +255,143 @@ export default function initReviewsRoutes(pool) {
       // Delete the review
       await pool.query('DELETE FROM ratings WHERE id = ?', [reviewId]);
 
-      // The triggers will automatically update avg_rating and total_ratings
+      // Proactively recalc aggregates for the affected entity
+      const rateableType = review.rateable_type;
+      const rateableId = review.rateable_id;
+      if (rateableType === 'dish') {
+        await pool.query(
+          `UPDATE dishes d SET 
+             d.avg_rating = (
+               SELECT COALESCE(SUM(r.rating * COALESCE(r.weight,1)) / NULLIF(SUM(COALESCE(r.weight,1)), 0), 0)
+               FROM ratings r
+               WHERE r.rateable_type = 'dish' AND r.rateable_id = ?
+             ),
+             d.total_ratings = (
+               SELECT COUNT(*) FROM ratings r WHERE r.rateable_type = 'dish' AND r.rateable_id = ?
+             )
+           WHERE d.id = ?`,
+          [rateableId, rateableId, rateableId]
+        );
+      } else if (rateableType === 'restaurant') {
+        await pool.query(
+          `UPDATE restaurants rtab SET 
+             rtab.avg_rating = (
+               SELECT COALESCE(SUM(r.rating * COALESCE(r.weight,1)) / NULLIF(SUM(COALESCE(r.weight,1)), 0), 0)
+               FROM ratings r
+               WHERE r.rateable_type = 'restaurant' AND r.rateable_id = ?
+             ),
+             rtab.total_ratings = (
+               SELECT COUNT(*) FROM ratings r WHERE r.rateable_type = 'restaurant' AND r.rateable_id = ?
+             )
+           WHERE rtab.id = ?`,
+          [rateableId, rateableId, rateableId]
+        );
+      }
 
       res.json({ message: 'Review deleted' });
 
     } catch (error) {
       console.error('Error deleting review:', error);
       res.status(500).json({ error: 'Failed to delete review' });
+    }
+  });
+
+  // Update an existing review (rating/comment)
+  router.patch('/api/reviews/:id', authRequired, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { rating, comment } = req.body || {};
+      const userId = req.user.uid;
+
+      if (rating != null && (Number(rating) < 1 || Number(rating) > 5)) {
+        return res.status(400).json({ error: 'Invalid rating value' });
+      }
+
+      // Load review and permission
+      const [[existing]] = await pool.query('SELECT * FROM ratings WHERE id = ?', [id]);
+      if (!existing) return res.status(404).json({ error: 'Review not found' });
+
+      // Check permissions
+      const [[u]] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
+      const isAdmin = u && u.role === 'admin';
+      if (Number(existing.user_id) !== Number(userId) && !isAdmin) {
+        return res.status(403).json({ error: 'Not authorized to update this review' });
+      }
+
+      // Apply update
+      await pool.query(
+        `UPDATE ratings SET 
+           rating = COALESCE(?, rating),
+           comment = ?,
+           updated_at = NOW()
+         WHERE id = ?`,
+        [rating != null ? Number(rating) : null, comment ?? null, id]
+      );
+
+      // Recalc aggregates for the entity
+      const rateableType = existing.rateable_type;
+      const rateableId = existing.rateable_id;
+      if (rateableType === 'dish') {
+        await pool.query(
+          `UPDATE dishes d SET 
+             d.avg_rating = (
+               SELECT COALESCE(SUM(r.rating * COALESCE(r.weight,1)) / NULLIF(SUM(COALESCE(r.weight,1)), 0), 0)
+               FROM ratings r
+               WHERE r.rateable_type = 'dish' AND r.rateable_id = ?
+             ),
+             d.total_ratings = (
+               SELECT COUNT(*) FROM ratings r WHERE r.rateable_type = 'dish' AND r.rateable_id = ?
+             )
+           WHERE d.id = ?`,
+          [rateableId, rateableId, rateableId]
+        );
+      } else if (rateableType === 'restaurant') {
+        await pool.query(
+          `UPDATE restaurants rtab SET 
+             rtab.avg_rating = (
+               SELECT COALESCE(SUM(r.rating * COALESCE(r.weight,1)) / NULLIF(SUM(COALESCE(r.weight,1)), 0), 0)
+               FROM ratings r
+               WHERE r.rateable_type = 'restaurant' AND r.rateable_id = ?
+             ),
+             rtab.total_ratings = (
+               SELECT COUNT(*) FROM ratings r WHERE r.rateable_type = 'restaurant' AND r.rateable_id = ?
+             )
+           WHERE rtab.id = ?`,
+          [rateableId, rateableId, rateableId]
+        );
+      }
+
+      // Return the updated review
+      const [[review]] = await pool.query(
+        `SELECT 
+           r.id,
+           r.user_id,
+           r.rateable_id,
+           r.rateable_type,
+           r.rating,
+           r.comment,
+           r.weight,
+           r.is_verified_visit,
+           r.response_text,
+           r.response_date,
+           r.created_at,
+           r.updated_at,
+           u.display_name as user_name,
+           COALESCE((SELECT COUNT(*) FROM review_votes WHERE review_id = r.id AND vote_type = 'helpful'), 0) as helpful_votes,
+           COALESCE((SELECT COUNT(*) FROM review_votes WHERE review_id = r.id AND vote_type = 'report'), 0) as report_votes,
+           '[]' as helpful_user_ids,
+           '[]' as reported_user_ids
+         FROM ratings r
+         LEFT JOIN users u ON r.user_id = u.id
+         WHERE r.id = ?
+         LIMIT 1`,
+        [id]
+      );
+
+      res.json(review);
+    } catch (error) {
+      console.error('Error updating review:', error);
+      res.status(500).json({ error: 'Failed to update review' });
     }
   });
 

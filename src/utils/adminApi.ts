@@ -159,10 +159,21 @@ export async function login(email: string, password: string) {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  if (res?.token) setAdminToken(res.token);
+  
+  // For admin users, make sure we're using the admin token
+  if (res?.token && (res.user?.role === 'admin' || res.user?.role === 'owner')) {
+    setAdminToken(res.token);
+    // Also set the regular auth token to keep sessions in sync
+    localStorage.setItem("auth_token", res.token);
+    localStorage.setItem("auth_user", JSON.stringify(res.user));
+  } else if (res?.token) {
+    // Regular user - don't set admin token
+    console.warn('Logged in as regular user, not admin');
+  }
+  
   return res;
 }
-export async function me() { return http(`/api/auth/me`); }
+export async function me() { return http(`/admin/auth/me`); }
 export function logout() { setAdminToken(null); }
 
 export async function listDishCategories(): Promise<any[]> {
@@ -179,7 +190,10 @@ export async function listMunicipalities(): Promise<Municipality[]> {
 
 /* --------------------------- CRUD Operations --------------------------- */
 
-export async function listDishes(filters?: { q?: string; municipality_id?: number; category?: string }): Promise<any[]> {
+export async function listDishes(filters?: { q?: string; municipality_id?: number; category_id?: number }): Promise<any[]> {
+  if (import.meta.env.DEV) {
+    console.log('🔄 Fetching dishes with filters:', filters);
+  }
   return http(`/admin/dishes${qs(filters || {})}`);
 }
 

@@ -191,17 +191,25 @@ function RestaurantDetails() {
   // Mutations
   const postReviewMutation = useMutation({
     mutationFn: (data: { rating: number; comment?: string }) =>
-      restaurantQ.data ? postReview({ rateable_id: restaurantQ.data.id, rateable_type: 'restaurant', ...data }) : Promise.resolve(),
+      restaurantQ.data ? postReview({ type: 'restaurant', id: restaurantQ.data.id, rating: data.rating, comment: data.comment }) : Promise.resolve(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] }),
   });
   const updateReviewMutation = useMutation({
     mutationFn: (data: { reviewId: number; rating: number; comment?: string }) =>
       updateReview(data.reviewId, { rating: data.rating, comment: data.comment }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] });
+      // Also refresh restaurant entity to update avg_rating/total_ratings in header
+      queryClient.invalidateQueries({ queryKey: ["restaurant"] });
+    },
   });
   const deleteReviewMutation = useMutation({
     mutationFn: (reviewId: number) => deleteReview(reviewId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] });
+      // Also refresh restaurant entity to update avg_rating/total_ratings in header
+      queryClient.invalidateQueries({ queryKey: ["restaurant"] });
+    },
   });
 
   // handlers for editing/deleting current user's review (optimistic)

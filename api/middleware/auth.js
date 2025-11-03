@@ -22,23 +22,34 @@ export function authRequired(req, res, next) {
       console.log('[auth] No token found in request');
       return res.status(401).json({ error: 'unauthorized' });
     }
+
+    // Check if this is an admin route
+    const isAdminRoute = req.path.startsWith('/admin/');
+    console.log('[auth] Is admin route:', isAdminRoute);
     
     try {
-      const user = jwt.verify(token, JWT_SECRET);
-      if (user) {
-        console.log('[auth] Token verified successfully for user:', user.email || user.uid);
-        // Ensure we have a consistent user object structure
-        req.user = {
-          uid: user.id || user.uid,
-          email: user.email,
-          displayName: user.displayName || user.name,
-          role: user.role || 'user'
-        };
-        next();
-      } else {
-        console.log('[auth] Token verification succeeded but no user data');
-        return res.status(401).json({ error: 'invalid_token' });
+      if (isAdminRoute) {
+        // For admin routes, only accept admin tokens
+        try {
+          const user = jwt.verify(token, process.env.ADMIN_JWT_SECRET || 'admin-secret-key');
+          if (user.role !== 'admin' && user.role !== 'owner') {
+            console.log('[auth] User not admin:', user.role);
+            throw new Error('not_admin');
+          }
+          console.log('[auth] Admin token verified for:', user.email);
+          req.user = user;
+          return next();
+        } catch (e) {
+          console.log('[auth] Admin token verification failed:', e.message);
+          return res.status(401).json({ error: 'invalid_admin_token' });
+        }
       }
+
+      // For non-admin routes, try regular user token
+      const user = jwt.verify(token, JWT_SECRET);
+      console.log('[auth] User token verified for:', user.email);
+      req.user = user;
+      return next();
     } catch (e) {
       console.log('[auth] Token verification failed:', e.message);
       return res.status(401).json({ error: 'invalid_token', details: e.message });

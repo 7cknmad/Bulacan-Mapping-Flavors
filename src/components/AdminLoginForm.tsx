@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { setUserToken, clearAllTokens } from "../utils/authStorage";
+import { setAdminToken, clearAllTokens } from "../utils/authStorage";
 
-export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: string) => void }) {
+export default function AdminLoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -17,34 +16,35 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setSuccess(false);
     setLoading(true);
+    
     try {
-      // Regular user login only
       const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: 'include',
         body: JSON.stringify({ email, password }),
       });
+      
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Login failed");
+      if (!res.ok) throw new Error(data.error || 'Login failed');
       
-      // Don't allow admin login through regular login form
-      if (data.user.role === 'admin' || data.user.role === 'owner') {
-        throw new Error('Please use the admin login page');
+      if (!data.user || (data.user.role !== 'admin' && data.user.role !== 'owner')) {
+        throw new Error('This account does not have administrative privileges');
       }
-
-      setSuccess(true);
-      // Clear any existing tokens before login
-      clearAllTokens();
       
-      // Set user token and login
-      setUserToken(data.token);
+      // Clear any existing tokens and store admin token
+      clearAllTokens();
+      setAdminToken(data.token);
+      
+      // Use useAuth's login function to set the user context
       login(data.user, data.token);
       
-      if (onLogin) onLogin(data.user, data.token);
+      // Redirect to admin dashboard or return URL
+      const from = (location.state as any)?.from?.pathname || '/admin';
+      navigate(from, { replace: true });
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message || 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -52,11 +52,16 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
 
   return (
     <form className="space-y-4" onSubmit={handleLogin}>
-      <h2 className="text-lg font-semibold">Login</h2>
+      <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <h2 className="text-lg font-semibold text-blue-900 mb-2">Admin Login</h2>
+        <div className="text-sm text-blue-700">
+          This login is for administrators only. Regular users should use the standard login page.
+        </div>
+      </div>
       <input
         type="email"
         className="w-full border rounded p-2"
-        placeholder="Email"
+        placeholder="Admin Email"
         value={email}
         onChange={e => setEmail(e.target.value)}
         required
@@ -88,9 +93,8 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
         className="w-full bg-primary-600 text-white rounded py-2 hover:bg-primary-700 disabled:opacity-60"
         disabled={loading}
       >
-        {loading ? "Logging in..." : "Login"}
+        {loading ? "Logging in..." : "Admin Login"}
       </button>
-      {success && <div className="text-green-600">Login successful! Redirecting...</div>}
       {error && <div className="text-red-600">{error}</div>}
     </form>
   );
