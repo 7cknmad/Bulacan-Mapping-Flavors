@@ -1041,8 +1041,9 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
                 mouseout: () => setHoveredName(null),
                 click: () => {
                   // Select this municipality
-                  const rawId = feature?.properties?.id ?? feature?.properties?.ID ?? feature?.properties?.Id;
-                  const numericId = Number.isFinite(Number(rawId)) ? Number(rawId) : -1;
+                  // Extract numeric ID from @id property (format: "relation/123456")
+                  const relationId = feature?.properties?.['@id'] ?? '';
+                  const numericId = Number(relationId.split('/')[1]) || -1;
                   select({
                     id: numericId,
                     slug: feature?.properties?.slug || feature?.properties?.name?.toLowerCase().replace(/\s+/g, '-'),
@@ -1214,10 +1215,12 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
                   mouseout: () => setHoveredName(null),
                   click: () => {
                     // Select this municipality
-                    const rawId = feature?.properties?.id ?? feature?.properties?.ID ?? feature?.properties?.Id;
-                    const numericId = Number.isFinite(Number(rawId)) ? Number(rawId) : -1;
+                    // Extract OSM relation ID from @id property (format: "relation/123456")
+                    const osmRelationId = (feature?.properties?.['@id'] || '').split('/')[1];
+                    const numericId = Number(osmRelationId) || -1;
+                    // Pass the OSM relation ID for database lookup
                     select({
-                      id: numericId,
+                      id: numericId, // This is the OSM relation ID
                       slug: feature?.properties?.slug || feature?.properties?.name?.toLowerCase().replace(/\s+/g, '-'),
                       name: feature?.properties?.name,
                       description: feature?.properties?.description ?? null,

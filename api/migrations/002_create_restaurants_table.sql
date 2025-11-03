@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS restaurant_reviews (
 CREATE TABLE IF NOT EXISTS restaurant_review_votes (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   review_id BIGINT NOT NULL,
-  user_id BIGINT NOT NULL,
+  user_id INT NOT NULL,
   vote_type ENUM('helpful', 'report') NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_user_review_vote (review_id, user_id, vote_type),

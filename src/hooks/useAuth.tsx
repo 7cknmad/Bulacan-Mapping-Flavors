@@ -107,7 +107,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  function logout() {
+  async function logout() {
+    // Call logout endpoint to clear refresh token cookie
+    try {
+      await fetch(`${API}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+    } catch (e) {
+      console.error('Logout error:', e);
+    }
+
     setUser(null);
     setToken(null);
     try {

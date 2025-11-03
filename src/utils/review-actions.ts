@@ -1,4 +1,5 @@
 import { request } from './api';
+import type { ReviewStats } from './api';
 
 export interface ReviewVoteResponse {
   message: string;
@@ -32,16 +33,6 @@ export const verifyReview = async (reviewId: number): Promise<ReviewVerification
   });
 };
 
-export const getReviewStats = async (reviewId: number) => {
-  return request<{
-    helpfulVotes: number;
-    reportCount: number;
-    isVerified: boolean;
-    weight: number;
-    response?: {
-      text: string;
-      by: string;
-      date: string;
-    };
-  }>(`/api/reviews/${reviewId}/stats`);
+export const getReviewStats = async (type: 'dish' | 'restaurant', id: number): Promise<ReviewStats> => {
+  return request<ReviewStats>(`/api/reviews/${type}/${id}/stats`);
 };

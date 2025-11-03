@@ -25,9 +25,20 @@ export function authRequired(req, res, next) {
     
     try {
       const user = jwt.verify(token, JWT_SECRET);
-      console.log('[auth] Token verified successfully for user:', user.email || user.uid);
-      req.user = user;
-      next();
+      if (user) {
+        console.log('[auth] Token verified successfully for user:', user.email || user.uid);
+        // Ensure we have a consistent user object structure
+        req.user = {
+          uid: user.id || user.uid,
+          email: user.email,
+          displayName: user.displayName || user.name,
+          role: user.role || 'user'
+        };
+        next();
+      } else {
+        console.log('[auth] Token verification succeeded but no user data');
+        return res.status(401).json({ error: 'invalid_token' });
+      }
     } catch (e) {
       console.log('[auth] Token verification failed:', e.message);
       return res.status(401).json({ error: 'invalid_token', details: e.message });

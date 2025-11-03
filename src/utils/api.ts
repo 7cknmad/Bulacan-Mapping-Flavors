@@ -1,9 +1,26 @@
-// Helper: calculate average rating from reviews array
-export function calculateAverageRating(reviews: Array<{ rating?: number }>): number {
+// Helper: calculate average rating from reviews array using weights
+export function calculateAverageRating(reviews: Array<{ rating?: number; weight?: number }>): number {
   if (!reviews || !reviews.length) return 0;
-  const valid = reviews.map(r => Number(r.rating ?? 0)).filter(n => !isNaN(n));
-  if (!valid.length) return 0;
-  return valid.reduce((a, b) => a + b, 0) / valid.length;
+  
+  // Filter out reviews with invalid ratings
+  const validReviews = reviews.filter(r => 
+    !isNaN(Number(r.rating)) && 
+    r.rating != null && 
+    r.rating > 0 && 
+    r.rating <= 5
+  );
+  
+  if (!validReviews.length) return 0;
+
+  // Calculate weighted average
+  const weightedSum = validReviews.reduce((sum, r) => 
+    sum + (Number(r.rating) * (r.weight ?? 1)), 0
+  );
+  const totalWeight = validReviews.reduce((sum, r) => 
+    sum + (r.weight ?? 1), 0
+  );
+
+  return totalWeight > 0 ? weightedSum / totalWeight : 0;
 }
 // src/utils/api.ts — public client, safe for admin builds too
 
@@ -31,6 +48,7 @@ function needsCreds(path: string) {
 }
 
 export class ApiError extends Error {
+  code?: string;
   constructor(
     message: string,
     public status?: number,
@@ -40,6 +58,10 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = 'ApiError';
+    // Add code property for auth errors
+    if (status === 401 || message.includes('must be logged in')) {
+      this.code = 'LOGIN_REQUIRED';
+    }
   }
 }
 
@@ -249,43 +271,169 @@ export type Review = {
   updated_at: string;
   user_name?: string;
   user_email?: string;
+  helpfulness_votes: number;
+  is_verified_visit: boolean;
+  reported_count: number;
+  response_text?: string|null;
+  response_date?: string|null;
+  response_by_name?: string|null;
+  weight: number;
+  helpful_votes: number;
+  report_votes: number;
+  helpful_user_ids: number[];
+  reported_user_ids: number[];
+};
+
+export type ReviewStats = {
+  distribution: Array<{
+    rating: number;
+    count: number;
+    avg_weight: number;
+  }>;
+  stats: {
+    total_reviews: number;
+    average_rating: number;
+    verified_visits: number;
+    total_helpful_votes: number;
+    rating_percentages: Record<number, string>; // e.g. { "5": "45.5", "4": "30.0", ... }
+  };
+  trend: Array<{
+    month: string;
+    review_count: number;
+    avg_rating: number;
+  }>;
 };
 
 // Fetch all reviews for a dish or restaurant
-export const fetchReviews = (rateable_id: number, rateable_type: 'dish'|'restaurant') =>
-  get<Review[]>(`/api/reviews?rateable_id=${rateable_id}&rateable_type=${rateable_type}`);
+export const fetchReviews = (rateable_id: number, rateable_type: 'dish'|'restaurant', opts?: { sort?: 'helpfulness'|'recent'|'rating' }) => {
+  const qs = new URLSearchParams();
+  if (opts?.sort) qs.set('sort', opts.sort);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return get<Review[]>(`/api/reviews/${rateable_type}/${rateable_id}${suffix}`);
+};
 
 // Fetch all reviews by the logged-in user
 export const fetchUserReviews = () => get<Review[]>(`/api/user/reviews`);
 
 // Create or update a review (rating + comment)
 export const postReview = async (data: {
-  rateable_id: number;
-  rateable_type: 'dish'|'restaurant'|'variant';
+  type: 'dish'|'restaurant';
+  id: number;
   rating: number;
   comment?: string;
-  // optional: user_id (will be filled from localStorage if not provided)
 }) => {
+    // Log request data for debugging
+    console.log('[Review API] Starting review submission:', {
+      type: data.type,
+      id: data.id,
+      rating: data.rating,
+      hasComment: !!data.comment,
+      commentLength: data.comment?.length
+    });
+
     // Check for login
     const token = localStorage.getItem('auth_token');
     const user = localStorage.getItem('auth_user');
+    console.log('[Review API] Auth check:', { 
+      hasToken: !!token, 
+      hasUser: !!user 
+    });
+    
     if (!token || !user) {
-      const err: any = new Error('You must be logged in to post a review.');
+      console.error('[Review API] Auth required error - missing token or user');
+      const err = new ApiError('You must be logged in to post a review.');
       err.code = 'LOGIN_REQUIRED';
       throw err;
     }
-    const body: any = { rateable_id: data.rateable_id, rateable_type: data.rateable_type, rating: data.rating, comment: data.comment };
-    return post('/api/reviews', body);
-  };
+
+    // Validate data
+    if (!data.type || !['dish', 'restaurant'].includes(data.type)) {
+      console.error('[Review API] Invalid type:', data.type);
+      throw new ApiError('Invalid review type');
+    }
+    if (!data.id || isNaN(Number(data.id))) {
+      console.error('[Review API] Invalid ID:', data.id);
+      throw new ApiError('Invalid item ID');
+    }
+    if (!data.rating || isNaN(Number(data.rating)) || data.rating < 1 || data.rating > 5) {
+      console.error('[Review API] Invalid rating:', data.rating);
+      throw new ApiError('Rating must be between 1 and 5');
+    }
+
+    console.log('[Review API] Validation passed, submitting review:', { 
+      type: data.type,
+      id: data.id,
+      rating: data.rating,
+      hasComment: !!data.comment,
+      userLoggedIn: !!user
+    });
+
+    try {
+      console.log('[Review API] Making POST request to:', `/api/reviews/${data.type}/${data.id}`);
+      
+      const response = await post<Review>(`/api/reviews/${data.type}/${data.id}`, {
+        rating: Number(data.rating),
+        comment: data.comment?.trim() || undefined
+      });
+      
+      console.log('[Review API] Success response:', response);
+      return response;
+    } catch (err: any) {
+      console.error('[Review API] Error details:', {
+        error: err,
+        status: err.status,
+        message: err.message,
+        data: err.data,
+        stack: err.stack
+      });
+
+      if (err.status === 401) {
+        const authErr = new ApiError('You must be logged in to post a review.');
+        authErr.code = 'LOGIN_REQUIRED';
+        throw authErr;
+      }
+
+      if (err instanceof ApiError) {
+        throw err;
+      }
+
+      throw new ApiError(
+        err.data?.error || err.message || 'Failed to submit review',
+        err.status,
+        err.statusText,
+        err.data
+      );
+    }
+};
 
 // Edit a review
 export const updateReview = async (id: number, data: { rating: number; comment?: string }) => {
-  return request(`/api/reviews/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  return request<Review>(`/api/reviews/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
 };
 
 // Delete a review
 export const deleteReview = async (id: number) => {
   return del(`/api/reviews/${id}`);
+};
+
+// Vote on a review (helpful or report)
+export const voteOnReview = async (reviewId: number, voteType: 'helpful'|'report') => {
+  return post(`/api/reviews/${reviewId}/vote`, { voteType });
+};
+
+// Add owner response to a review
+export const respondToReview = async (reviewId: number, response: string) => {
+  return post(`/api/reviews/${reviewId}/respond`, { response });
+};
+
+// Mark a review as a verified visit
+export const verifyReview = async (reviewId: number) => {
+  return post(`/api/reviews/${reviewId}/verify`, {});
+};
+
+// Get review statistics for an item
+export const getReviewStats = async (type: 'dish'|'restaurant', id: number): Promise<ReviewStats> => {
+  return get(`/api/reviews/${type}/${id}/stats`);
 };
 
 // ================== User Favorites Endpoints ==================

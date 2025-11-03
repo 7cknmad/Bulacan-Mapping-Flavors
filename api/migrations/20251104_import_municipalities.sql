@@ -1,0 +1,27 @@
+-- Import municipalities from GeoJSON with their OSM IDs
+INSERT INTO municipalities (osm_relation_id, name, slug, province, lat, lng, location_pt)
+VALUES
+(379803, 'Angat', 'angat', 'Bulacan', 14.9295, 121.0295, POINT(121.0295, 14.9295)),
+(379810, 'Balagtas', 'balagtas', 'Bulacan', 14.8141, 120.9158, POINT(120.9158, 14.8141)),
+(379811, 'Baliuag', 'baliuag', 'Bulacan', 14.9547, 120.8978, POINT(120.8978, 14.9547)),
+(379812, 'Bocaue', 'bocaue', 'Bulacan', 14.8025, 120.9339, POINT(120.9339, 14.8025)),
+(379813, 'Bulakan', 'bulakan', 'Bulacan', 14.7926, 120.8779, POINT(120.8779, 14.7926)),
+(379814, 'Bustos', 'bustos', 'Bulacan', 14.9474, 120.9141, POINT(120.9141, 14.9474)),
+(379816, 'Calumpit', 'calumpit', 'Bulacan', 14.9155, 120.7647, POINT(120.7647, 14.9155)),
+(379817, 'Doña Remedios Trinidad', 'dona-remedios-trinidad', 'Bulacan', 15.0821, 121.0968, POINT(121.0968, 15.0821)),
+(379818, 'Guiguinto', 'guiguinto', 'Bulacan', 14.8333, 120.8833, POINT(120.8833, 14.8333)),
+(379819, 'Hagonoy', 'hagonoy', 'Bulacan', 14.8343, 120.7343, POINT(120.7343, 14.8343)),
+(379820, 'Malolos', 'malolos', 'Bulacan', 14.8443, 120.8104, POINT(120.8104, 14.8443)),
+(379821, 'Marilao', 'marilao', 'Bulacan', 14.7579, 120.9579, POINT(120.9579, 14.7579)),
+(379822, 'Meycauayan', 'meycauayan', 'Bulacan', 14.7373, 120.9629, POINT(120.9629, 14.7373)),
+(379823, 'Norzagaray', 'norzagaray', 'Bulacan', 14.9201, 121.0548, POINT(121.0548, 14.9201)),
+(379824, 'Obando', 'obando', 'Bulacan', 14.7029, 120.9429, POINT(120.9429, 14.7029)),
+(379825, 'Pandi', 'pandi', 'Bulacan', 14.8714, 120.9547, POINT(120.9547, 14.8714)),
+(379827, 'Plaridel', 'plaridel', 'Bulacan', 14.8845, 120.8545, POINT(120.8545, 14.8845)),
+(379828, 'Pulilan', 'pulilan', 'Bulacan', 14.9023, 120.8486, POINT(120.8486, 14.9023)),
+(379829, 'San Ildefonso', 'san-ildefonso', 'Bulacan', 15.0783, 120.9450, POINT(120.9450, 15.0783)),
+(379830, 'San Jose del Monte', 'san-jose-del-monte', 'Bulacan', 14.8138, 121.0457, POINT(121.0457, 14.8138)),
+(379831, 'San Miguel', 'san-miguel', 'Bulacan', 15.1450, 120.9783, POINT(120.9783, 15.1450)),
+(379832, 'San Rafael', 'san-rafael', 'Bulacan', 14.9450, 120.9783, POINT(120.9783, 14.9450)),
+(379833, 'Santa Maria', 'santa-maria', 'Bulacan', 14.8200, 120.9967, POINT(120.9967, 14.8200)),
+(379834, 'Paombong', 'paombong', 'Bulacan', 14.8300, 120.7800, POINT(120.7800, 14.8300));

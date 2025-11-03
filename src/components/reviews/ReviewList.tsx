@@ -1,7 +1,10 @@
-import { Star as StarIcon } from "lucide-react";
+import { Star as StarIcon, ThumbsUp, Flag, BadgeCheck } from "lucide-react";
 import { Review } from "../../utils/api";
+import { useAuth } from "../../hooks/useAuth";
+import ReviewActions from "../ReviewActions";
+import ReviewResponse from "../ReviewResponse";
 
-type ReviewListProps = {
+interface ReviewListProps {
   reviews: Review[];
   isLoading: boolean;
   error: Error | null;
@@ -9,7 +12,9 @@ type ReviewListProps = {
   onEditReview?: (review: Review) => void;
   onDeleteReview?: (review: Review) => void;
   refetch?: () => void;
-};
+  onVoteChange?: (reviewId: number) => void;
+  rateable_type: 'dish' | 'restaurant';
+}
 
 export function ReviewList({
   reviews,
@@ -18,7 +23,9 @@ export function ReviewList({
   myReviewId,
   onEditReview,
   onDeleteReview,
-  refetch
+  refetch,
+  onVoteChange,
+  rateable_type
 }: ReviewListProps) {
   if (isLoading) {
     return (
@@ -61,12 +68,14 @@ export function ReviewList({
     );
   }
 
+  const { user } = useAuth();
+
   return (
     <div className="space-y-4">
       {reviews.map((review) => (
         <div 
           key={review.id} 
-          className={`${review.id === myReviewId ? 'bg-blue-50 border border-blue-100' : 'border-b'} p-4 rounded-lg mb-4`}
+          className={`${review.id === myReviewId ? 'bg-blue-50 border border-blue-100' : 'bg-white shadow-sm border'} p-4 rounded-lg mb-4`}
         >
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="flex items-center gap-2">
@@ -74,6 +83,12 @@ export function ReviewList({
               {review.id === myReviewId && (
                 <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
                   Your Review
+                </span>
+              )}
+              {review.is_verified_visit && (
+                <span className="flex items-center gap-1 text-green-600 text-xs">
+                  <BadgeCheck size={14} />
+                  Verified Visit
                 </span>
               )}
             </div>
@@ -114,6 +129,40 @@ export function ReviewList({
             </span>
           </div>
           <div className="text-neutral-700">{review.comment}</div>
+
+          {/* Review Weight */}
+          {review.weight !== 1 && (
+            <div className="mt-2 text-xs text-neutral-500">
+              Review weight: {review.weight.toFixed(2)}
+            </div>
+          )}
+
+          {/* Review Actions */}
+          <ReviewActions 
+            reviewId={review.id}
+            helpfulVotes={review.helpful_votes}
+            reportCount={review.report_votes}
+            isVerified={review.is_verified_visit}
+            hasUserVotedHelpful={review.helpful_user_ids.includes(user?.id || -1)}
+            hasUserReported={review.reported_user_ids.includes(user?.id || -1)}
+            onVoteChange={() => {
+              onVoteChange?.(review.id);
+              refetch?.();
+            }}
+          />
+
+          {/* Review Response */}
+          {(review.response_text || user?.role === 'owner' || user?.role === 'admin') && (
+            <ReviewResponse
+              reviewId={review.id}
+              existingResponse={review.response_text ? {
+                text: review.response_text,
+                by: review.response_by_name || 'Owner',
+                date: review.response_date || ''
+              } : undefined}
+              onResponseSubmit={refetch}
+            />
+          )}
         </div>
       ))}
     </div>

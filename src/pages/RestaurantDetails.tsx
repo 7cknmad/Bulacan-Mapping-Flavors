@@ -812,7 +812,7 @@ function RestaurantDetails() {
                     <p className="text-neutral-700">{myReview.comment}</p>
                   </div>
                 ) : (
-                  <RatingForm rateableId={r.id} rateableType="restaurant" />
+                  <RatingForm id={r.id} type="restaurant" />
                 )}
               </div>
             ) : (

@@ -5,6 +5,7 @@ import cors from 'cors';
 import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import initReviewsRoutes from './routes/reviews.js';
 const app = express();
 /* ---------------- CORS (GH Pages + local + tunnel) ---------------- */
 const allowed = new Set([
@@ -38,6 +39,73 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 app.set('trust proxy', 1);
+
+// Add diagnostic routes directly
+app.get('/admin/dish-recommendation-check', async (req, res) => {
+  try {
+    // Get dishes with panel_rank = 1 and their municipality info
+    const [rankedDishes] = await pool.query(`
+      SELECT 
+        d.id as dish_id, 
+        d.name as dish_name,
+        d.municipality_id,
+        d.panel_rank,
+        m.id as muni_id,
+        m.name as municipality_name,
+        m.recommended_dish_id
+      FROM dishes d
+      LEFT JOIN municipalities m ON d.municipality_id = m.id
+      WHERE d.panel_rank = 1
+      ORDER BY d.municipality_id
+    `);
+
+    // Get municipalities with recommended dishes
+    const [recommendedDishes] = await pool.query(`
+      SELECT 
+        m.id as municipality_id,
+        m.name as municipality_name,
+        m.recommended_dish_id,
+        d.name as recommended_dish_name,
+        d.panel_rank
+      FROM municipalities m
+      LEFT JOIN dishes d ON m.recommended_dish_id = d.id
+      WHERE m.recommended_dish_id IS NOT NULL
+    `);
+
+      // Check for mismatches
+      const [mismatches] = await pool.query(`
+        SELECT 
+          d.id as dish_id,
+          d.name as dish_name,
+          d.municipality_id,
+          d.panel_rank,
+          m.id as muni_id,
+          m.name as municipality_name,
+          m.recommended_dish_id
+        FROM dishes d
+        JOIN municipalities m ON d.municipality_id = m.id
+        WHERE (d.panel_rank = 1 AND m.recommended_dish_id != d.id)
+           OR (m.recommended_dish_id = d.id AND d.panel_rank != 1)
+    `);
+
+    // Log detailed results
+    console.log('\n[dish-check] Dishes with panel_rank=1:', rankedDishes);
+    console.log('\n[dish-check] Municipalities with recommended dishes:', recommendedDishes);
+    console.log('\n[dish-check] Mismatches found:', mismatches);    res.json({
+      rankedDishes,
+      recommendedDishes,
+      mismatches,
+      summary: {
+        totalRankedDishes: rankedDishes.length,
+        totalRecommendedDishes: recommendedDishes.length,
+        totalMismatches: mismatches.length
+      }
+    });
+  } catch (error) {
+    console.error('Error checking dish recommendations:', error);
+    res.status(500).json({ error: 'Failed to check recommendations', details: error.message });
+  }
+});
 
 /* ---------------- Header-based auth (no cookies) ---------------- */
 const {
@@ -207,11 +275,11 @@ app.post('/api/user/favorites/check', authRequired, async (req, res) => {
 });
 
 function sign(payload) {
-  return jwt.sign(payload, ADMIN_JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 function signRefresh(payload) {
   // refresh tokens longer lived
-  return jwt.sign(payload, ADMIN_JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 }
 function readBearer(req) {
   const h = req.headers.authorization || '';
@@ -221,10 +289,25 @@ function readBearer(req) {
 function authRequired(req, res, next) {
   const token = readBearer(req);
   if (!token) return res.status(401).json({ error: 'unauthorized' });
+  
   try {
-    req.user = jwt.verify(token, ADMIN_JWT_SECRET);
+    // Verify token regardless of environment
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (!decoded) {
+      return res.status(401).json({ error: 'invalid_token' });
+    }
+    
+    // Ensure we have a consistent user object structure
+    req.user = {
+      uid: decoded.id || decoded.uid,
+      email: decoded.email,
+      displayName: decoded.displayName || decoded.name,
+      role: decoded.role || 'user'
+    };
+    
     next();
-  } catch {
+  } catch (e) {
+    console.error('Token verification failed:', e);
     return res.status(401).json({ error: 'invalid_token' });
   }
 }
@@ -288,7 +371,51 @@ async function loadSchemaInfo() {
   }
 
   await loadSchemaInfo();
-})().catch(e => console.error('❌ DB init error:', e));
+
+  // Add connection error handler
+  pool.on('error', (err) => {
+    console.error('Unexpected database error:', err);
+    if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+      console.error('Database connection was closed.');
+    }
+    if (err.code === 'ER_CON_COUNT_ERROR') {
+      console.error('Database has too many connections.');
+    }
+    if (err.code === 'ECONNREFUSED') {
+      console.error('Database connection was refused.');
+    }
+  });
+
+  // Mount review routes after pool is initialized
+  const reviewRouter = initReviewsRoutes(pool);
+  app.use(reviewRouter);
+  
+  console.log('✅ Review routes initialized');
+
+  // Start the server
+  const port = process.env.PORT || 3002;
+  const server = app.listen(port, () => {
+    console.log(`✨ Server running on http://localhost:${port}`);
+  });
+
+  // Handle server errors
+  server.on('error', (error) => {
+    console.error('Server error:', error);
+    process.exit(1);
+  });
+
+  // Handle process termination
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM, shutting down gracefully');
+    server.close(() => {
+      console.log('Closed out remaining connections');
+      process.exit(0);
+    });
+  });
+})().catch(e => {
+  console.error('❌ DB init error:', e);
+  process.exit(1);
+});
 
 /* ---------------- Helpers ---------------- */
 const toInt = v => (v == null ? null : Number(v));
@@ -508,9 +635,99 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/health', async (_req, res) => {
   try {
     const [[row]] = await pool.query('SELECT 1 AS ok');
-    res.json({ ok: row.ok === 1, db: cfg.database });
+
+    // Also check municipalities table
+    const [municipalities] = await pool.query('SELECT id, name FROM municipalities ORDER BY id LIMIT 5');
+    
+    res.json({ 
+      ok: row.ok === 1, 
+      db: cfg.database,
+      dbCheck: {
+        hasMunicipalities: municipalities.length > 0,
+        firstFewMunicipalities: municipalities
+      }
+    });
   } catch (e) {
+    console.error('Health check error:', e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Debug endpoint to check dish data
+app.get('/api/debug/dish/:id', async (req, res) => {
+  try {
+    const dishId = Number(req.params.id);
+    const [[dish]] = await pool.query(`
+      SELECT d.*, m.name as municipality_name, m.recommended_dish_id
+      FROM dishes d 
+      JOIN municipalities m ON d.municipality_id = m.id
+      WHERE d.id = ?
+    `, [dishId]);
+
+    if (!dish) {
+      return res.status(404).json({ error: 'Dish not found' });
+    }
+
+    // Check if this dish is recommended for its municipality
+    const isRecommended = dish.recommended_dish_id === dish.id;
+    
+    // Check if any other dish is recommended for this municipality
+    const [[otherRecommended]] = await pool.query(`
+      SELECT d.id, d.name, d.panel_rank
+      FROM dishes d
+      WHERE d.municipality_id = ? AND d.panel_rank = 1 AND d.id != ?
+    `, [dish.municipality_id, dish.id]);
+
+    res.json({
+      dish,
+      isRecommended,
+      otherRecommendedDish: otherRecommended || null,
+      summary: {
+        id: dish.id,
+        name: dish.name,
+        municipality: dish.municipality_name,
+        panel_rank: dish.panel_rank,
+        isRecommendedForMunicipality: isRecommended
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// Debug route to check all municipalities and their recommended dishes
+app.get('/api/debug/municipalities', async (_req, res) => {
+  try {
+    const [municipalities] = await pool.query(`
+      SELECT 
+        m.id, 
+        m.name, 
+        m.recommended_dish_id,
+        d.name as dish_name,
+        d.panel_rank,
+        d.municipality_id as dish_municipality_id
+      FROM municipalities m
+      LEFT JOIN dishes d ON m.recommended_dish_id = d.id
+      ORDER BY m.id
+    `);
+
+    const [dishes] = await pool.query(`
+      SELECT 
+        id,
+        name,
+        municipality_id,
+        panel_rank
+      FROM dishes 
+      WHERE panel_rank = 1
+      ORDER BY municipality_id
+    `);
+
+    res.json({
+      municipalities,
+      dishesWithPanelRank1: dishes
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
   }
 });
 
@@ -522,6 +739,73 @@ app.get('/api/_debug', async (_req, res) => {
     return res.json({ ok: true, marker: 'api/index.js loaded - build marker v1', file_mtime: stat.mtime });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Debug endpoint to check dish data
+app.get('/api/debug/dish/:id', async (req, res) => {
+  try {
+    console.log(`[debug-dish] Checking dish ID ${req.params.id}`);
+    const dishId = Number(req.params.id);
+    
+    // Get dish and its municipality info
+    const [[dish]] = await pool.query(`
+      SELECT d.*, m.name as municipality_name, m.recommended_dish_id
+      FROM dishes d 
+      JOIN municipalities m ON d.municipality_id = m.id
+      WHERE d.id = ?
+    `, [dishId]);
+
+    if (!dish) {
+      console.log(`[debug-dish] Dish ${dishId} not found`);
+      return res.status(404).json({ error: 'Dish not found' });
+    }
+
+    console.log(`[debug-dish] Found dish:`, dish);
+
+    // Get municipality's current recommended dish
+    const [[muni]] = await pool.query(`
+      SELECT m.*, d.name as current_recommended_dish_name, d.panel_rank as current_recommended_dish_rank
+      FROM municipalities m
+      LEFT JOIN dishes d ON m.recommended_dish_id = d.id
+      WHERE m.id = ?
+    `, [dish.municipality_id]);
+
+    // Get all dishes with panel_rank = 1 for this municipality
+    const [rankedDishes] = await pool.query(`
+      SELECT id, name, panel_rank
+      FROM dishes
+      WHERE municipality_id = ? AND panel_rank = 1
+      ORDER BY id
+    `, [dish.municipality_id]);
+
+    res.json({
+      dish: {
+        id: dish.id,
+        name: dish.name,
+        municipality_id: dish.municipality_id,
+        municipality_name: dish.municipality_name,
+        panel_rank: dish.panel_rank,
+      },
+      municipality: {
+        id: muni.id,
+        name: muni.name,
+        recommended_dish_id: muni.recommended_dish_id,
+        recommended_dish_name: muni.current_recommended_dish_name,
+        recommended_dish_rank: muni.current_recommended_dish_rank
+      },
+      otherRankedDishes: rankedDishes,
+      analysis: {
+        isRecommended: dish.id === muni.recommended_dish_id,
+        hasRank1: dish.panel_rank === 1,
+        totalRank1Dishes: rankedDishes.length,
+        needsSync: (dish.panel_rank === 1 && dish.id !== muni.recommended_dish_id) ||
+                  (dish.panel_rank !== 1 && dish.id === muni.recommended_dish_id)
+      }
+    });
+  } catch (e) {
+    console.error('[debug-dish] Error:', e);
+    res.status(500).json({ error: String(e?.message || e) });
   }
 });
 
@@ -565,21 +849,46 @@ app.get('/api/municipalities', async (_req, res) => {
     res.status(500).json({ error: 'Failed to fetch municipalities', detail: String(e?.message || e) });
   }
 });
-// Admin: Set recommended dish for a municipality
+// Admin: Set recommended dish for a municipality 
 app.patch('/admin/municipalities/:id/recommend-dish', async (req, res) => {
   try {
-    const municipalityId = Number(req.params.id);
+    const osmRelationId = Number(req.params.id);
     const { dish_id } = req.body;
-    if (!municipalityId || !dish_id) {
-      return res.status(400).json({ error: 'municipalityId and dish_id are required' });
+    if (!osmRelationId || !dish_id) {
+      return res.status(400).json({ error: 'OSM relation ID and dish_id are required' });
     }
+
+    // First get municipality by OSM ID
+    const [[municipality]] = await pool.query(
+      'SELECT id, name FROM municipalities WHERE osm_relation_id = ? LIMIT 1',
+      [osmRelationId]
+    );
+
+    if (!municipality) {
+      return res.status(404).json({ error: 'Municipality not found' }); 
+    }
+
     // Check if dish exists and belongs to this municipality
-    const [dishRows] = await pool.query('SELECT id FROM dishes WHERE id = ? AND municipality_id = ?', [dish_id, municipalityId]);
+    const [dishRows] = await pool.query(
+      'SELECT id FROM dishes WHERE id = ? AND municipality_id = ?',
+      [dish_id, municipality.id]
+    );
+
     if (dishRows.length === 0) {
       return res.status(404).json({ error: 'Dish not found in this municipality' });
     }
-    await pool.query('UPDATE municipalities SET recommended_dish_id = ? WHERE id = ?', [dish_id, municipalityId]);
-    res.json({ success: true, municipalityId, recommended_dish_id: dish_id });
+
+    await pool.query(
+      'UPDATE municipalities SET recommended_dish_id = ? WHERE id = ?',
+      [dish_id, municipality.id]
+    );
+
+    res.json({ 
+      success: true, 
+      municipalityId: municipality.id,
+      osmRelationId,
+      recommended_dish_id: dish_id 
+    });
   } catch (error) {
     console.error('Error setting recommended dish:', error);
     res.status(500).json({ error: 'Failed to set recommended dish', details: error.message });
@@ -588,21 +897,126 @@ app.patch('/admin/municipalities/:id/recommend-dish', async (req, res) => {
 // Public: Get recommended and top-rated dish for a municipality
 app.get('/api/municipalities/:id/dishes-summary', async (req, res) => {
   try {
-    const municipalityId = Number(req.params.id);
-    if (!municipalityId) {
-      return res.status(400).json({ error: 'municipalityId is required' });
+    console.log('\n[dishes-summary] Starting request for municipality dishes summary');
+    console.log('[dishes-summary] Request params:', req.params);
+    console.log('[dishes-summary] Raw ID:', req.params.id);
+
+    const osmRelationId = Number(req.params.id);
+    console.log('[dishes-summary] Parsed OSM relation ID:', osmRelationId);
+    
+    if (!osmRelationId || !Number.isFinite(osmRelationId)) {
+      console.log('[dishes-summary] Invalid OSM relation ID');
+      return res.status(400).json({ error: 'municipalityId is required and must be a number' });
     }
-    // Get recommended dish
-    const [muniRows] = await pool.query('SELECT recommended_dish_id FROM municipalities WHERE id = ?', [municipalityId]);
+
+    // First verify municipality exists with simpler query
+    // Try both internal ID and OSM relation ID
+    const [[municipalityCheck]] = await pool.query(
+      'SELECT id, name, osm_relation_id FROM municipalities WHERE id = ? OR osm_relation_id = ? LIMIT 1',
+      [osmRelationId, osmRelationId]
+    );
+
+    if (!municipalityCheck) {
+      console.log(`[dishes-summary] Municipality with ID/OSM ID ${osmRelationId} not found in simple check`);
+      return res.status(404).json({ error: 'Municipality not found' });
+    }
+
+    console.log(`[dishes-summary] Found municipality in simple check:`, municipalityCheck);
+    
+    // Now get full data with joins
+    const [muniRows] = await pool.query(`
+      SELECT m.*, 
+             d.id as dish_id, 
+             d.name as dish_name, 
+             d.panel_rank,
+             d.municipality_id as dish_municipality_id
+      FROM municipalities m
+      LEFT JOIN dishes d ON m.recommended_dish_id = d.id
+      WHERE m.id = ? OR m.osm_relation_id = ?`, 
+      [osmRelationId, osmRelationId]
+    );
+
+    console.log('[dishes-summary] Municipality full data:', JSON.stringify(muniRows, null, 2));
+    
+    // If no municipality found
+    if (!muniRows.length) {
+      console.log(`[dishes-summary] Municipality with OSM ID ${osmRelationId} not found`);
+      return res.status(404).json({ error: 'Municipality not found' });
+    }
+
+    const municipality = muniRows[0];
+    console.log(`[dishes-summary] Found municipality: ${municipality.name} (ID: ${municipality.id})`);
+    console.log(`[dishes-summary] Recommended dish ID: ${municipality.recommended_dish_id}`);
+    
     let recommendedDish = null;
+    
+    // First try to get the recommended dish
     if (muniRows.length && muniRows[0].recommended_dish_id) {
-      const [dishRows] = await pool.query('SELECT * FROM dishes WHERE id = ?', [muniRows[0].recommended_dish_id]);
-      if (dishRows.length) recommendedDish = dishRows[0];
+      console.log(`[dishes-summary] Municipality with OSM ID ${osmRelationId} (${muniRows[0].name}) has recommended_dish_id: ${muniRows[0].recommended_dish_id}`);
+      
+      const [dishRows] = await pool.query(`
+        SELECT d.*, m.name as municipality_name 
+        FROM dishes d 
+        JOIN municipalities m ON d.municipality_id = m.id 
+        WHERE d.id = ?
+      `, [muniRows[0].recommended_dish_id]);
+      
+      if (dishRows.length) {
+        recommendedDish = dishRows[0];
+        console.log(`[dishes-summary] Found recommended dish: ${recommendedDish.name} (panel_rank=${recommendedDish.panel_rank})`);
+      } else {
+        console.log(`[dishes-summary] Warning: recommended_dish_id ${muniRows[0].recommended_dish_id} not found in dishes table`);
+      }
     }
-    // Get top-rated dish (by avg_rating, then total_ratings, then name)
-    const [topRows] = await pool.query('SELECT * FROM dishes WHERE municipality_id = ? ORDER BY avg_rating DESC, total_ratings DESC, name ASC LIMIT 1', [municipalityId]);
-    const topRatedDish = topRows.length ? topRows[0] : null;
-    res.json({ recommendedDish, topRatedDish });
+    
+    // If no recommended dish found, look for a dish with panel_rank = 1
+    if (!recommendedDish) {
+      const [rankedDishes] = await pool.query(`
+        SELECT d.*, m.name as municipality_name 
+        FROM dishes d 
+        JOIN municipalities m ON d.municipality_id = m.id
+        WHERE m.id = ? AND d.panel_rank = 1 
+        ORDER BY d.avg_rating DESC, d.total_ratings DESC
+        LIMIT 1`, [municipality.id]);
+        
+      if (rankedDishes.length) {
+        recommendedDish = rankedDishes[0];
+        console.log(`[dishes-summary] Using highest rated panel_rank=1 dish as recommended: ${recommendedDish.name}`);
+      }
+    }
+
+    // Get top 3 rated dishes (by avg_rating, total_ratings, then name)
+    const [topDishes] = await pool.query(`
+      SELECT d.*, m.name as municipality_name,
+             ROW_NUMBER() OVER (ORDER BY d.avg_rating DESC, d.total_ratings DESC, d.name ASC) as rank
+      FROM dishes d 
+      JOIN municipalities m ON d.municipality_id = m.id
+      WHERE m.id = ?
+      ORDER BY 
+        COALESCE(d.panel_rank, 999), -- First priority to panel-ranked dishes
+        d.avg_rating DESC, -- Then by rating
+        d.total_ratings DESC, -- Then by number of ratings 
+        d.popularity DESC, -- Then by popularity/views
+        d.name ASC -- Finally alphabetically
+      LIMIT 3 -- Always get at least 3 dishes
+    `, [municipality.id]);
+    
+    const topRatedDishes = topDishes || [];
+    if (topRatedDishes.length) {
+      console.log(`[dishes-summary] Found ${topRatedDishes.length} top rated dishes`);
+      topRatedDishes.forEach((dish, i) => {
+        console.log(`[dishes-summary] #${i + 1}: ${dish.name} (rating=${dish.avg_rating}, total_ratings=${dish.total_ratings})`);
+      });
+    }
+
+    res.json({ 
+      recommendedDish, 
+      topRatedDishes,
+      summary: {
+        totalRecommended: recommendedDish ? 1 : 0,
+        totalTopRated: topRatedDishes.length
+      }
+    });
   } catch (error) {
     console.error('Error fetching dishes summary:', error);
     res.status(500).json({ error: 'Failed to fetch dishes summary', details: error.message });
@@ -616,8 +1030,35 @@ app.get('/api/dishes', async (req, res) => {
     
     // Handle filters
     if (municipalityId) {
-      where.push('d.municipality_id = ?');
-      p.push(Number(municipalityId));
+      const munId = Number(municipalityId);
+      if (!Number.isFinite(munId)) {
+        return res.status(400).json({ error: 'municipalityId must be a number' });
+      }
+      if (munId > 1000) { // It's an OSM relation ID
+        // First verify the municipality exists
+        const [[muni]] = await pool.query(
+          'SELECT id, name FROM municipalities WHERE osm_relation_id = ? LIMIT 1',
+          [munId]
+        );
+        if (!muni) {
+          console.log(`[API] Municipality with OSM ID ${munId} not found`);
+          return res.status(404).json({ error: 'Municipality not found' });
+        }
+        where.push('m.osm_relation_id = ?');
+        p.push(munId);
+      } else { // It's an internal municipality ID
+        // Verify internal ID exists
+        const [[muni]] = await pool.query(
+          'SELECT id, name FROM municipalities WHERE id = ? LIMIT 1',
+          [munId]
+        );
+        if (!muni) {
+          console.log(`[API] Municipality with internal ID ${munId} not found`);
+          return res.status(404).json({ error: 'Municipality not found' });
+        }
+        where.push('d.municipality_id = ?');
+        p.push(munId);
+      }
     }
     if (q) {
       where.push('(d.name LIKE ? OR d.description LIKE ?)');
@@ -735,7 +1176,12 @@ app.get('/api/restaurants', async (req, res) => {
     if (municipalityId) {
       const id = Number(municipalityId);
       if (!Number.isFinite(id)) return res.status(400).json({ error: 'municipalityId must be a number' });
-      where.push('r.municipality_id = ?'); params.push(id);
+      if (id > 1000) {
+        where.push('r.municipality_id IN (SELECT id FROM municipalities WHERE osm_relation_id = ?)');
+      } else {
+        where.push('r.municipality_id = ?');
+      }
+      params.push(id);
     }
     // Optional spatial filter: lat, lng, radiusKm
     const lat = req.query.lat != null ? Number(req.query.lat) : null;
@@ -751,6 +1197,7 @@ app.get('/api/restaurants', async (req, res) => {
     }
     if (featured != null && hasR('featured')) {
       where.push('r.featured = ?');
+      params.push(featured ? 1 : 0);
     }
 
     const selectCols = [
@@ -880,6 +1327,88 @@ app.get('/api/restaurants', async (req, res) => {
   } catch (e) {
     console.error('RESTAURANTS ERROR:', e);
     res.status(500).json({ error: 'Failed to fetch restaurants', detail: String(e?.message || e) });
+  }
+});
+
+// Admin: list dishes (admin UI expects this at /admin/dishes)
+app.get('/admin/dishes', authRequired, async (req, res) => {
+  try {
+    const { municipality_id, municipalityId, q, limit = 500, category, category_id, sort = 'ranking' } = req.query;
+    const muni = municipality_id ?? municipalityId;
+    const cat = category ?? category_id;
+
+    const where = [];
+    const p = [];
+    if (muni) { where.push('d.municipality_id = ?'); p.push(Number(muni)); }
+    if (q) { where.push('(d.name LIKE ? OR d.description LIKE ?)'); p.push(`%${String(q)}%`, `%${String(q)}%`); }
+    if (cat) { where.push('d.category = ?'); p.push(String(cat)); }
+
+    const sortKey = String(sort || 'ranking').toLowerCase();
+    let orderClause = 'COALESCE(d.is_signature, 0) DESC, COALESCE(d.featured, 0) DESC, COALESCE(NULLIF(d.panel_rank,0),999), COALESCE(d.avg_rating,0) DESC, COALESCE(d.total_ratings,0) DESC, COALESCE(d.popularity,0) DESC, d.name ASC';
+    if (sortKey === 'rating') orderClause = 'COALESCE(d.avg_rating, 0) DESC, COALESCE(d.total_ratings, 0) DESC, d.name ASC';
+    if (sortKey === 'popularity') orderClause = 'COALESCE(d.popularity, 0) DESC, d.name ASC';
+    if (sortKey === 'name') orderClause = 'd.name ASC';
+
+    const sql = `
+      SELECT d.id, d.municipality_id, d.name, d.slug, d.description, d.image_url, d.category,
+             COALESCE(d.is_signature,0) as is_signature, d.panel_rank, COALESCE(d.featured,0) as featured, d.featured_rank,
+             COALESCE(d.popularity,0) as popularity, COALESCE(d.rating,0) as rating, COALESCE(d.avg_rating,0) as avg_rating, COALESCE(d.total_ratings,0) as total_ratings,
+             d.flavor_profile, d.ingredients, m.name as municipality_name
+      FROM dishes d
+      LEFT JOIN municipalities m ON d.municipality_id = m.id
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY ${orderClause}
+      LIMIT ${Number(limit) || 500}
+    `;
+
+    const [rows] = await pool.query(sql, p);
+    const formatted = rows.map(r => ({
+      ...r,
+      is_signature: Boolean(r.is_signature),
+      featured: Boolean(r.featured),
+      flavor_profile: r.flavor_profile ? JSON.parse(r.flavor_profile) : [],
+      ingredients: r.ingredients ? JSON.parse(r.ingredients) : []
+    }));
+    res.json(formatted);
+  } catch (e) {
+    console.error('ADMIN /admin/dishes error:', e);
+    res.status(500).json({ error: 'Failed to fetch admin dishes', detail: String(e?.message || e) });
+  }
+});
+
+// Admin: list restaurants (admin UI expects this at /admin/restaurants)
+app.get('/admin/restaurants', authRequired, async (req, res) => {
+  try {
+    const { municipality_id, municipalityId, q, kind, limit = 1000 } = req.query;
+    const muni = municipality_id ?? municipalityId;
+
+    const where = [];
+    const params = [];
+    if (muni) { where.push('r.municipality_id = ?'); params.push(Number(muni)); }
+    if (kind) { where.push('r.kind = ?'); params.push(String(kind)); }
+    if (q) { where.push('(r.name LIKE ? OR r.description LIKE ?)'); params.push(`%${String(q)}%`, `%${String(q)}%`); }
+
+    const selectCols = [
+      'r.id', 'r.name', 'r.slug', 'r.kind', 'r.description', 'r.address', 'r.phone', 'r.website',
+      'r.facebook', 'r.instagram', 'r.opening_hours', 'r.price_range', "JSON_EXTRACT(r.cuisine_types, '$') AS cuisine_types",
+      'r.rating', 'r.lat', 'r.lng', 'r.avg_rating', 'r.total_ratings'
+    ];
+    if (hasR('image_url')) selectCols.push('r.image_url');
+    if (hasR('featured')) selectCols.push('r.featured');
+    if (hasR('featured_rank')) selectCols.push('r.featured_rank');
+
+    const sql = `SELECT ${selectCols.join(', ')} FROM restaurants r ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY r.avg_rating DESC, r.total_ratings DESC, r.name ASC LIMIT ${Number(limit) || 1000}`;
+    const [rows] = await pool.query(sql, params);
+
+    // Parse cuisine_types JSON if present
+    const formatted = rows.map(r => ({
+      ...r,
+      cuisine_types: r.cuisine_types ? JSON.parse(r.cuisine_types) : [],
+    }));
+    res.json(formatted);
+  } catch (e) {
+    console.error('ADMIN /admin/restaurants error:', e);
+    res.status(500).json({ error: 'Failed to fetch admin restaurants', detail: String(e?.message || e) });
   }
 });
 
@@ -1280,6 +1809,8 @@ app.post('/admin/dish-restaurants/unlink', async (req, res) => {
 app.patch('/admin/curate/dishes/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    console.log(`[curate-dish] Updating dish ${id} with:`, req.body);
+
     const { is_signature, panel_rank, featured, featured_rank } = req.body || {};
     const up = {};
     
@@ -1297,7 +1828,62 @@ app.patch('/admin/curate/dishes/:id', async (req, res) => {
     const vals = Object.keys(up).map(k => up[k]);
     if (!sets.length) return res.json({ ok: true });
     
+    // Get the dish's current data first
+    const [[currentDish]] = await pool.query('SELECT name, municipality_id, panel_rank FROM dishes WHERE id = ? LIMIT 1', [id]);
+    console.log(`[curate-dish] Current dish state:`, currentDish);
+
+    // Update the dish
     await pool.query(`UPDATE dishes SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
+    console.log(`[curate-dish] Updated dish ${id} - ${currentDish.name}`);
+    
+    // If panel_rank was part of the update, reflect "panel_rank == 1" as the municipality's recommended dish
+    try {
+      if (Object.prototype.hasOwnProperty.call(up, 'panel_rank')) {
+        const newRank = up.panel_rank;
+        const muniId = currentDish.municipality_id;
+        console.log(`[curate-dish] Panel rank update for dish ${id} - old=${currentDish.panel_rank}, new=${newRank}`);
+
+        if (muniId) {
+          const [[muni]] = await pool.query('SELECT name, recommended_dish_id FROM municipalities WHERE id = ? LIMIT 1', [muniId]);
+          console.log(`[curate-dish] Municipality ${muniId} (${muni?.name}) current recommended_dish_id: ${muni?.recommended_dish_id}`);
+
+          if (newRank == 1) {
+            // set as recommended dish
+            await pool.query('UPDATE municipalities SET recommended_dish_id = ? WHERE id = ?', [id, muniId]);
+            console.log(`[curate-dish] Set municipality ${muniId} (${muni?.name}) recommended_dish_id -> ${id}`);
+
+            // Notify clients to refresh
+            try {
+              req.app.emit('dish-curation-updated', { municipalityId: muniId });
+            } catch (e) { console.warn('Failed to emit update event:', e); }
+          } else {
+            // if municipality currently recommends this dish, clear it
+            if (muni && muni.recommended_dish_id === id) {
+              await pool.query('UPDATE municipalities SET recommended_dish_id = NULL WHERE id = ?', [muniId]);
+              console.log(`[curate-dish] Cleared recommended_dish_id for municipality ${muniId} (${muni.name}) because panel_rank changed for dish ${id}`);
+              
+              // Check if another dish should become recommended (has panel_rank = 1)
+              const [[newRecommended]] = await pool.query(
+                'SELECT id, name FROM dishes WHERE municipality_id = ? AND panel_rank = 1 AND id != ? LIMIT 1',
+                [muniId, id]
+              );
+              if (newRecommended) {
+                console.log(`[curate-dish] Found new recommended dish for ${muniId}: ${newRecommended.name} (${newRecommended.id})`);
+                await pool.query('UPDATE municipalities SET recommended_dish_id = ? WHERE id = ?', [newRecommended.id, muniId]);
+              }
+
+              // Notify clients to refresh
+              try {
+                req.app.emit('dish-curation-updated', { municipalityId: muniId });
+              } catch (e) { console.warn('Failed to emit update event:', e); }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to sync panel_rank to municipalities.recommended_dish_id:', e && e.message ? e.message : e);
+    }
+
     res.json({ ok: true });
   } catch (error) {
     console.error('Error updating dish curation:', error);
@@ -1350,6 +1936,32 @@ app.patch('/admin/curation/dishes/:id', async (req, res) => {
     if (!sets.length) return res.json({ ok: true });
     
     await pool.query(`UPDATE dishes SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
+    // If panel_rank was part of the update, reflect "panel_rank == 1" as the municipality's recommended dish
+    try {
+      if (Object.prototype.hasOwnProperty.call(up, 'panel_rank')) {
+        const newRank = up.panel_rank;
+        // fetch the dish's municipality
+        const [[dishRow]] = await pool.query('SELECT municipality_id FROM dishes WHERE id = ? LIMIT 1', [id]);
+        const muniId = dishRow ? dishRow.municipality_id : null;
+        if (muniId) {
+          if (newRank == 1) {
+            // set as recommended dish
+            await pool.query('UPDATE municipalities SET recommended_dish_id = ? WHERE id = ?', [id, muniId]);
+            console.log(`Set municipality ${muniId} recommended_dish_id -> ${id}`);
+          } else {
+            // if municipality currently recommends this dish, clear it
+            const [[mrow]] = await pool.query('SELECT recommended_dish_id FROM municipalities WHERE id = ? LIMIT 1', [muniId]);
+            if (mrow && mrow.recommended_dish_id === id) {
+              await pool.query('UPDATE municipalities SET recommended_dish_id = NULL WHERE id = ?', [muniId]);
+              console.log(`Cleared recommended_dish_id for municipality ${muniId} because panel_rank changed for dish ${id}`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to sync panel_rank to municipalities.recommended_dish_id:', e && e.message ? e.message : e);
+    }
+
     res.json({ ok: true });
   } catch (error) {
     console.error('Error updating dish curation:', error);
@@ -2628,9 +3240,6 @@ app.get('/admin/test-unlinking', async (req, res) => {
     });
   }
 });
-
-const PORT = process.env.PORT || 3002;
-app.listen(PORT, () => console.log(`🚀 Unified API running at http://localhost:${PORT}`));
 
 import municipalitiesRouter from './routes/municipalities.js';
 

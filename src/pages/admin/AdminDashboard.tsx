@@ -15,9 +15,11 @@ import {
   Filter
 } from "lucide-react";
 import { Card, Toolbar, Button, Input, KPI, Badge, ScrollArea } from "./ui";
+
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../../hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+import RecommendationsPage from "./RecommendationsPage";
 import {
   listMunicipalities, listDishes, listRestaurants,
   createDish, updateDish, deleteDish,
@@ -121,9 +123,10 @@ function Field({ label, hint, children, error, className }: { label: string; hin
 }
 
 /* ======================================================
-   Analytics (unchanged)
+   Analytics
    ====================================================== */
 function AnalyticsTab() {
+  const navigate = useNavigate();
   const summaryQ = useQuery({ queryKey: ["analytics:summary"], queryFn: getAnalyticsSummary, staleTime: 120_000 });
   const perMuniQ = useQuery({ queryKey: ["analytics:per-muni"], queryFn: getPerMunicipalityCounts, staleTime: 120_000 });
   const linksQ = useQuery({ queryKey: ["analytics:links"], queryFn: getLinkStats, staleTime: 120_000 });
@@ -287,6 +290,9 @@ function AnalyticsTab() {
                 {stacked ? "Stacked View" : "Normal View"}
               </Button>
             )}
+        <div className="ml-2">
+          <Button size="sm" variant="primary" onClick={() => navigate('/admin/recommendations')}>Manage Recommendations</Button>
+        </div>
           </div>
         }
       >
@@ -2099,9 +2105,16 @@ const unlinkSingleMutation = useMutation({
 
   const patchDishM_local = useMutation({
     mutationFn: ({ id, payload }: { id: number; payload: any }) => setDishCuration(id, payload),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["dishes"] });
       qc.invalidateQueries({ queryKey: ["dishes:for-restaurant", featuredRestId] });
+      try {
+        // Notify any open municipality cards that curation changed so they can refetch
+        const evt = new CustomEvent('dish-curation-updated', { detail: { dishId: vars?.id } });
+        window.dispatchEvent(evt);
+      } catch (e) {
+        // ignore in non-browser contexts
+      }
     },
   });
 
@@ -3314,6 +3327,7 @@ const navItems = [
   { id: "dishes", label: "Dishes", icon: UtensilsCrossed },
   { id: "restaurants", label: "Restaurants", icon: Store },
   { id: "curation", label: "Curation", icon: Star },
+  { id: "recommendations", label: "Recommendations", icon: Settings },
   { id: "users", label: "Users", icon: Users },
   { id: "municipalities", label: "Municipalities", icon: MapPin },
   { id: "media", label: "Media Library", icon: ImageIcon },
@@ -3350,12 +3364,15 @@ const useViewContext = () => {
 };
 
 export default function AdminDashboard() {
+  const location = useLocation();
+  const showRecommendations = location.pathname === '/admin/recommendations';
   const [tab, setTab] = useState<TabId>("analytics");
   const [scrollPositions, setScrollPositions] = useState<Record<TabId, number>>({
     analytics: 0,
     dishes: 0,
     restaurants: 0,
     curation: 0,
+    recommendations: 0,
     users: 0,
     municipalities: 0,
     media: 0,
@@ -3453,29 +3470,33 @@ export default function AdminDashboard() {
             }
           }}>
             <AnimatePresence mode="wait">
-              <motion.div
-                key={tab}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-6"
-              >
-                {tab === "analytics" && <AnalyticsTab />}
-                {tab === "dishes" && <DishesTab />}
-                {tab === "restaurants" && <RestaurantsTab />}
-                {tab === "curation" && <CurationTab />}
-                {/* Additional tabs will be implemented here:
-                {tab === "municipalities" && <MunicipalitiesTab />}
-                {tab === "users" && <UsersTab />}
-                {tab === "media" && <MediaTab />}
-                {tab === "settings" && <SettingsTab />}
-                */}
-              </motion.div>
+              {showRecommendations ? (
+                <RecommendationsPage />
+              ) : (
+                <motion.div
+                  key={tab}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  {tab === "analytics" && <AnalyticsTab />}
+                  {tab === "dishes" && <DishesTab />}
+                  {tab === "restaurants" && <RestaurantsTab />}
+                  {tab === "curation" && <CurationTab />}
+                  {/* Additional tabs will be implemented here:
+                  {tab === "municipalities" && <MunicipalitiesTab />}
+                  {tab === "users" && <UsersTab />}
+                  {tab === "media" && <MediaTab />}
+                  {tab === "settings" && <SettingsTab />}
+                  */}
+                </motion.div>
+              )}
             </AnimatePresence>
           </ViewContext.Provider>
         </div>
       </main>
     </div>
   );
-}
+    }

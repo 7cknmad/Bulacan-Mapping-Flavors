@@ -34,7 +34,16 @@ function DishGrid({ dishes, error, placeholder, onHighlightPlace }: {
               <div className="absolute bottom-0 left-0 right-0 p-4">
                 <div className="text-white font-bold text-base truncate drop-shadow-sm mb-1">{dish.name}</div>
                 {dish.description && <div className="text-white/85 text-xs line-clamp-1 mb-1">{dish.description}</div>}
-                {/* No ratings or scores in card body */}
+                {/* Show rating if available */}
+                <div className="flex items-center gap-2 text-white/90">
+                  {dish.avg_rating !== null && dish.avg_rating !== undefined && (
+                    <span className="flex items-center gap-1">
+                      <Star size={14} className="text-yellow-300" />
+                      {Number(dish.avg_rating).toFixed(1)}
+                      {dish.total_ratings ? ` (${dish.total_ratings})` : ''}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </Link>
@@ -89,20 +98,31 @@ interface MunicipalityCardProps {
   onHighlightPlace?: (place: { type: 'dish' | 'restaurant'; id: string | number; coordinates?: [number, number] } | null) => void;
 }
 export default function MunicipalityCard({ municipality, onClose, onHighlightPlace }: MunicipalityCardProps) {
-  // New state for recommended/top dish and error
+  // State for recommended dish, top rated dishes and error
   const [recommendedDish, setRecommendedDish] = useState<Dish | null>(null);
-  const [topRatedDish, setTopRatedDish] = useState<Dish | null>(null);
+  const [topRatedDishes, setTopRatedDishes] = useState<Dish[] | null>(null);
   const [dishSummaryErr, setDishSummaryErr] = useState<string | null>(null);
 
-const API = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:3002";
+// API constant should be empty to use Vite's proxy
+const API = '';
+console.log('[MunicipalityCard] Using API base URL:', API || '(using proxy)');
 const safeOrigin = typeof window !== "undefined" ? window.location.origin : "";
 
 function cn(...xs: Array<string | false | undefined>) { return xs.filter(Boolean).join(" "); }
 async function getJSON<T>(url: string): Promise<T> {
+  console.log('[MunicipalityCard] Making request to:', url);
   const res = await fetch(url);
   const txt = await res.text();
+  console.log('[MunicipalityCard] Raw response:', txt);
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
-  return JSON.parse(txt) as T;
+  try {
+    const data = JSON.parse(txt) as T;
+    console.log('[MunicipalityCard] Parsed response:', data);
+    return data;
+  } catch (e) {
+    console.error('[MunicipalityCard] Failed to parse JSON:', e);
+    throw e;
+  }
 }
 
 const panelTransition: any = { type: "spring", stiffness: 260, damping: 26 };
@@ -155,10 +175,15 @@ function sortAndSlice<T extends Dish | Restaurant>(
       const bFeatured = Number(b.signature ?? b.featured ?? 0);
       if (bFeatured !== aFeatured) return bFeatured - aFeatured;
       
-      // Tertiary sort: popularity/rating
-      const aValue = forDish ? (a.popularity ?? 0) : (a.rating ?? 0);
-      const bValue = forDish ? (b.popularity ?? 0) : (b.rating ?? 0);
-      if (bValue !== aValue) return bValue - aValue;
+      // Sort by actual ratings first
+      const aRating = Number(a.avg_rating ?? a.rating ?? 0);
+      const bRating = Number(b.avg_rating ?? b.rating ?? 0);
+      if (bRating !== aRating) return bRating - aRating;
+      
+      // Then by number of ratings
+      const aTotalRatings = Number(a.total_ratings ?? 0);
+      const bTotalRatings = Number(b.total_ratings ?? 0);
+      if (bTotalRatings !== aTotalRatings) return bTotalRatings - aTotalRatings;
 
       // Final sort: average rating as tiebreaker
       return Number(b.avg_rating ?? 0) - Number(a.avg_rating ?? 0);
@@ -174,9 +199,9 @@ function sortAndSlice<T extends Dish | Restaurant>(
       setDelicsErr(null); setDelics(null);
       try {
         // Always use municipalityId for delicacies
-        const primary = `${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy&signature=1&limit=3`;
+        const primary = `${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy&sort=rating&limit=3`;
         const data = await getJSON<Dish[]>(primary).catch(async () => {
-          const fallback = await getJSON<Dish[]>(`${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy`);
+          const fallback = await getJSON<Dish[]>(`${API}/api/dishes?municipalityId=${municipality.id}&category=delicacy&sort=rating`);
           return sortAndSlice(fallback, { forDish: true }, 3);
         });
         if (!cancel) setDelics(sortAndSlice(data, { forDish: true }, 3));
@@ -217,6 +242,65 @@ function sortAndSlice<T extends Dish | Restaurant>(
     })();
     return () => { cancel = true; };
   }, [municipality?.id]);
+
+  // Fetch recommended and top-rated dish summary for this municipality
+  useEffect(() => {
+    let cancel = false;
+    let intervalId: any = null;
+
+    const fetchSummary = async () => {
+      try {
+        setDishSummaryErr(null);
+        console.log('[MunicipalityCard] Municipality data:', {
+          id: municipality.id,
+          name: municipality.name,
+          slug: municipality.slug
+        });
+        const url = `${API}/api/municipalities/${municipality.id}/dishes-summary`;
+        console.log(`[MunicipalityCard] Fetching dishes summary from:`, url);
+        const data = await getJSON<any>(url);
+        console.log(`[MunicipalityCard] Got dishes summary:`, data);
+        if (cancel) return;
+        setRecommendedDish(data?.recommendedDish ?? null);
+        setTopRatedDishes(data?.topRatedDishes ?? null);
+        console.log(`[MunicipalityCard] Updated state:`, {
+          recommendedDish: data?.recommendedDish ?? null,
+          topRatedDishes: data?.topRatedDishes ?? null
+        });
+      } catch (e: any) {
+        console.error(`[MunicipalityCard] Error fetching dishes summary:`, e);
+        if (!cancel) setDishSummaryErr(String(e?.message || e));
+      }
+    };
+
+    // initial load
+    fetchSummary();
+
+    // poll every 15s while the panel is open
+    try {
+      intervalId = window.setInterval(() => {
+        fetchSummary();
+      }, 15000);
+    } catch (e) {
+      // not critical if setInterval unavailable
+    }
+
+    // listen for admin-side updates and trigger immediate refetch
+    const cb = (ev: any) => {
+      try {
+        // If event contains municipalityId, only refetch for that municipality
+        const muniId = ev?.detail?.municipalityId ?? null;
+        if (muniId && Number(muniId) !== Number(municipality.id)) return;
+        // otherwise refetch
+        fetchSummary();
+      } catch (e) {
+        /* noop */
+      }
+    };
+    try { window.addEventListener('dish-curation-updated', cb); } catch (e) { /* noop */ }
+
+    return () => { cancel = true; if (intervalId) clearInterval(intervalId); try { window.removeEventListener('dish-curation-updated', cb); } catch (e) { /* noop */ } };
+  }, [municipality.id]);
 
   const desc = municipality.description ?? "";
   const shortDesc = useMemo(() => (desc.length > 220 ? `${desc.slice(0, 220)}…` : desc), [desc]);
@@ -435,23 +519,23 @@ function sortAndSlice<T extends Dish | Restaurant>(
                         </div>
                       )}
                     </div>
-                    {/* Top Rated Dish column */}
+                    {/* Top Rated Dishes column */}
                     <div>
-                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Rated Dish</h3>
+                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Rated Dishes</h3>
                       {dishSummaryErr ? (
                         <div className="p-4 rounded-lg bg-red-50 border border-red-200">
                           <div className="text-sm text-red-600">{dishSummaryErr}</div>
                         </div>
-                      ) : topRatedDish ? (
+                      ) : topRatedDishes && topRatedDishes.length > 0 ? (
                         <DishGrid 
-                          dishes={[topRatedDish]} 
+                          dishes={topRatedDishes} 
                           error={null} 
                           placeholder="images/placeholders/dish.jpg" 
                           onHighlightPlace={onHighlightPlace} 
                         />
                       ) : (
                         <div className="p-4 rounded-lg bg-neutral-50 border border-neutral-200">
-                          <div className="text-sm text-neutral-600">No top rated dish available yet.</div>
+                          <div className="text-sm text-neutral-600">No top rated dishes available yet.</div>
                         </div>
                       )}
                     </div>
