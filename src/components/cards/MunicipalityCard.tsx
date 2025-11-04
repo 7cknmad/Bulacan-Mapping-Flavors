@@ -109,10 +109,9 @@ export default function MunicipalityCard({ municipality, onClose, onHighlightPla
   const [topRatedDishes, setTopRatedDishes] = useState<Dish[] | null>(null);
   const [dishSummaryErr, setDishSummaryErr] = useState<string | null>(null);
 
-// API constant should be empty to use Vite's proxy
-const API = '';
+// API constant should be empty to use Vite's proxy in development
+const API = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
 console.log('[MunicipalityCard] Using API base URL:', API || '(using proxy)');
-const safeOrigin = typeof window !== "undefined" ? window.location.origin : "";
 
 function cn(...xs: Array<string | false | undefined>) { return xs.filter(Boolean).join(" "); }
 async function getJSON<T>(url: string): Promise<T> {
@@ -373,17 +372,15 @@ function sortAndSlice<T extends Dish | Restaurant>(
               
               {/* Action buttons */}
               <div className="flex items-center gap-3">
-                {safeOrigin && (
-                  <motion.a
+                <motion.a
                     initial={{ y: -10, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.3 }}
-                    href={`${safeOrigin}/map?municipality=${municipality.slug}`}
+                    href={`/map?municipality=${municipality.slug}`}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/90 hover:bg-white text-primary-700 shadow-lg backdrop-blur-md transition-all hover:scale-105"
                   >
                     <MapPin size={18} /> Share Location
                   </motion.a>
-                )}
                 <motion.button
                   initial={{ scale: 0.8, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}

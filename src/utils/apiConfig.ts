@@ -1,17 +1,16 @@
 // Get the base API URL based on environment
 const getBaseUrl = () => {
-  const env = (import.meta as any).env || {};
-  
-  // For GitHub Pages deployment, use the production API URL
-  if (typeof window !== 'undefined' && window.location.hostname.includes('github.io')) {
-    return 'https://existed-bonds-drain-worldcat.trycloudflare.com';
+  // In development, return empty string to use Vite's proxy
+  if (import.meta.env.DEV) {
+    return '';
   }
-  
-  // For development, use local or specified URL
+
+  // In production, use environment variables or fallback URL
+  const env = import.meta.env;
   return (
     env.VITE_ADMIN_API_URL ||  // prefer admin base in admin builds
     env.VITE_API_URL ||        // public base otherwise
-    "http://localhost:3002"    // fallback local development URL
+    ''  // empty string to use relative URLs
   ).replace(/\/+$/, "");
 };
 
