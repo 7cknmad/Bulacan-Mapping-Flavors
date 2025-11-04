@@ -3564,7 +3564,6 @@ app.get('/admin/test-unlinking', async (req, res) => {
   }
 });
 
-import municipalitiesRouter from './routes/municipalities.js';
 
 app.use('/api/municipalities', municipalitiesRouter);
 

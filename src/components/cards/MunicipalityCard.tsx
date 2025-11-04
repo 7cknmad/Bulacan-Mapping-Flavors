@@ -56,7 +56,8 @@ function DishGrid({ dishes, error, placeholder, onHighlightPlace }: {
 import { X as XIcon, MapPin, Utensils, ExternalLink, ChevronRight, Landmark, Star, Info } from "lucide-react";
 import RatingDisplay from "../../components/RatingDisplay";
 import { Link, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, MotionConfig, DOMMotionComponents } from "framer-motion";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { assetUrl } from "../../utils/assets";
 
 type Dish = {
@@ -314,26 +315,70 @@ function sortAndSlice<T extends Dish | Restaurant>(
   const desc = municipality.description ?? "";
   const shortDesc = useMemo(() => (desc.length > 220 ? `${desc.slice(0, 220)}…` : desc), [desc]);
 
+  // Track focus for keyboard navigation
+  const dialogRef = React.useRef<HTMLDialogElement>(null);
+  const closeButtonRef = React.useRef<HTMLButtonElement>(null);
+  
+  // Handle keyboard navigation
+  React.useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [onClose]);
+
+  // Focus trap
+  React.useEffect(() => {
+    const dialog = dialogRef.current;
+    const closeBtn = closeButtonRef.current;
+    
+    if (dialog && closeBtn) {
+      // Focus the close button when dialog opens
+      closeBtn.focus();
+
+      // Save previously focused element
+      const lastFocused = document.activeElement as HTMLElement;
+      
+      return () => {
+        // Restore focus when dialog closes
+        lastFocused?.focus();
+      };
+    }
+  }, []);
+
   // Overlay for focus effect
   return (
-    <>
-      {/* Overlay */}
-      <motion.div
-        className="fixed inset-0 z-[998] bg-black/20 backdrop-blur-lg transition-opacity"
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        aria-hidden="true"
-      />
-      {/* Main Panel */}
-      <motion.aside
-        role="dialog" aria-modal="false" aria-labelledby="municipality-title"
-        initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
-        transition={panelTransition}
-        className={cn(
-          "fixed inset-0 z-[999] flex items-center justify-center w-full"
-        )}
-        style={{ pointerEvents: 'auto' }}
-      >
-        <section className={cn(
+    <AnimatePresence mode="wait">
+      <MotionConfig reducedMotion="user">
+        <div className="fixed inset-0 z-[999] overflow-y-auto">
+          <div className="min-h-screen px-4 text-center">
+            {/* Overlay */}
+            <motion.div
+              className="fixed inset-0 bg-black/20 backdrop-blur-lg"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={onClose}
+              aria-hidden="true"
+            />
+            {/* Panel container for centering */}
+            <div className="inline-block w-full max-w-[96vw] my-8 text-left align-middle transition-all transform">
+              {/* Main Panel */}
+              <motion.dialog
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="municipality-title"
+                initial={{ scale: 0.96, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.96, opacity: 0 }}
+                transition={panelTransition}
+                className="relative z-[1000] bg-transparent border-0 p-0 m-0 w-full"
+              >
+                <section className={cn(
           "w-full max-w-[96vw] sm:max-w-[900px] md:max-w-[1100px] lg:max-w-[1300px] xl:max-w-[1500px]",
           "min-h-[72vh] max-h-[92vh] mx-2 md:mx-4",
           "bg-white shadow-2xl border border-neutral-200 rounded-2xl flex flex-col overflow-hidden"
@@ -388,10 +433,17 @@ function sortAndSlice<T extends Dish | Restaurant>(
                   initial={{ scale: 0.8, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ delay: 0.4 }}
+                  ref={closeButtonRef}
                   onClick={onClose}
-                  className="p-2 rounded-full bg-white/90 hover:bg-white text-neutral-800 shadow-lg backdrop-blur-md transition-all hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="p-2 rounded-full bg-white/90 hover:bg-white text-neutral-800 shadow-lg backdrop-blur-md transition-all hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
                   aria-label="Close panel"
                   title="Close"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onClose();
+                    }
+                  }}
                 >
                   <XIcon size={20} />
                 </motion.button>
@@ -507,45 +559,49 @@ function sortAndSlice<T extends Dish | Restaurant>(
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     {/* Recommended Dish column */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Recommended Dish And Delicacy</h3>
-                      {dishSummaryErr ? (
-                        <div className="p-4 rounded-lg bg-red-50 border border-red-200">
-                          <div className="text-sm text-red-600">{dishSummaryErr}</div>
-                        </div>
-                      ) : recommendedDish ? (
-                        <DishGrid 
-                          dishes={[recommendedDish]} 
-                          error={null} 
-                          placeholder="images/placeholders/dish.jpg" 
-                          onHighlightPlace={onHighlightPlace} 
-                        />
-                      ) : (
-                        <div className="p-4 rounded-lg bg-neutral-50 border border-neutral-200">
-                          <div className="text-sm text-neutral-600">No recommended dish available yet.</div>
-                        </div>
-                      )}
-                    </div>
+                    <ErrorBoundary>
+                      <div>
+                        <h3 className="text-lg font-semibold mb-4 text-primary-700">Recommended Dish And Delicacy</h3>
+                        {dishSummaryErr ? (
+                          <div className="p-4 rounded-lg bg-red-50 border border-red-200">
+                            <div className="text-sm text-red-600">{dishSummaryErr}</div>
+                          </div>
+                        ) : recommendedDish ? (
+                          <DishGrid 
+                            dishes={[recommendedDish]} 
+                            error={null} 
+                            placeholder="images/placeholders/dish.jpg" 
+                            onHighlightPlace={onHighlightPlace} 
+                          />
+                        ) : (
+                          <div className="p-4 rounded-lg bg-neutral-50 border border-neutral-200">
+                            <div className="text-sm text-neutral-600">No recommended dish available yet.</div>
+                          </div>
+                        )}
+                      </div>
+                    </ErrorBoundary>
                     {/* Top Rated Dishes column */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Rated Dishes And Delicacies</h3>
-                      {dishSummaryErr ? (
-                        <div className="p-4 rounded-lg bg-red-50 border border-red-200">
-                          <div className="text-sm text-red-600">{dishSummaryErr}</div>
-                        </div>
-                      ) : topRatedDishes && topRatedDishes.length > 0 ? (
-                        <DishGrid 
-                          dishes={topRatedDishes} 
-                          error={null} 
-                          placeholder="images/placeholders/dish.jpg" 
-                          onHighlightPlace={onHighlightPlace} 
-                        />
-                      ) : (
-                        <div className="p-4 rounded-lg bg-neutral-50 border border-neutral-200">
-                          <div className="text-sm text-neutral-600">No top rated dishes available yet.</div>
-                        </div>
-                      )}
-                    </div>
+                    <ErrorBoundary>
+                      <div>
+                        <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Rated Dishes And Delicacies</h3>
+                        {dishSummaryErr ? (
+                          <div className="p-4 rounded-lg bg-red-50 border border-red-200">
+                            <div className="text-sm text-red-600">{dishSummaryErr}</div>
+                          </div>
+                        ) : topRatedDishes && topRatedDishes.length > 0 ? (
+                          <DishGrid 
+                            dishes={topRatedDishes} 
+                            error={null} 
+                            placeholder="images/placeholders/dish.jpg" 
+                            onHighlightPlace={onHighlightPlace} 
+                          />
+                        ) : (
+                          <div className="p-4 rounded-lg bg-neutral-50 border border-neutral-200">
+                            <div className="text-sm text-neutral-600">No top rated dishes available yet.</div>
+                          </div>
+                        )}
+                      </div>
+                    </ErrorBoundary>
                   </div>
                   
                 </motion.div>
@@ -626,8 +682,12 @@ function sortAndSlice<T extends Dish | Restaurant>(
               )}
             </AnimatePresence>
           </main>
-        </section>
-      </motion.aside>
-    </>
+              </section>
+            </motion.dialog>
+          </div>
+        </div>
+      </div>
+    </MotionConfig>
+    </AnimatePresence>
   );
 }
