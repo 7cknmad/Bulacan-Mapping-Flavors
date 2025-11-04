@@ -5,8 +5,15 @@ import useRevealOnScroll from "../hooks/useRevealOnScroll";
 import LoginForm from "../components/LoginForm";
 import AuthPanel from "../components/AuthPanel";
 import { getAnalyticsSummary, getPerMunicipalityCounts, getLinkStats } from "../utils/adminApi";
+import { useAuth } from '../hooks/useAuth';
+import { WelcomeToast } from '../components/welcome/WelcomeToast';
+import { Confetti } from '../components/welcome/Confetti';
+import '../components/welcome/welcome-animations.css';
 
 export default function HomePage() {
+  const { user } = useAuth();
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [touchStart, setTouchStart] = useState(0);
   const [touchEnd, setTouchEnd] = useState(0);
@@ -92,6 +99,33 @@ export default function HomePage() {
 
     setTouchStart(0);
     setTouchEnd(0);
+  };
+
+  // Welcome experience logic
+  useEffect(() => {
+    if (user) {
+      // Check if we've shown the welcome message for this session
+      const hasShownWelcome = sessionStorage.getItem('hasShownWelcome');
+      if (!hasShownWelcome) {
+        setShowWelcome(true);
+        setShowConfetti(true);
+        sessionStorage.setItem('hasShownWelcome', 'true');
+        
+        // Auto-hide welcome toast after 5 seconds
+        const timer = setTimeout(() => {
+          setShowWelcome(false);
+        }, 5000);
+        
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [user]);
+
+  // Handle tour start
+  const handleStartTour = () => {
+    setShowWelcome(false);
+    // Implement tour logic here
+    // You can use a library like react-joyride for guided tours
   };
 
   // Keep homepage focused: brief intro + primary CTA to the interactive map
@@ -317,6 +351,14 @@ export default function HomePage() {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
+      {showWelcome && user && (
+        <WelcomeToast
+          user={user}
+          isNewUser={user.isNewUser}
+          onStartTour={handleStartTour}
+        />
+      )}
+      {showConfetti && <Confetti duration={3000} />}
       <div 
         className="fixed top-0 left-0 w-full h-1 bg-neutral-200 z-50"
         style={{ transform: 'translateZ(0)' }}

@@ -10,6 +10,7 @@ import dishesRouter from './routes/dishes.js';
 import adminRouter from './routes/admin.js';
 import restaurantsRouter from './routes/restaurants.js';
 import topRatedRouter from './routes/top-rated.js';
+import initRestaurantViewsRoutes from './routes/restaurant-views.js';
 import { adminAuthRequired } from './middleware/adminAuth.js';
 
 const app = express();
@@ -45,15 +46,7 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 app.set('trust proxy', 1);
-app.use('/api', adminRouter);
-// Mount and protect all admin routes under /admin
-app.use('/admin', adminAuthRequired);
-// Mount restaurants router
-app.use(restaurantsRouter);
-// Mount top-rated router
-app.use(topRatedRouter);
-
-// Add diagnostic routes directly
+// Setup will be done after pool is initialized in async IIFE// Add diagnostic routes directly
 app.get('/admin/dish-recommendation-check', async (req, res) => {
   try {
     // Get dishes with panel_rank = 1 and their municipality info
@@ -346,7 +339,11 @@ const cfg = {
 // Startup marker to help debug which version of this file is running.
 console.log('🛠️ api/index.js loaded - build marker v1');
 
-let pool;
+// Initialize MySQL connection pool
+const pool = mysql.createPool(cfg);
+console.log('🔄 Created MySQL connection pool');
+
+// Initialize schema tracking
 const schema = { dishes: new Set(), restaurants: new Set() };
 const hasD = c => schema.dishes.has(c);
 const hasR = c => schema.restaurants.has(c);
@@ -366,7 +363,37 @@ async function loadSchemaInfo() {
 }
 
 (async () => {
-  pool = mysql.createPool(cfg);
+  try {
+    // Verify database connection first
+    const [[{ db }]] = await pool.query('SELECT DATABASE() AS db');
+    console.log('✅ Connected to DB:', db);
+
+    // Load schema info
+    await loadSchemaInfo();
+
+    // Initialize routes that require database access
+    app.use('/api', adminRouter);
+    app.use('/admin', adminAuthRequired);
+    app.use(restaurantsRouter);
+    app.use(topRatedRouter);
+    
+    // Initialize restaurant views routes with error handling
+    const restaurantViewsRouter = initRestaurantViewsRoutes(pool);
+    app.use((req, res, next) => {
+      if (req.path.includes('/municipalities') && req.path.includes('/top-restaurants')) {
+        console.log('🔄 Processing top restaurants request:', req.method, req.path);
+      }
+      next();
+    });
+    app.use(restaurantViewsRouter);
+
+    console.log('✅ All routes initialized');
+  } catch (error) {
+    console.error('❌ Error during initialization:', error);
+    process.exit(1);
+  }
+
+  // Continue with database connection verification
   const [[{ db }]] = await pool.query('SELECT DATABASE() AS db');
   console.log('✅ Connected to DB:', db);
   
@@ -415,11 +442,6 @@ async function loadSchemaInfo() {
   app.use(dishesRouter);
   console.log('✅ Dishes routes initialized');
 
-  // Start the server
-  const port = process.env.PORT || 3002;
-  const server = app.listen(port, () => {
-    console.log(`✨ Server running on http://localhost:${port}`);
-  });
 
   // Handle server errors
   server.on('error', (error) => {
@@ -3545,3 +3567,7 @@ import municipalitiesRouter from './routes/municipalities.js';
 app.use('/api/municipalities', municipalitiesRouter);
 
 
+  const port = process.env.PORT || 3002;
+  const server = app.listen(port, () => {
+    console.log(`✨ Server running on http://localhost:${port}`);
+  });

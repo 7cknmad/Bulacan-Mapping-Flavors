@@ -1,10 +1,11 @@
 // src/components/cards/RestaurantCard.tsx
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { Star as StarIcon, MapPin as MapPinIcon } from "lucide-react";
+import { MapPin as MapPinIcon } from "lucide-react";
 import type { Restaurant } from "../../utils/api";
 import { assetUrl } from "../../utils/assets";
 import { useFavorites } from "../../hooks/useFavorites";
+import RatingDisplay from "../../components/RatingDisplay";
 import ConfirmModal from "../ConfirmModal";
 import { useAuth } from "../../hooks/useAuth";
 import { useToast } from "../ToastProvider";
@@ -86,9 +87,8 @@ const RestaurantCard: React.FC<{ restaurant: Restaurant; compact?: boolean }> = 
               />
               {!compact && (
                 <>
-                  <div className="absolute top-2 left-2 bg-white/90 px-2 py-1 rounded-md text-xs font-medium flex items-center">
-                    <StarIcon size={14} className="text-yellow-500 fill-yellow-500 mr-1" />
-                    {rating.toFixed(1)}
+                  <div className="absolute top-2 left-2 bg-white/90 px-2 py-1 rounded-md">
+                    <RatingDisplay rating={rating} size={14} className="text-neutral-900" />
                   </div>
                   <div className="absolute top-2 right-2 flex items-center gap-2">
                     <div className="bg-white/90 px-2 py-1 rounded-md text-xs font-medium">
@@ -119,7 +119,7 @@ const RestaurantCard: React.FC<{ restaurant: Restaurant; compact?: boolean }> = 
                 ) : null}
                 {compact && (
                   <>
-                    <span className="ml-2 text-xs text-neutral-500">{rating.toFixed(1)}</span>
+                    <RatingDisplay rating={rating} size={12} className="ml-2" />
                   </>
                 )}
               </div>

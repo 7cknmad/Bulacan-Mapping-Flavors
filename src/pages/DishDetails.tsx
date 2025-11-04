@@ -25,6 +25,7 @@ import {
 import RatingForm from "../components/RatingForm";
 import { useAuth } from "../hooks/useAuth";
 import StarRating from "../components/StarRating";
+import RatingDisplay from "../components/RatingDisplay";
 import ConfirmModal from "../components/ConfirmModal";
 import { updateReview, deleteReview } from "../utils/api";
 import { useToast } from "../components/ToastProvider";
@@ -239,10 +240,13 @@ export default function DishDetails() {
 
                   {/* Rating Badge (consistent, accurate) */}
                   <div className="flex items-center gap-2">
-                    <span className="px-3 py-1.5 bg-white/90 text-neutral-900 rounded-full flex items-center gap-1.5 font-medium">
-                      <StarIcon size={16} className="text-yellow-500 fill-yellow-500" />
-                      <span>{avgRating.toFixed(1)}</span>
-                      <span className="text-xs text-neutral-600 ml-1">({(reviewsQ.data?.length || dish.total_ratings || 0)})</span>
+                    <span className="px-3 py-1.5 bg-white/90 rounded-full">
+                      <RatingDisplay 
+                        rating={avgRating}
+                        totalRatings={reviewsQ.data?.length || dish.total_ratings || 0}
+                        size={16}
+                        className="text-neutral-900"
+                      />
                     </span>
                   </div>
                 </div>
@@ -393,33 +397,107 @@ export default function DishDetails() {
 
           {tab === "restaurants" && (
             <div>
-              <h2 className="mb-4">Where to Try {dish.name}</h2>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="flex items-center gap-2">
+                  <MapPinIcon size={20} className="text-primary-600" />
+                  Where to Try {dish.name}
+                </h2>
+                <Link 
+                  to="/restaurants"
+                  className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  View All Places →
+                </Link>
+              </div>
+              
               {placesQ.isLoading ? (
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div className="skeleton rounded h-28" />
-                  <div className="skeleton rounded h-28" />
-                  <div className="skeleton rounded h-28" />
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="bg-white rounded-xl border border-gray-200 overflow-hidden animate-pulse">
+                      <div className="h-48 bg-gray-200" />
+                      <div className="p-4">
+                        <div className="h-5 bg-gray-200 rounded w-3/4 mb-3" />
+                        <div className="h-4 bg-gray-200 rounded w-1/2 mb-2" />
+                        <div className="h-4 bg-gray-200 rounded w-full" />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : placesQ.error ? (
-                <div className="text-red-600">Failed to load places.</div>
+                <div className="text-center py-8 bg-red-50 border border-red-200 rounded-xl">
+                  <p className="text-red-600 font-medium mb-2">Unable to load places</p>
+                  <button
+                    onClick={() => placesQ.refetch()}
+                    className="text-sm text-red-600 hover:text-red-700 underline"
+                  >
+                    Try again
+                  </button>
+                </div>
               ) : (placesQ.data?.length ?? 0) === 0 ? (
-                <div className="text-neutral-500">No places linked yet.</div>
+                <div className="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
+                  <MapPinIcon size={32} className="mx-auto mb-3 text-gray-400" />
+                  <p className="text-gray-600 mb-2">No places are currently serving this dish</p>
+                  <p className="text-sm text-gray-500">Check back later for updates</p>
+                </div>
               ) : (
                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {placesQ.data!.map((r: Restaurant) => (
                     <Link
                       key={r.id}
                       to={`/restaurant/${encodeURIComponent(r.slug || String(r.id))}`}
-                      className="bg-white border rounded-xl overflow-hidden hover:shadow transition"
+                      className="group bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-lg transition-shadow"
                     >
-                      <div className="h-28 bg-neutral-100" />
-                      <div className="p-3">
-                        <div className="flex items-center justify-between">
-                          <div className="font-medium">{r.name}</div>
-                          <span className="text-xs px-2 py-1 rounded-full bg-neutral-100">{r.kind}</span>
+                      <div className="aspect-video relative bg-gray-100 overflow-hidden">
+                        <img
+                          src={r.image_url || "https://via.placeholder.com/400x300?text=Restaurant"}
+                          alt={r.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          onError={(e) => {
+                            const img = e.target as HTMLImageElement;
+                            img.src = "https://via.placeholder.com/400x300?text=Restaurant";
+                          }}
+                        />
+                        {r.price_range && (
+                          <div className="absolute top-3 right-3 px-2.5 py-1 bg-black/70 text-white text-sm font-medium rounded-full">
+                            {r.price_range}
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-4">
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <h3 className="font-medium text-gray-900 group-hover:text-primary-600 transition-colors">
+                            {r.name}
+                          </h3>
+                          <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded-full whitespace-nowrap">
+                            {r.kind || 'Restaurant'}
+                          </span>
                         </div>
-                        <div className="text-sm text-neutral-600 line-clamp-2">{r.address}</div>
-                        <div className="text-xs text-neutral-500 mt-1">{r.price_range} • ⭐ {Number(r.rating ?? 0).toFixed(1)}</div>
+                        
+                        <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                          <StarIcon size={16} className="text-yellow-400" />
+                          <span className="font-medium">{Number(r.rating ?? 0).toFixed(1)}</span>
+                          {r.total_ratings && (
+                            <span className="text-gray-400">({r.total_ratings} reviews)</span>
+                          )}
+                        </div>
+
+                        {r.address && (
+                          <div className="text-sm text-gray-600 line-clamp-2 mb-2">
+                            <MapPinIcon size={14} className="inline-block mr-1" />
+                            {r.address}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {r.cuisine_types?.slice(0, 3).map((cuisine: string, i: number) => (
+                            <span 
+                              key={i}
+                              className="px-2 py-0.5 bg-gray-50 text-gray-600 text-xs rounded-full"
+                            >
+                              {cuisine}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     </Link>
                   ))}
@@ -495,9 +573,7 @@ export default function DishDetails() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="flex items-center text-yellow-500">
-                          {[...Array(r.rating)].map((_, i) => <StarIcon key={i} size={14} className="fill-yellow-400" />)}
-                        </span>
+                        <RatingDisplay rating={r.rating} showCount={false} size={14} className="text-yellow-500" />
                         <span className="text-xs text-neutral-500">
                           {new Date(r.created_at).toLocaleDateString()}
                           {r.updated_at !== r.created_at && 

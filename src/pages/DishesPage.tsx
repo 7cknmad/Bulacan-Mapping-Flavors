@@ -279,51 +279,53 @@ export default function DishesPage() {
         animate={{ opacity: 1 }}
         transition={{ duration: 0.22 }}
       >
-      <div className="container mx-auto px-4">
+      <div className="container mx-auto px-4 max-w-7xl">
         {/* Header */}
-        <div className="mb-4 mt-6 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="mb-1">
+        <div className="mb-6 mt-6 flex flex-wrap items-end justify-between gap-4">
+          <div className="flex-1">
+            <h1 className="mb-2 text-2xl md:text-3xl font-bold text-gray-900">
               {muni ? `Dishes of ${muni.name}` : "Dishes of Bulacan"}
             </h1>
-            <p className="text-neutral-600">
+            <p className="text-neutral-600 text-base md:text-lg">
               Browse all <span className="font-medium">foods, delicacies & drinks</span>{" "}
               saved in {muni ? muni.name : "Bulacan"}. Click any card for details later.
             </p>
           </div>
-          <Link
-            to={muni ? `/map?municipality=${muni.slug}` : "/map"}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-neutral-50"
-            title="Back to Map"
-          >
-            ← Back to Map
-          </Link>
-          <Link
-            to={muni ? `/dishes/top?municipalityId=${muni.id}` : "/dishes/top"}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-neutral-50"
-            title="Top dishes"
-          >
-            ⭐ Top dishes
-          </Link>
+          <div className="flex gap-3">
+            <Link
+              to={muni ? `/map?municipality=${muni.slug}` : "/map"}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-gray-300 bg-white shadow-sm hover:bg-gray-50 transition-colors text-gray-700 font-medium"
+              title="Back to Map"
+            >
+              ← Back to Map
+            </Link>
+            <Link
+              to={muni ? `/dishes/top?municipalityId=${muni.id}` : "/dishes/top"}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-primary-500 bg-primary-500 text-white shadow-sm hover:bg-primary-600 transition-colors font-medium"
+              title="Top dishes"
+            >
+              ⭐ Top dishes
+            </Link>
+          </div>
         </div>
 
         {/* Controls Bar */}
-        <div className="bg-white border rounded-lg shadow-sm p-3 md:p-4 mb-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 md:p-5 mb-6">
           <div className="flex flex-col gap-4">
             {/* Top Controls */}
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-4">
               {/* Tabs */}
-              <div className="flex shrink-0 rounded-md overflow-hidden border">
+              <div className="flex shrink-0 rounded-lg overflow-hidden border border-gray-300 bg-gray-50">
                 {categoryTabs.map((t) => {
                   const active = cat === t.key;
                   return (
                     <button
                       key={t.key}
                       onClick={() => setCat(t.key)}
-                      className={`px-3 py-2 text-sm ${
+                      className={`px-4 py-2 text-sm font-medium transition-colors ${
                         active
-                          ? "bg-primary-600 text-white"
-                          : "bg-white hover:bg-neutral-50 text-neutral-700"
+                          ? "bg-primary-600 text-white shadow-sm"
+                          : "bg-white hover:bg-gray-50 text-gray-700"
                       }`}
                       aria-pressed={active}
                     >
@@ -334,34 +336,34 @@ export default function DishesPage() {
               </div>
 
               {/* Search with Advanced Options */}
-              <div className="flex-1 min-w-[220px] relative">
+              <div className="flex-1 min-w-[280px] relative">
                 <div className="relative">
                   <input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search dishes (name/description)…"
-                    className="w-full rounded-md border pl-3 pr-24 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    className="w-full rounded-lg border-gray-300 pl-4 pr-28 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-shadow shadow-sm hover:shadow-md"
                   />
                   <button
                     onClick={() => setIsFiltersOpen(true)}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 px-3 py-1 rounded bg-neutral-100 hover:bg-neutral-200 text-sm font-medium flex items-center gap-2 transition-colors"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 px-3.5 py-1.5 rounded-md bg-gray-100 hover:bg-gray-200 text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
                   >
-                    <FilterIcon size={14} />
+                    <FilterIcon size={14} className="text-gray-600" />
                     Filters
                     {(filters.dietary.length > 0 || filters.priceRange !== 'all' || filters.spicyLevel !== 'all') && (
-                      <span className="w-2 h-2 rounded-full bg-primary-500"></span>
+                      <span className="w-2 h-2 rounded-full bg-primary-500 animate-pulse"></span>
                     )}
                   </button>
                 </div>
               </div>
 
               {/* Sort */}
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-neutral-600">Sort</label>
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-600">Sort by</label>
                 <select
                   value={sort}
                   onChange={(e) => setSort(e.target.value as SortKey)}
-                  className="rounded-md border px-2 py-2 text-sm"
+                  className="rounded-lg border-gray-300 px-3 py-2 text-sm bg-white shadow-sm hover:shadow-md transition-shadow focus:border-primary-500 focus:ring-primary-500"
                 >
                   <option value="popularity">Popularity</option>
                   <option value="rating">Rating</option>
@@ -372,19 +374,23 @@ export default function DishesPage() {
               </div>
 
               {/* View toggle */}
-              <div className="flex items-center gap-1 rounded-md border overflow-hidden">
+              <div className="flex items-center gap-px rounded-lg border border-gray-300 overflow-hidden bg-gray-50">
                 <button
                   onClick={() => setView("grid")}
-                  className={`px-3 py-2 text-sm ${
-                    view === "grid" ? "bg-neutral-100" : "bg-white hover:bg-neutral-50"
+                  className={`px-4 py-2 text-sm font-medium transition-colors ${
+                    view === "grid" 
+                      ? "bg-white text-gray-900 shadow-sm" 
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                   }`}
                 >
                   Grid
                 </button>
                 <button
                   onClick={() => setView("list")}
-                  className={`px-3 py-2 text-sm ${
-                    view === "list" ? "bg-neutral-100" : "bg-white hover:bg-neutral-50"
+                  className={`px-4 py-2 text-sm font-medium transition-colors ${
+                    view === "list" 
+                      ? "bg-white text-gray-900 shadow-sm" 
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                   }`}
                 >
                   List
@@ -394,21 +400,21 @@ export default function DishesPage() {
 
             {/* Active Filters */}
             {(filters.dietary.length > 0 || filters.priceRange !== 'all' || filters.spicyLevel !== 'all') && (
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
-                <span className="text-sm text-neutral-600">Active Filters:</span>
+              <div className="flex flex-wrap items-center gap-3 pt-3 mt-1 border-t border-gray-200">
+                <span className="text-sm font-medium text-gray-600">Active Filters:</span>
                 {filters.priceRange !== 'all' && (
-                  <span className="px-2 py-1 rounded-full bg-primary-50 text-primary-700 text-sm flex items-center gap-1">
+                  <span className="px-3 py-1.5 rounded-full bg-primary-50 text-primary-700 text-sm font-medium flex items-center gap-2 shadow-sm">
                     {priceRangeOptions.find(o => o.key === filters.priceRange)?.label}
                     <button
                       onClick={() => setFilters(f => ({ ...f, priceRange: 'all' }))}
-                      className="ml-1 hover:text-primary-900"
+                      className="hover:bg-primary-100 rounded-full p-0.5 transition-colors"
                     >
                       ×
                     </button>
                   </span>
                 )}
                 {filters.dietary.map(diet => (
-                  <span key={diet} className="px-2 py-1 rounded-full bg-primary-50 text-primary-700 text-sm flex items-center gap-1">
+                  <span key={diet} className="px-3 py-1.5 rounded-full bg-primary-50 text-primary-700 text-sm font-medium flex items-center gap-2 shadow-sm">
                     {dietaryOptions.find(o => o.key === diet)?.icon}
                     {dietaryOptions.find(o => o.key === diet)?.label}
                     <button
@@ -416,19 +422,19 @@ export default function DishesPage() {
                         ...f,
                         dietary: f.dietary.filter(d => d !== diet)
                       }))}
-                      className="ml-1 hover:text-primary-900"
+                      className="hover:bg-primary-100 rounded-full p-0.5 transition-colors"
                     >
                       ×
                     </button>
                   </span>
                 ))}
                 {filters.spicyLevel !== 'all' && (
-                  <span className="px-2 py-1 rounded-full bg-primary-50 text-primary-700 text-sm flex items-center gap-1">
+                  <span className="px-3 py-1.5 rounded-full bg-primary-50 text-primary-700 text-sm font-medium flex items-center gap-2 shadow-sm">
                     {spicyLevelOptions.find(o => o.key === filters.spicyLevel)?.icon}
                     {spicyLevelOptions.find(o => o.key === filters.spicyLevel)?.label}
                     <button
                       onClick={() => setFilters(f => ({ ...f, spicyLevel: 'all' }))}
-                      className="ml-1 hover:text-primary-900"
+                      className="hover:bg-primary-100 rounded-full p-0.5 transition-colors"
                     >
                       ×
                     </button>
@@ -440,7 +446,7 @@ export default function DishesPage() {
                     dietary: [],
                     spicyLevel: 'all'
                   })}
-                  className="text-sm text-neutral-600 hover:text-neutral-900"
+                  className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors ml-2"
                 >
                   Clear All
                 </button>
@@ -450,35 +456,37 @@ export default function DishesPage() {
         </div>
 
         {/* Status */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm text-neutral-600">
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-sm font-medium text-gray-700">
             {dishesQ.isLoading
-              ? "Loading…"
+              ? "Loading dishes..."
               : dishesQ.error
               ? "Failed to load dishes."
-              : `${total} item${total === 1 ? "" : "s"} found`}
+              : `${total} dish${total === 1 ? "" : "es"} found`}
           </div>
           {muni && (
-            <div className="text-sm text-neutral-500">
-              Municipality ID: <span className="font-mono">{muni.id}</span>
+            <div className="text-sm text-gray-500">
+              Municipality ID: <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">{muni.id}</span>
             </div>
           )}
         </div>
 
         {/* Results */}
         {dishesQ.isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="skeleton rounded h-40" />
+              <div key={i} className="animate-pulse bg-white rounded-xl shadow-sm border border-gray-200 h-64" />
             ))}
           </div>
         ) : dishesQ.error ? (
-          <div className="p-6 bg-red-50 border border-red-200 rounded text-red-700">
-            {(dishesQ.error as Error).message || "Error loading dishes."}
+          <div className="p-8 bg-red-50 border border-red-200 rounded-xl text-red-700 text-center">
+            <p className="text-lg font-medium mb-2">Unable to Load Dishes</p>
+            <p className="text-red-600">{(dishesQ.error as Error).message || "Error loading dishes."}</p>
           </div>
         ) : total === 0 ? (
-          <div className="p-10 text-center text-neutral-500 bg-white border rounded-lg">
-            No dishes found{muni ? ` for ${muni.name}` : ""}.
+          <div className="p-12 text-center bg-white border border-gray-200 rounded-xl shadow-sm">
+            <p className="text-lg font-medium text-gray-900 mb-2">No Dishes Found</p>
+            <p className="text-gray-600">No dishes available{muni ? ` in ${muni.name}` : ""}. Try adjusting your filters.</p>
           </div>
         ) : view === "grid" ? (
           <motion.div
@@ -499,28 +507,31 @@ export default function DishesPage() {
             layout
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="divide-y rounded-lg bg-white border"
+            className="divide-y divide-gray-200 rounded-xl bg-white border border-gray-200 shadow-sm overflow-hidden"
           >
             {sorted.map((d) => (
               <motion.div key={d.id} layout>
                 <Link
                   to={`/dish/${d.id}`}
-                  className="flex items-center gap-4 p-3 hover:bg-neutral-50"
+                  className="flex items-center gap-5 p-4 hover:bg-gray-50 transition-colors group"
                 >
                   <img
                     src={d.image_url || "https://via.placeholder.com/96"}
                     alt={d.name}
-                    className="w-20 h-16 rounded object-cover bg-neutral-100"
+                    className="w-24 h-20 rounded-lg object-cover bg-gray-100 group-hover:shadow-md transition-shadow"
                     onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/96"))}
                   />
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{d.name}</div>
-                    <div className="text-xs text-neutral-500 truncate">
-                      {d.category ? d.category.toUpperCase() : ""} • ⭐{" "}
-                      {Number(d.rating ?? 0).toFixed(1)} • Pop {Number(d.popularity ?? 0)}
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-lg text-gray-900 truncate group-hover:text-primary-600 transition-colors">
+                      {d.name}
+                    </div>
+                    <div className="text-sm text-gray-600 truncate mt-0.5">
+                      {d.category ? d.category.toUpperCase() : ""} • 
+                      <span className="text-amber-500 font-medium"> ⭐ {Number(d.rating ?? 0).toFixed(1)}</span> • 
+                      <span className="text-primary-600"> {Number(d.popularity ?? 0)} views</span>
                     </div>
                     {d.description && (
-                      <div className="text-sm text-neutral-600 line-clamp-2">
+                      <div className="text-sm text-gray-600 line-clamp-2 mt-1">
                         {d.description}
                       </div>
                     )}

@@ -11,6 +11,7 @@ import { useRecentVisits } from '../hooks/useRecentVisits.ts';
 import { useToast } from '../components/ToastProvider';
 import RatingForm from '../components/RatingForm';
 import StarRating from '../components/StarRating';
+import RatingDisplay from '../components/RatingDisplay';
 import ConfirmModal from '../components/ConfirmModal';
 import EditReviewForm from '../components/EditReviewForm';
 import type { Dish, Restaurant, Review } from "../utils/api";
@@ -604,9 +605,13 @@ function RestaurantDetails() {
 
                   {/* Rating Badge (consistent, accurate) */}
                   <div className="flex items-center gap-2">
-                    <span className="px-3 py-1.5 bg-white/90 text-neutral-900 rounded-full flex items-center gap-1.5 font-medium">
-                      <StarIcon size={16} className="text-yellow-500 fill-yellow-500" />
-                      <span>{rating.toFixed(1)}</span>
+                    <span className="px-3 py-1.5 bg-white/90 rounded-full">
+                      <RatingDisplay 
+                        rating={rating}
+                        totalRatings={reviewsQ.data?.length}
+                        size={16}
+                        className="text-neutral-900"
+                      />
                     </span>
                   </div>
                 </div>
@@ -806,11 +811,7 @@ function RestaurantDetails() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="flex items-center text-yellow-500">
-                        {[...Array(myReview.rating)].map((_, i) => (
-                          <StarIcon key={i} size={14} className="fill-yellow-400" />
-                        ))}
-                      </div>
+                      <RatingDisplay rating={myReview.rating} showCount={false} size={14} className="text-yellow-500" />
                       <span className="text-sm text-neutral-500">
                         Posted on {new Date(myReview.created_at).toLocaleDateString()}
                         {myReview.updated_at !== myReview.created_at &&
@@ -893,9 +894,7 @@ function RestaurantDetails() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="flex items-center text-yellow-500">
-                        {[...Array(r.rating)].map((_, i) => <StarIcon key={i} size={14} className="fill-yellow-400" />)}
-                      </span>
+                      <RatingDisplay rating={r.rating} showCount={false} size={14} className="text-yellow-500" />
                       <span className="text-xs text-neutral-500">
                         {new Date(r.created_at).toLocaleDateString()}
                         {r.updated_at !== r.created_at && 

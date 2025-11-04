@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useNavigate } from 'react-router-dom';
-import { StarIcon, Heart } from "lucide-react";
+import { Heart } from "lucide-react";
+import RatingDisplay from "../../components/RatingDisplay";
 import { assetUrl } from "../../utils/assets";
 import { fetchRestaurants } from "../../utils/api";
 import VariantPreviewModal from "../VariantPreviewModal";
@@ -100,18 +101,7 @@ function getImageSources(dish: AnyDish, imageOverride?: string | null) {
   return { src: PLACEHOLDER, srcSet: undefined, sizes: undefined, isExternal: false };
 }
 
-const Stars: React.FC<{ rating: number; size?: number }> = ({ rating, size = 16 }) => (
-  <>
-    {Array.from({ length: 5 }).map((_, i) => (
-      <StarIcon
-        key={i}
-        size={size}
-        className={`${i < Math.floor(rating) ? "text-yellow-500 fill-yellow-500" : "text-neutral-300"} mr-0.5`}
-        aria-hidden
-      />
-    ))}
-  </>
-);
+
 
 const DishCardInner: React.FC<DishCardProps> = ({ dish, compact = false, imageOverride = null }) => {
   const href = `/dish/${encodeURIComponent((dish.slug ?? dish.id) as string)}`;
@@ -211,8 +201,7 @@ const DishCardInner: React.FC<DishCardProps> = ({ dish, compact = false, imageOv
             {!compact && (
               <>
                 <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded-md text-xs font-medium flex items-center">
-                  <StarIcon size={14} className="text-yellow-500 fill-yellow-500 mr-1" />
-                  {rating.toFixed(1)}
+                  <RatingDisplay rating={rating} size={14} showCount={true} />
                 </div>
                 <button
                   onClick={(e) => {
@@ -345,7 +334,7 @@ const DishCardInner: React.FC<DishCardProps> = ({ dish, compact = false, imageOv
                           </div>
                         )}
                       </div>
-                      <div className="text-sm text-neutral-700">⭐ {Number(r.avg_rating ?? r.rating ?? 0).toFixed(1)}</div>
+                      <RatingDisplay rating={Number(r.avg_rating ?? r.rating ?? 0)} size={14} className="text-neutral-700" />
                     </div>
                   ))}
                   {/* view all places link */}

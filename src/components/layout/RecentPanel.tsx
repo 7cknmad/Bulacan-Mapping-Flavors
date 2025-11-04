@@ -93,76 +93,127 @@ export default function RecentPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      {/* Header with Stats */}
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
-          <Clock size={18} />
+          <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+            <Clock size={20} className="text-primary-600" />
+          </div>
           <div>
-            <h3 className="text-base font-semibold">Recently viewed</h3>
-            <p className="text-xs text-neutral-500">Quick access to restaurants and dishes you looked at</p>
+            <h3 className="text-base font-semibold text-neutral-800">Recently viewed</h3>
+            <p className="text-xs text-neutral-500">Quick access to places you've explored</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-neutral-100 text-neutral-700">{recentVisits.length + (recentDishes?.length || 0)} items</span>
-          <a href="/restaurants" className="btn btn-ghost btn-sm flex items-center gap-2">View all <ArrowRightSquare size={14} /></a>
-          <button onClick={clearRecent} className="btn btn-ghost btn-sm text-primary-600" aria-label="Clear recently viewed items">Clear</button>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary-700">
+            {recentVisits.length + (recentDishes?.length || 0)} items
+          </span>
         </div>
       </div>
 
+      {/* Action Bar */}
+      <div className="flex items-center justify-between bg-neutral-50 rounded-lg p-2">
+        <div className="flex gap-2">
+          <a 
+            href="/restaurants" 
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md hover:bg-white transition-colors text-neutral-700 hover:text-primary-600"
+          >
+            <ArrowRightSquare size={16} />
+            View All
+          </a>
+        </div>
+        <button 
+          onClick={clearRecent} 
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md hover:bg-white transition-colors text-neutral-600 hover:text-red-600"
+          aria-label="Clear recently viewed items"
+        >
+          <XIcon size={16} />
+          Clear History
+        </button>
+      </div>
+
       <div className="space-y-3">
-        {/* Render recent restaurants from useRecentVisits */}
+        {/* Recent Restaurants Section */}
         {recentVisits.length > 0 && (
           <div className="space-y-2">
-            {recentVisits.slice(0, 6).map((visit) => (
-              <div key={`rr-${visit.id}`} className="flex items-center gap-3">
-                <div className="flex-1">
-                  <RestaurantCard 
-                    restaurant={{
-                      id: visit.id,
-                      name: visit.name,
-                      lat: visit.lat || undefined,
-                      lng: visit.lng || undefined,
-                      municipality_name: visit.municipalityName,
-                      slug: `restaurant-${visit.id}`
-                    } as Restaurant} 
-                    compact 
-                  />
-                </div>
-                <button
-                  aria-label={`Remove ${visit.name} from recent`}
-                  title={`Remove ${visit.name}`}
-                  onClick={() => removeVisit(visit.id)}
-                  className="btn btn-square btn-ghost btn-sm ml-2"
+            <h4 className="text-sm font-medium text-neutral-500 px-1">Restaurants</h4>
+            <div className="space-y-2 rounded-lg overflow-hidden">
+              {recentVisits.slice(0, 6).map((visit) => (
+                <div 
+                  key={`rr-${visit.id}`} 
+                  className="flex items-center gap-3 p-2 hover:bg-neutral-50 rounded-lg transition-colors group relative"
                 >
-                  <XIcon size={14} />
-                </button>
-              </div>
-            ))}
+                  <div className="flex-1">
+                    <RestaurantCard 
+                      restaurant={{
+                        id: visit.id,
+                        name: visit.name,
+                        lat: visit.lat || undefined,
+                        lng: visit.lng || undefined,
+                        municipality_name: visit.municipalityName,
+                        slug: `restaurant-${visit.id}`
+                      } as Restaurant} 
+                      compact 
+                    />
+                  </div>
+                  <button
+                    aria-label={`Remove ${visit.name} from recent`}
+                    title={`Remove ${visit.name}`}
+                    onClick={() => removeVisit(visit.id)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity btn-ghost rounded-full p-1.5 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <XIcon size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Render recent dishes */}
-        {recentDishes && recentDishes.length > 0 ? (
-          recentDishes.slice(0, 6).map((d) => (
-            <div key={`rd-${d.id}`} className="flex items-center gap-3">
-              <div className="flex-1">
-                <DishCard dish={d as any} compact />
-              </div>
-              <button
-                aria-label={`Remove ${d.name} from recent`}
-                title={`Remove ${d.name}`}
-                onClick={() => removeRecentDish(d.id)}
-                className="btn btn-square btn-ghost btn-sm ml-2"
-              >
-                <XIcon size={14} />
-              </button>
+        {/* Recent Dishes Section */}
+        {recentDishes && recentDishes.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium text-neutral-500 px-1">Dishes</h4>
+            <div className="space-y-2 rounded-lg overflow-hidden">
+              {recentDishes.slice(0, 6).map((d) => (
+                <div 
+                  key={`rd-${d.id}`} 
+                  className="flex items-center gap-3 p-2 hover:bg-neutral-50 rounded-lg transition-colors group relative"
+                >
+                  <div className="flex-1">
+                    <DishCard dish={d as any} compact />
+                  </div>
+                  <button
+                    aria-label={`Remove ${d.name} from recent`}
+                    title={`Remove ${d.name}`}
+                    onClick={() => removeRecentDish(d.id)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity btn-ghost rounded-full p-1.5 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <XIcon size={14} />
+                  </button>
+                </div>
+              ))}
             </div>
-          ))
-        ) : null}
+          </div>
+        )}
 
         {/* Empty state */}
         {recentVisits.length === 0 && (!recentDishes || recentDishes.length === 0) && (
-          <div className="p-3 bg-neutral-50 rounded-md">
-            <p className="text-sm text-neutral-600">You haven't viewed anything yet. Start exploring restaurants or dishes on the map.</p>
+          <div className="py-12 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+              <Clock size={24} className="text-neutral-400" />
+            </div>
+            <h3 className="text-neutral-600 font-medium mb-2">No Recent Activity</h3>
+            <p className="text-neutral-500 text-sm mb-4 max-w-[240px] mx-auto">
+              Start exploring restaurants and dishes on the map to see your history here.
+            </p>
+            <a 
+              href="/map" 
+              className="inline-flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-medium bg-primary-50 px-4 py-2 rounded-full hover:bg-primary-100 transition-colors"
+            >
+              <ArrowRightSquare size={16} />
+              Explore Map
+            </a>
           </div>
         )}
       </div>

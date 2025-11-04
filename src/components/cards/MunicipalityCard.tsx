@@ -37,11 +37,12 @@ function DishGrid({ dishes, error, placeholder, onHighlightPlace }: {
                 {/* Show rating if available */}
                 <div className="flex items-center gap-2 text-white/90">
                   {dish.avg_rating !== null && dish.avg_rating !== undefined && (
-                    <span className="flex items-center gap-1">
-                      <Star size={14} className="text-yellow-300" />
-                      {Number(dish.avg_rating).toFixed(1)}
-                      {dish.total_ratings ? ` (${dish.total_ratings})` : ''}
-                    </span>
+                    <RatingDisplay 
+                      rating={Number(dish.avg_rating)}
+                      totalRatings={dish.total_ratings}
+                      size={14}
+                      className="text-yellow-300"
+                    />
                   )}
                 </div>
               </div>
@@ -53,6 +54,7 @@ function DishGrid({ dishes, error, placeholder, onHighlightPlace }: {
   );
 }
 import { X as XIcon, MapPin, Utensils, ExternalLink, ChevronRight, Landmark, Star, Info } from "lucide-react";
+import RatingDisplay from "../../components/RatingDisplay";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { assetUrl } from "../../utils/assets";
@@ -76,11 +78,15 @@ type Restaurant = {
   id: number | string;
   slug?: string;
   name: string;
+  description?: string | null;
   address?: string | null;
-  price_range?: string | null;
-  rating?: number | null;
+  avg_rating?: number | null;
+  total_ratings?: number | null;
+  popularity?: number | null;
+  image_url?: string | null;
   featured?: number | null;
-  panel_rank?: number | null;
+  featured_rank?: number | null;
+  price_range?: string | null;
 };
 
 type UIMunicipality = {
@@ -222,11 +228,14 @@ function sortAndSlice<T extends Dish | Restaurant>(
         // Always use municipalityId for restaurants
         let data: Restaurant[] = [];
         try {
-          const primary = `${API}/api/restaurants?municipalityId=${municipality.id}&featured=1&limit=2`;
-          data = await getJSON<Restaurant[]>(primary);
-        } catch (primaryError) {
-          const fallback = `${API}/api/restaurants?municipalityId=${municipality.id}`;
-          data = await getJSON<Restaurant[]>(fallback);
+          // Fetch top restaurants from the dedicated endpoint
+          const url = `${API}/api/municipalities/${municipality.id}/top-restaurants`;
+          console.log('[MunicipalityCard] Fetching top restaurants from:', url);
+          data = await getJSON<Restaurant[]>(url);
+          console.log('[MunicipalityCard] Top restaurants data:', data);
+        } catch (error) {
+          console.error('[MunicipalityCard] Error fetching top restaurants:', error);
+          throw error;
         }
         if (!cancel) {
           const sortedData = sortAndSlice(data, { forDish: false }, 2);
@@ -584,7 +593,15 @@ function sortAndSlice<T extends Dish | Restaurant>(
                               {r.address && <div className="text-white/85 text-xs line-clamp-1 mb-1">{r.address}</div>}
                               <div className="text-white/80 text-xs flex items-center gap-2">
                                 {r.price_range && <span>{r.price_range}</span>}
-                                <span className="flex items-center gap-1"><Star size={14} className="inline-block text-yellow-300" /> {Number(r.rating ?? 0).toFixed(1)}</span>
+                                <RatingDisplay 
+                                  rating={Number(r.avg_rating ?? 0)}
+                                  totalRatings={r.total_ratings}
+                                  size={14}
+                                  className="text-yellow-300"
+                                />
+                                {r.featured && (
+                                  <span className="bg-primary-500/90 text-white px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide">Featured</span>
+                                )}
                               </div>
                             </div>
                           </div>
