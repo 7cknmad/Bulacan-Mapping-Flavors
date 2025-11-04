@@ -109,9 +109,18 @@ export default function MunicipalityCard({ municipality, onClose, onHighlightPla
   const [topRatedDishes, setTopRatedDishes] = useState<Dish[] | null>(null);
   const [dishSummaryErr, setDishSummaryErr] = useState<string | null>(null);
 
-// API constant should be empty to use Vite's proxy in development
-const API = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
-console.log('[MunicipalityCard] Using API base URL:', API || '(using proxy)');
+// In development, return empty string to use Vite's proxy
+const API = import.meta.env.DEV 
+  ? '' 
+  : (typeof window !== 'undefined' && window.location.hostname.includes('github.io')
+      ? 'https://bulacan-mapping-api.onrender.com'  // GitHub Pages environment
+      : (import.meta.env.VITE_API_URL || '')  // Other environments
+    );
+console.log('[MunicipalityCard] Using API base URL:', API || '(using proxy)', {
+  isDev: import.meta.env.DEV,
+  isGitHubPages: typeof window !== 'undefined' && window.location.hostname.includes('github.io'),
+  envApiUrl: import.meta.env.VITE_API_URL
+});
 
 function cn(...xs: Array<string | false | undefined>) { return xs.filter(Boolean).join(" "); }
 async function getJSON<T>(url: string): Promise<T> {
