@@ -11,6 +11,7 @@ import adminRouter from './routes/admin.js';
 import restaurantsRouter from './routes/restaurants.js';
 import topRatedRouter from './routes/top-rated.js';
 import initRestaurantViewsRoutes from './routes/restaurant-views.js';
+import municipalitiesRouter from './routes/municipalities.js';
 import { adminAuthRequired } from './middleware/adminAuth.js';
 
 const app = express();
@@ -375,6 +376,7 @@ async function loadSchemaInfo() {
     app.use('/api', adminRouter);
     app.use('/admin', adminAuthRequired);
     app.use(restaurantsRouter);
+    app.use(municipalitiesRouter);
     app.use(topRatedRouter);
     
     // Initialize restaurant views routes with error handling
