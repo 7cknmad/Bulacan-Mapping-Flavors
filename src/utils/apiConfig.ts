@@ -4,7 +4,7 @@ const getBaseUrl = () => {
   
   // For GitHub Pages deployment, use the production API URL
   if (typeof window !== 'undefined' && window.location.hostname.includes('github.io')) {
-    return 'https://fly-abraham-attraction-vector.trycloudflare.com';
+    return 'https://existed-bonds-drain-worldcat.trycloudflare.com';
   }
   
   // For development, use local or specified URL
