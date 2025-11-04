@@ -1,31 +1,10 @@
 // src/App.tsx (only public routes)
-import { Suspense, useEffect } from "react";
+import { Suspense } from "react";
 import { HashRouter as Router, Routes, Route, useLocation, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AnimatePresence } from "framer-motion";
-
-// Components
 import Layout from "./components/layout/Layout";
-import PageTransition from "./components/common/PageTransition";
-import ErrorBoundary from "./components/common/ErrorBoundary";
-import ScrollToTop from "./components/common/ScrollToTop";
-import NavigationProgress from './components/common/NavigationProgress';
-import AuthGate from "./components/AuthGate";
-import ToastProvider from './components/ToastProvider';
-
-// Pages
-import HomePage from "./pages/HomePage";
-import MapExplorer from "./pages/MapExplorer";
-import DishesPage from "./pages/DishesPage";
-import TopDishes from "./pages/TopDishes";
-import DishDetails from "./pages/DishDetails";
-import RestaurantList from "./pages/RestaurantList";
-import RestaurantDetails from "./pages/RestaurantDetails";
-import AdminDashboard from "./pages/admin/AdminDashboard";
-import AuthPage from "./pages/AuthPage";
-
-// Auth
-import { useAuth, AuthProvider } from "./hooks/useAuth";
+import { useAuth } from "./hooks/useAuth";
 
 // Admin route protection
 function RequireAdminAuth({ children }: { children: React.ReactNode }) {
@@ -45,6 +24,22 @@ function RequireAdminAuth({ children }: { children: React.ReactNode }) {
   // Authorized, render children
   return <>{children}</>;
 }
+import PageTransition from "./components/common/PageTransition";
+import ErrorBoundary from "./components/common/ErrorBoundary";
+import ScrollToTop from "./components/common/ScrollToTop";
+import NavigationProgress from './components/common/NavigationProgress';
+import HomePage from "./pages/HomePage";
+import MapExplorer from "./pages/MapExplorer";
+import DishesPage from "./pages/DishesPage";
+import TopDishes from "./pages/TopDishes";
+import DishDetails from "./pages/DishDetails";
+import RestaurantList from "./pages/RestaurantList";
+import RestaurantDetails from "./pages/RestaurantDetails";
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import AuthGate from "./components/AuthGate";
+import ToastProvider from './components/ToastProvider';
+import AuthPage from "./pages/AuthPage";
+import { useEffect } from 'react';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -127,7 +122,6 @@ function Routed() {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
         <ToastProvider>
           <Router>
             {/* Navigation progress bar (shows during route changes) */}
@@ -140,7 +134,6 @@ export function App() {
             </ErrorBoundary>
           </Router>
         </ToastProvider>
-      </AuthProvider>
     </QueryClientProvider>
   );
 }
