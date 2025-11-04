@@ -37,7 +37,6 @@ import RestaurantList from "./pages/RestaurantList";
 import RestaurantDetails from "./pages/RestaurantDetails";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AuthGate from "./components/AuthGate";
-import { AuthProvider } from "./hooks/useAuth";
 import ToastProvider from './components/ToastProvider';
 import AuthPage from "./pages/AuthPage";
 import { useEffect } from 'react';
@@ -123,7 +122,6 @@ function Routed() {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
         <ToastProvider>
           <Router>
             {/* Navigation progress bar (shows during route changes) */}
@@ -136,7 +134,6 @@ export function App() {
             </ErrorBoundary>
           </Router>
         </ToastProvider>
-      </AuthProvider>
     </QueryClientProvider>
   );
 }
