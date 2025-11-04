@@ -109,18 +109,10 @@ export default function MunicipalityCard({ municipality, onClose, onHighlightPla
   const [topRatedDishes, setTopRatedDishes] = useState<Dish[] | null>(null);
   const [dishSummaryErr, setDishSummaryErr] = useState<string | null>(null);
 
-// In development, return empty string to use Vite's proxy
-const API = import.meta.env.DEV 
-  ? '' 
-  : (typeof window !== 'undefined' && window.location.hostname.includes('github.io')
-      ? 'https://bulacan-mapping-api.onrender.com'  // GitHub Pages environment
-      : (import.meta.env.VITE_API_URL || '')  // Other environments
-    );
-console.log('[MunicipalityCard] Using API base URL:', API || '(using proxy)', {
-  isDev: import.meta.env.DEV,
-  isGitHubPages: typeof window !== 'undefined' && window.location.hostname.includes('github.io'),
-  envApiUrl: import.meta.env.VITE_API_URL
-});
+// API constant should be empty to use Vite's proxy
+const API = '';
+console.log('[MunicipalityCard] Using API base URL:', API || '(using proxy)');
+const safeOrigin = typeof window !== "undefined" ? window.location.origin : "";
 
 function cn(...xs: Array<string | false | undefined>) { return xs.filter(Boolean).join(" "); }
 async function getJSON<T>(url: string): Promise<T> {
@@ -381,15 +373,17 @@ function sortAndSlice<T extends Dish | Restaurant>(
               
               {/* Action buttons */}
               <div className="flex items-center gap-3">
-                <motion.a
+                {safeOrigin && (
+                  <motion.a
                     initial={{ y: -10, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.3 }}
-                    href={`/map?municipality=${municipality.slug}`}
+                    href={`${safeOrigin}/map?municipality=${municipality.slug}`}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/90 hover:bg-white text-primary-700 shadow-lg backdrop-blur-md transition-all hover:scale-105"
                   >
                     <MapPin size={18} /> Share Location
                   </motion.a>
+                )}
                 <motion.button
                   initial={{ scale: 0.8, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}

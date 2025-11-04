@@ -1,22 +1,17 @@
 // Get the base API URL based on environment
 const getBaseUrl = () => {
-  const env = import.meta.env;
+  const env = (import.meta as any).env || {};
   
-  // In development, return empty string to use Vite's proxy
-  if (env.DEV) {
-    return '';
-  }
-
-  // In production (GitHub Pages), use the production API URL
+  // For GitHub Pages deployment, use the production API URL
   if (typeof window !== 'undefined' && window.location.hostname.includes('github.io')) {
-    return 'https://bulacan-mapping-api.onrender.com';
+    return 'https://existed-bonds-drain-worldcat.trycloudflare.com';
   }
   
-  // For other environments, use env vars with fallback
+  // For development, use local or specified URL
   return (
     env.VITE_ADMIN_API_URL ||  // prefer admin base in admin builds
     env.VITE_API_URL ||        // public base otherwise
-    'https://bulacan-mapping-api.onrender.com'  // fallback to production URL
+    "http://localhost:3002"    // fallback local development URL
   ).replace(/\/+$/, "");
 };
 
