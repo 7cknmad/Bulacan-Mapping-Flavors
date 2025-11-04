@@ -1,6 +1,7 @@
 // src/pages/HomePage.tsx
  
 import { useEffect, useState } from "react";
+import { assetUrl } from "../utils/assets";
 import useRevealOnScroll from "../hooks/useRevealOnScroll";
 import LoginForm from "../components/LoginForm";
 import AuthPanel from "../components/AuthPanel";
@@ -385,7 +386,7 @@ export default function HomePage() {
       >
   {/* Hero */}
         <section className="bm-section snap-start">
-          <div className="bm-bg" style={{ backgroundImage: `url('/images/home/barasoain-1.jpg')` }} aria-hidden />
+          <div className="bm-bg" style={{ backgroundImage: `url(${assetUrl('images/home/barasoain-1.jpg')})` }} aria-hidden />
           <div className="bm-overlay bg-black/40" aria-hidden />
           <div className="bm-content text-center relative">
             <span className="text-primary-300 uppercase tracking-wider text-sm md:text-base font-medium mb-4 block animate-[fadeInUp_1s_ease-out]">
@@ -460,7 +461,7 @@ export default function HomePage() {
 
         {/* Highlights */}
         <section className="bm-section snap-start bg-white">
-          <div className="bm-bg" style={{ backgroundImage: `url('/images/home/fiesta-1.jpg')`, filter: 'blur(8px) brightness(0.9)' }} aria-hidden />
+          <div className="bm-bg" style={{ backgroundImage: `url(${assetUrl('images/home/fiesta-1.jpg')})`, filter: 'blur(8px) brightness(0.9)' }} aria-hidden />
           <div className="bm-overlay" aria-hidden />
           <div className="bm-content bm-content-dark">
             <span className="text-primary-600/90 uppercase tracking-wider text-sm font-medium mb-3 block">Featured Delicacies</span>
@@ -473,11 +474,11 @@ export default function HomePage() {
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {[{
-                title: 'Pandesal de Baliuag', img: '/images/dishes/pandesal-de-baliuag.jpg'
+                title: 'Pandesal de Baliuag', img: assetUrl('images/dishes/pandesal-de-baliuag.jpg')
               },{
-                title: 'Valenciana', img: '/images/dishes/valenciana-sjdm.jpg'
+                title: 'Valenciana', img: assetUrl('images/dishes/valenciana-sjdm.jpg')
               },{
-                title: 'Inipit', img: '/images/placeholders/delicacy.jpg'
+                title: 'Inipit', img: assetUrl('images/placeholders/delicacy.jpg')
               }].map((it) => (
                 <article key={it.title} className="group card bg-white/80 backdrop-blur hover:bg-white/95 p-6 rounded-xl transition-all duration-300 hover:shadow-xl transform hover:-translate-y-1">
                   <div className="h-48 bg-neutral-100 rounded-lg overflow-hidden mb-4 shadow-md group-hover:shadow-lg transition-shadow relative">
@@ -514,7 +515,7 @@ export default function HomePage() {
 
         {/* Culture */}
         <section className="bm-section snap-start">
-          <div className="bm-bg" style={{ backgroundImage: `url('/images/home/market-1.jpg')`, filter: 'blur(10px) grayscale(0.05)' }} aria-hidden />
+          <div className="bm-bg" style={{ backgroundImage: `url(${assetUrl('images/home/market-1.jpg')})`, filter: 'blur(10px) grayscale(0.05)' }} aria-hidden />
           <div className="bm-overlay" aria-hidden />
           <div className="bm-content max-w-3xl text-center">
             <span className="text-white/90 uppercase tracking-wider text-sm font-medium mb-3 block">Living Heritage</span>
@@ -650,7 +651,7 @@ export default function HomePage() {
 
         {/* Join Us */}
         <section id="join-us" className="bm-section snap-start">
-          <div className="bm-bg" style={{ backgroundImage: `url('/images/home/church-facade.jpg')`, filter: 'blur(8px) brightness(0.92)' }} aria-hidden />
+          <div className="bm-bg" style={{ backgroundImage: `url(${assetUrl('images/home/church-facade.jpg')})`, filter: 'blur(8px) brightness(0.92)' }} aria-hidden />
           <div className="bm-overlay" aria-hidden />
           <div className="bm-content max-w-md mx-auto">
             <div 
