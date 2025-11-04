@@ -3,23 +3,8 @@ import pool from '../db.js';
 
 const router = express.Router();
 
-// Get all municipalities
-router.get('/api/municipalities', async (_req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT id, name, slug, description, province, lat, lng, image_url, osm_relation_id as osm_id
-       FROM municipalities
-       ORDER BY name`
-    );
-    res.json(rows);
-  } catch (e) {
-    console.error('Error fetching municipalities:', e);
-    res.status(500).json({ error: 'Failed to fetch municipalities', detail: String(e?.message || e) });
-  }
-});
-
 // Get municipality by ID (supports both internal ID and OSM ID)
-router.get('/api/municipalities/:id', async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { type = 'internal' } = req.query; // 'internal' or 'osm'
@@ -94,7 +79,7 @@ router.get('/api/municipalities/:id', async (req, res) => {
 });
 
 // GET /api/municipalities/:id/dishes-summary
-router.get('/api/municipalities/:id/dishes-summary', async (req, res) => {
+router.get('/:id/dishes-summary', async (req, res) => {
   try {
     const { id } = req.params;
     const { type = 'osm' } = req.query; // 'internal' or 'osm', default to OSM since that's what frontend sends
@@ -154,57 +139,6 @@ router.get('/api/municipalities/:id/dishes-summary', async (req, res) => {
   } catch (error) {
     console.error('Error fetching dishes summary:', error);
     res.status(500).json({ error: 'Failed to fetch dishes summary' });
-  }
-});
-
-// GET /api/municipalities/:id/top-restaurants
-router.get('/api/municipalities/:id/top-restaurants', async (req, res) => {
-  try {
-    console.log('[top-restaurants] Processing request for municipality top restaurants');
-    const { id } = req.params;
-    
-    // First verify municipality exists
-    const [[municipality]] = await pool.query(
-      'SELECT id, name FROM municipalities WHERE id = ? OR osm_relation_id = ? LIMIT 1',
-      [id, id]
-    );
-
-    if (!municipality) {
-      console.log(`[top-restaurants] Municipality with ID ${id} not found`);
-      return res.status(404).json({ error: 'Municipality not found' });
-    }
-
-    // Get top restaurants
-    const [restaurants] = await pool.query(`
-      SELECT 
-        r.id,
-        r.name,
-        r.slug,
-        r.description,
-        r.address,
-        r.image_url,
-        r.price_range,
-        r.featured,
-        r.featured_rank,
-        COALESCE(r.avg_rating, 0) as avg_rating,
-        COALESCE(r.total_ratings, 0) as total_ratings
-      FROM restaurants r
-      WHERE r.municipality_id = ?
-      ORDER BY 
-        COALESCE(r.featured_rank, 999),
-        r.featured DESC,
-        r.avg_rating DESC,
-        r.total_ratings DESC,
-        r.name ASC
-      LIMIT 5
-    `, [municipality.id]);
-
-    console.log(`[top-restaurants] Found ${restaurants.length} top restaurants for municipality ${municipality.name}`);
-    
-    res.json(restaurants);
-  } catch (error) {
-    console.error('Error fetching top restaurants:', error);
-    res.status(500).json({ error: 'Failed to fetch top restaurants', details: error.message });
   }
 });
 
