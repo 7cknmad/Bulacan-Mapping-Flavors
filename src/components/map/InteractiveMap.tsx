@@ -3,7 +3,6 @@ import { useSelectedMunicipality } from '../../hooks/useSelectedMunicipality';
 import { useRecentVisits, type RecentVisit } from '../../hooks/useRecentVisits';
 import MapSearch from './MapSearch';
 import { MapContainer, TileLayer, GeoJSON, useMapEvent, CircleMarker, Popup } from 'react-leaflet';
-import { resolvePath } from '../../utils/baseUrl';
 import RecentVisitsPanel from './RecentVisitsPanel';
 import SavedPlacesPanel from './SavedPlacesPanel';
 import UserLocationMarker from './UserLocationMarker';
@@ -174,22 +173,11 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
   // Load Bulacan GeoJSON boundaries
   useEffect(() => {
     setLoading(true);
-    const fetchGeoJSON = async () => {
-      try {
-        const response = await fetch(resolvePath('/geo/export.geojson'));
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        setBulacanGeoJson(data);
-      } catch (error) {
-        console.error('Error loading GeoJSON:', error);
-        setErrorMsg('Failed to load Bulacan boundaries');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchGeoJSON();
+    fetch('/geo/export.geojson')
+      .then(res => res.json())
+      .then(setBulacanGeoJson)
+      .catch(() => setErrorMsg('Failed to load Bulacan boundaries'))
+      .finally(() => setLoading(false));
   }, []);
 
   // Imperatively manage the highlight layer when coords change
@@ -1149,10 +1137,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
         style={{ height: '100%', width: '100%' }}
         whenReady={(...args: any[]) => { if (args[0] && args[0].target) mapRef.current = args[0].target; }}
       >
-        <TileLayer 
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url={tileStyle === 'osm' ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png' : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'} 
-        />
+        <TileLayer url={tileStyle === 'osm' ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png' : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'} />
 
 
         {/* Sector overlay when view-direction enabled */}

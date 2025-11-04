@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { API } from '../utils/apiConfig';
+import { API } from '../utils/api';
 
 interface User {
   id: number;
@@ -17,15 +17,9 @@ interface AuthContextType {
   checkSession: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  token: null,
-  login: () => { throw new Error('AuthContext not initialized') },
-  logout: () => { throw new Error('AuthContext not initialized') },
-  checkSession: async () => { throw new Error('AuthContext not initialized') }
-});
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
 

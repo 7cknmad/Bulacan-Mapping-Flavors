@@ -23,7 +23,23 @@ export function calculateAverageRating(reviews: Array<{ rating?: number; weight?
   return totalWeight > 0 ? weightedSum / totalWeight : 0;
 }
 // src/utils/api.ts — public client, safe for admin builds too
-import { API } from './apiConfig';
+
+const env = (import.meta as any).env || {};
+export const API = (() => {
+  const base = (
+    env.VITE_ADMIN_API_URL ||  // prefer admin base in admin builds
+    env.VITE_API_URL ||        // public base otherwise
+    "http://localhost:3002"
+  ).replace(/\/+$/, "");
+  
+  console.log('[API] Using base URL:', {
+    VITE_ADMIN_API_URL: env.VITE_ADMIN_API_URL,
+    VITE_API_URL: env.VITE_API_URL,
+    base
+  });
+  
+  return base;
+})();
 
 // Send cookies only when needed (auth/admin)
 function needsCreds(path: string) {
