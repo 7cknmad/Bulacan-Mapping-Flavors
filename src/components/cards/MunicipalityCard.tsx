@@ -1,5 +1,6 @@
 // src/components/cards/MunicipalityCard.tsx
 import React, { useMemo, useState, useEffect } from "react";
+import { API } from "../../utils/apiConfig";
 // DishGrid: reusable grid for dishes/delicacies
 function DishGrid({ dishes, error, placeholder, onHighlightPlace }: {
   dishes: Dish[] | null;
@@ -109,10 +110,10 @@ export default function MunicipalityCard({ municipality, onClose, onHighlightPla
   const [topRatedDishes, setTopRatedDishes] = useState<Dish[] | null>(null);
   const [dishSummaryErr, setDishSummaryErr] = useState<string | null>(null);
 
-// API constant should be empty to use Vite's proxy
-const API = '';
-console.log('[MunicipalityCard] Using API base URL:', API || '(using proxy)');
 const safeOrigin = typeof window !== "undefined" ? window.location.origin : "";
+
+// Log which API URL we're using
+console.log('[MunicipalityCard] Using API URL:', API || '(using proxy)');
 
 function cn(...xs: Array<string | false | undefined>) { return xs.filter(Boolean).join(" "); }
 async function getJSON<T>(url: string): Promise<T> {
