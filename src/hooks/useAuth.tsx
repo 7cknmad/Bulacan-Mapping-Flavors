@@ -17,9 +17,15 @@ interface AuthContextType {
   checkSession: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  token: null,
+  login: () => { throw new Error('AuthContext not initialized') },
+  logout: () => { throw new Error('AuthContext not initialized') },
+  checkSession: async () => { throw new Error('AuthContext not initialized') }
+});
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
 
