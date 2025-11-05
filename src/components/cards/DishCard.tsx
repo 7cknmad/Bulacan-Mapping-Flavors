@@ -131,6 +131,7 @@ const DishCardInner: React.FC<DishCardProps> = ({ dish, compact = false, imageOv
           image_url: dish.image_url || dish.image || undefined,
           municipality_name: dish.municipality_name || undefined
         });
+        addToast('Added to favorites!', 'success');
       }
     } catch (error: any) {
       if (error?.code === 'LOGIN_REQUIRED') {

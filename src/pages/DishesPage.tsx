@@ -9,6 +9,10 @@ import {
   type Municipality,
 } from "../utils/api";
 import { motion } from "framer-motion";
+import { Heart } from "lucide-react";
+import { useFavorites } from "../hooks/useFavorites";
+import { useAuth } from "../hooks/useAuth";
+import { useToast } from "../components/ToastProvider";
 import DishCard from "../components/cards/DishCard";
 import FiltersModal from "../components/FiltersModal";
 import { FilterOptions } from "../utils/constants";
@@ -57,6 +61,10 @@ const spicyLevelOptions: { key: SpicyLevel | "all"; label: string; icon: string 
 ];
 
 export default function DishesPage() {
+  const { isFavorite, addFavorite, removeFavorite } = useFavorites();
+  const { user } = useAuth();
+  const addToast = useToast();
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [params, setParams] = useSearchParams();
   const municipalityId = Number(params.get("municipalityId") || "");
   const initialCat = (params.get("category") as Cat) || "all";
@@ -511,32 +519,67 @@ export default function DishesPage() {
           >
             {sorted.map((d) => (
               <motion.div key={d.id} layout>
-                <Link
-                  to={`/dish/${d.id}`}
-                  className="flex items-center gap-5 p-4 hover:bg-gray-50 transition-colors group"
-                >
-                  <img
-                    src={d.image_url || "https://via.placeholder.com/96"}
-                    alt={d.name}
-                    className="w-24 h-20 rounded-lg object-cover bg-gray-100 group-hover:shadow-md transition-shadow"
-                    onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/96"))}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-lg text-gray-900 truncate group-hover:text-primary-600 transition-colors">
-                      {d.name}
-                    </div>
-                    <div className="text-sm text-gray-600 truncate mt-0.5">
-                      {d.category ? d.category.toUpperCase() : ""} • 
-                      <span className="text-amber-500 font-medium"> ⭐ {Number(d.rating ?? 0).toFixed(1)}</span> • 
-                      <span className="text-primary-600"> {Number(d.popularity ?? 0)} views</span>
-                    </div>
-                    {d.description && (
-                      <div className="text-sm text-gray-600 line-clamp-2 mt-1">
-                        {d.description}
+                <div className="flex items-center gap-5 p-4 hover:bg-gray-50 transition-colors group">
+                  <Link
+                    to={`/dish/${encodeURIComponent(d.slug ?? d.id)}`}
+                    className="flex items-center gap-5 flex-1"
+                  >
+                    <img
+                      src={d.image_url || "https://via.placeholder.com/96"}
+                      alt={d.name}
+                      className="w-24 h-20 rounded-lg object-cover bg-gray-100 group-hover:shadow-md transition-shadow"
+                      onError={(e) => ((e.currentTarget.src = "https://via.placeholder.com/96"))}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-lg text-gray-900 truncate group-hover:text-primary-600 transition-colors">
+                        {d.name}
                       </div>
-                    )}
-                  </div>
-                </Link>
+                      <div className="text-sm text-gray-600 truncate mt-0.5">
+                        {d.category ? d.category.toUpperCase() : ""} • 
+                        <span className="text-amber-500 font-medium"> ⭐ {Number(d.rating ?? 0).toFixed(1)}</span> • 
+                        <span className="text-primary-600"> {Number(d.popularity ?? 0)} views</span>
+                      </div>
+                      {d.description && (
+                        <div className="text-sm text-gray-600 line-clamp-2 mt-1">
+                          {d.description}
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                  <button
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const dishId = Number(d.id ?? d.slug ?? 0);
+                      if (!user) {
+                        setShowLoginModal(true);
+                        return;
+                      }
+                      try {
+                        if (isFavorite(dishId, 'dish')) {
+                          await removeFavorite(dishId, 'dish');
+                        } else {
+                          await addFavorite({
+                            id: dishId,
+                            type: 'dish',
+                            name: d.name,
+                            image_url: d.image_url || d.image || undefined,
+                            municipality_name: d.municipality_name || undefined
+                          });
+                          addToast('Added to favorites!', 'success');
+                        }
+                      } catch (error: any) {
+                        addToast('Failed to update favorites.', 'error');
+                      }
+                    }}
+                    className={`p-2 rounded-full hover:bg-neutral-100 transition-colors ${isFavorite(Number(d.id ?? d.slug ?? 0), 'dish') ? 'text-red-500' : 'text-neutral-400'}`}
+                  >
+                    <Heart
+                      size={20}
+                      className={isFavorite(Number(d.id ?? d.slug ?? 0), 'dish') ? 'fill-current' : ''}
+                    />
+                  </button>
+                </div>
               </motion.div>
             ))}
           </motion.div>

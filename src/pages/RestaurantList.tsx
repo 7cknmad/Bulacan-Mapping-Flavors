@@ -56,6 +56,7 @@ export default function RestaurantList() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [q, setQ] = useState(initialQ);
   const [sortBy, setSortBy] = useState<SortKey>("rating");
+  const [minRating, setMinRating] = useState<number>(0);
   // Near-me state
   const [nearMeEnabled, setNearMeEnabled] = useState<boolean>(false);
   const [nearMeRadiusKm, setNearMeRadiusKm] = useState<number>(10); // default 10km
@@ -209,14 +210,41 @@ export default function RestaurantList() {
 
   const restosData = restosQ.data;
   const rows = useMemo(() => {
-    const arr = restosData?.rows ? [...restosData.rows] : [];
+    let arr = restosData?.rows ? [...restosData.rows] : [];
+    // Filter by minimum rating
+    if (minRating > 0) {
+      arr = arr.filter(r => {
+        let rating = 0;
+        if (typeof r.avg_rating === 'number' && !isNaN(r.avg_rating)) {
+          rating = r.avg_rating;
+        } else if (typeof r.avg_rating === 'string' && !isNaN(Number(r.avg_rating))) {
+          rating = Number(r.avg_rating);
+        } else if (typeof r.rating === 'number' && !isNaN(r.rating)) {
+          rating = r.rating;
+        } else if (typeof r.rating === 'string' && !isNaN(Number(r.rating))) {
+          rating = Number(r.rating);
+        }
+        return rating >= minRating;
+      });
+    }
+    // Sort by best rating first
     if (sortBy === "name") arr.sort((a, b) => a.name.localeCompare(b.name));
-    if (sortBy === "rating")
-      arr.sort(
-        (a, b) => (Number(b.rating ?? 0) - Number(a.rating ?? 0)) || a.name.localeCompare(b.name)
-      );
+    if (sortBy === "rating") {
+      arr.sort((a, b) => {
+        let ratingA = 0, ratingB = 0;
+        if (typeof b.avg_rating === 'number' && !isNaN(b.avg_rating)) ratingB = b.avg_rating;
+        else if (typeof b.avg_rating === 'string' && !isNaN(Number(b.avg_rating))) ratingB = Number(b.avg_rating);
+        else if (typeof b.rating === 'number' && !isNaN(b.rating)) ratingB = b.rating;
+        else if (typeof b.rating === 'string' && !isNaN(Number(b.rating))) ratingB = Number(b.rating);
+        if (typeof a.avg_rating === 'number' && !isNaN(a.avg_rating)) ratingA = a.avg_rating;
+        else if (typeof a.avg_rating === 'string' && !isNaN(Number(a.avg_rating))) ratingA = Number(a.avg_rating);
+        else if (typeof a.rating === 'number' && !isNaN(a.rating)) ratingA = a.rating;
+        else if (typeof a.rating === 'string' && !isNaN(Number(a.rating))) ratingA = Number(a.rating);
+        return ratingB - ratingA || a.name.localeCompare(b.name);
+      });
+    }
     return arr;
-  }, [restosData?.rows, sortBy]);
+  }, [restosData?.rows, sortBy, minRating]);
   const total = restosData?.total ?? 0;
 
   // rows is computed from restosData above (server response .rows)
@@ -491,8 +519,8 @@ export default function RestaurantList() {
                   {[0, 3, 4, 4.5].map((r) => (
                     <button
                       key={r}
-                      className="px-2 py-1 rounded border bg-white hover:bg-neutral-50 text-sm"
-                      onClick={() => setSortBy("rating")}
+                      className={`px-2 py-1 rounded border bg-white hover:bg-neutral-50 text-sm ${minRating === r ? 'bg-primary-100 text-primary-700 border-primary-500' : ''}`}
+                      onClick={() => setMinRating(r)}
                       title={`Show places ≥ ${r}`}
                     >
                       {r === 0 ? "Any" : `${r}+`}

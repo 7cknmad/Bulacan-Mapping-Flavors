@@ -121,6 +121,7 @@ const RestaurantMarker: React.FC<RestaurantMarkerProps> = ({ restaurant, userLoc
           lng: restaurant.lng,
           municipality_name: restaurant.municipality_name
         });
+        addToast('Added to favorites!', 'success');
       }
     } catch (error: any) {
       if (error?.code === 'LOGIN_REQUIRED') {

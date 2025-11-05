@@ -35,7 +35,16 @@ const RestaurantCard: React.FC<{ restaurant: Restaurant; compact?: boolean }> = 
   const navigate = useNavigate();
   const [showLoginModal, setShowLoginModal] = useState(false);
 
-  const rating = Number(restaurant.rating ?? 0);
+  let rating = 0;
+  if (typeof restaurant.avg_rating === 'number' && !isNaN(restaurant.avg_rating)) {
+    rating = restaurant.avg_rating;
+  } else if (typeof restaurant.avg_rating === 'string' && !isNaN(Number(restaurant.avg_rating))) {
+    rating = Number(restaurant.avg_rating);
+  } else if (typeof restaurant.rating === 'number' && !isNaN(restaurant.rating)) {
+    rating = restaurant.rating;
+  } else if (typeof restaurant.rating === 'string' && !isNaN(Number(restaurant.rating))) {
+    rating = Number(restaurant.rating);
+  }
   const price = restaurant.price_range
     ? restaurant.price_range.charAt(0).toUpperCase() + restaurant.price_range.slice(1)
     : "—";
@@ -62,6 +71,7 @@ const RestaurantCard: React.FC<{ restaurant: Restaurant; compact?: boolean }> = 
           image_url: restaurant.image_url,
           municipality_name: restaurant.municipality_name
         });
+        addToast('Added to favorites!', 'success');
       }
     } catch (error: any) {
       if (error?.code === 'LOGIN_REQUIRED') {
@@ -88,7 +98,7 @@ const RestaurantCard: React.FC<{ restaurant: Restaurant; compact?: boolean }> = 
               {!compact && (
                 <>
                   <div className="absolute top-2 left-2 bg-white/90 px-2 py-1 rounded-md">
-                    <RatingDisplay rating={rating} size={14} className="text-neutral-900" />
+                    <RatingDisplay rating={rating} size={14} className="text-black" />
                   </div>
                   <div className="absolute top-2 right-2 flex items-center gap-2">
                     <div className="bg-white/90 px-2 py-1 rounded-md text-xs font-medium">

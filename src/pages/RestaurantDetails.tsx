@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft as ArrowLeftIcon, Star as StarIcon, MapPin as MapPinIcon, Phone as PhoneIcon, Globe as GlobeIcon, Clock as ClockIcon, Facebook as FacebookIcon, Instagram as InstagramIcon, Utensils as UtensilsIcon } from "lucide-react";
+import { ArrowLeft as ArrowLeftIcon, Star as StarIcon, MapPin as MapPinIcon, Phone as PhoneIcon, Globe as GlobeIcon, Clock as ClockIcon, Facebook as FacebookIcon, Instagram as InstagramIcon, Utensils as UtensilsIcon, User as UserIcon } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchRestaurants, fetchReviews, postReview, updateReview, deleteReview, Variant, fetchRestaurantVariants, fetchDishes, calculateAverageRating } from "../utils/api";
@@ -194,23 +194,27 @@ function RestaurantDetails() {
   const postReviewMutation = useMutation({
     mutationFn: (data: { rating: number; comment?: string }) =>
       restaurantQ.data ? postReview({ type: 'restaurant', id: restaurantQ.data.id, rating: data.rating, comment: data.comment }) : Promise.resolve(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] });
+      queryClient.invalidateQueries({ queryKey: ["restaurant"] });
+      queryClient.invalidateQueries({ queryKey: ["restaurants"] });
+    },
   });
   const updateReviewMutation = useMutation({
     mutationFn: (data: { reviewId: number; rating: number; comment?: string }) =>
       updateReview(data.reviewId, { rating: data.rating, comment: data.comment }),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] });
-      // Also refresh restaurant entity to update avg_rating/total_ratings in header
       queryClient.invalidateQueries({ queryKey: ["restaurant"] });
+      queryClient.invalidateQueries({ queryKey: ["restaurants"] });
     },
   });
   const deleteReviewMutation = useMutation({
     mutationFn: (reviewId: number) => deleteReview(reviewId),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["restaurant-reviews", restaurantQ.data?.id] });
-      // Also refresh restaurant entity to update avg_rating/total_ratings in header
       queryClient.invalidateQueries({ queryKey: ["restaurant"] });
+      queryClient.invalidateQueries({ queryKey: ["restaurants"] });
     },
   });
 
@@ -790,124 +794,69 @@ function RestaurantDetails() {
             )}
           </div>
         ) : tab === "reviews" && (
-          <div>
-            <h2 className="mb-4 flex items-center"><StarIcon size={20} className="mr-2 text-yellow-400" /> Reviews</h2>
-            {/* Review Form */}
+          <div className="bg-[#f7f4f0] rounded-xl p-6">
+            <h2 className="mb-4 flex items-center text-2xl font-bold text-[#222]">
+              <StarIcon size={22} className="mr-2 text-yellow-400" /> Reviews
+            </h2>
+            {/* Review Form or Login Prompt */}
             {user ? (
               <div className="mb-6">
-                {myReview ? (
-                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold">Your Review</h3>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setTab('edit-review')}
-                          className="text-sm px-3 py-1.5 text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors duration-150 flex items-center gap-1"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                            <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                          </svg>
-                          Edit Review
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <RatingDisplay rating={myReview.rating} showCount={false} size={14} className="text-yellow-500" />
-                      <span className="text-sm text-neutral-500">
-                        Posted on {new Date(myReview.created_at).toLocaleDateString()}
-                        {myReview.updated_at !== myReview.created_at &&
-                          ` · Edited ${new Date(myReview.updated_at).toLocaleDateString()}`}
-                      </span>
-                    </div>
-                    <p className="text-neutral-700">{myReview.comment}</p>
-                  </div>
-                ) : (
-                  <RatingForm id={r.id} type="restaurant" />
-                )}
+                <RatingForm id={r.id} type="restaurant" />
               </div>
             ) : (
-              <div className="mb-6 text-neutral-600">Please log in to leave a review.</div>
+              <div className="mb-6 flex flex-col items-center justify-center bg-[#f5f2ef] rounded-lg py-6">
+                <span className="text-neutral-600 mb-2">Please log in to leave a review</span>
+                <Link 
+                  to="/auth"
+                  className="inline-flex items-center text-[#b88a44] hover:text-[#a97a2c] font-medium gap-2"
+                  style={{ fontSize: '1rem' }}
+                >
+                  <UserIcon size={18} className="" />
+                  Sign in to Review
+                </Link>
+              </div>
             )}
 
             {/* Reviews List */}
-            {reviewsQ.isLoading ? (
-              <div className="skeleton rounded h-16 w-full mb-2" />
-            ) : reviewsQ.error ? (
-              <div className="text-red-600">Failed to load reviews.</div>
-            ) : (reviewsQ.data?.length ?? 0) === 0 ? (
-              <div className="text-neutral-500">No reviews yet. Be the first to review!</div>
-            ) : (
-              <div className="space-y-4">
-                {reviewsQ.data!.map(r => (
-                  <div key={r.id} className={`${r.id === myReview?.id ? 'bg-blue-50 border border-blue-100' : 'border-b'} p-4 rounded-lg mb-4`}>
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">{r.user_name || "User"}</span>
-                        {r.id === myReview?.id && (
-                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">Your Review</span>
-                        )}
-                      </div>
+            <div className="space-y-2">
+              {reviewsQ.isLoading ? (
+                <div className="animate-pulse h-8 bg-neutral-200 rounded mb-2" />
+              ) : reviewsQ.error ? (
+                <div className="text-center py-8">
+                  <div className="text-red-500 text-xl mb-4">Failed to load reviews</div>
+                  <button
+                    onClick={() => reviewsQ.refetch()}
+                    className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 rounded-md transition-colors text-sm"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              ) : (reviewsQ.data?.length ?? 0) === 0 ? (
+                <div className="text-center py-8 text-neutral-600">
+                  <div className="mb-2">No reviews yet</div>
+                  <div className="text-sm">Be the first to share your thoughts!</div>
+                </div>
+              ) : (
+                reviewsQ.data!.map((r, idx) => (
+                  <div key={r.id} className={`rounded-lg px-4 py-3 border border-[#f0ece7] bg-white ${r.id === myReview?.id ? 'shadow-sm' : ''} ${idx !== reviewsQ.data!.length - 1 ? 'mb-2' : ''}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-[1rem] text-[#222]">{r.user_name || "User"}</span>
                       {r.id === myReview?.id && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              if (!user) {
-                                addToast('Please log in to edit your review', 'error');
-                                return;
-                              }
-                              if (Number(r.user_id) !== Number(user.id)) {
-                                addToast('You can only edit your own reviews', 'error');
-                                return;
-                              }
-                              setTab('edit-review');
-                            }}
-                            className="text-sm px-3 py-1.5 text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors duration-150"
-                          >
-                            <span className="flex items-center gap-1">
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                              </svg>
-                              Edit
-                            </span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (!user) {
-                                addToast('Please log in to delete your review', 'error');
-                                return;
-                              }
-                              if (Number(r.user_id) !== Number(user.id)) {
-                                addToast('You can only delete your own reviews', 'error');
-                                return;
-                              }
-                              setShowDeleteConfirm(true);
-                            }}
-                            className="text-sm px-3 py-1.5 text-red-700 bg-red-100 hover:bg-red-200 rounded-md transition-colors duration-150"
-                          >
-                            <span className="flex items-center gap-1">
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                              </svg>
-                              Delete
-                            </span>
-                          </button>
-                        </div>
+                        <span className="ml-2 text-xs bg-[#f5f2ef] text-[#b88a44] px-2 py-0.5 rounded-full">Your Review</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <RatingDisplay rating={r.rating} showCount={false} size={14} className="text-yellow-500" />
+                    <div className="flex items-center gap-2 mb-1">
+                      <RatingDisplay rating={r.rating} showCount={false} size={16} className="text-yellow-500" />
                       <span className="text-xs text-neutral-500">
                         {new Date(r.created_at).toLocaleDateString()}
-                        {r.updated_at !== r.created_at && 
-                          ` · Edited ${new Date(r.updated_at).toLocaleDateString()}`
-                        }
+                        {r.updated_at !== r.created_at && ` · Edited ${new Date(r.updated_at).toLocaleDateString()}`}
                       </span>
                     </div>
-                    <div className="text-neutral-700">{r.comment}</div>
+                    <div className="text-neutral-700 text-[0.98rem]">{r.comment}</div>
                   </div>
-                ))}
-              </div>
-            )}
+                ))
+              )}
+            </div>
           </div>
         )}
 

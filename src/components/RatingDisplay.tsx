@@ -39,7 +39,7 @@ export default function RatingDisplay({ rating, totalRatings, showCount = true, 
         ))}
       </div>
       {showCount && (
-        <span className="text-white/90 text-xs">
+        <span className="text-black text-xs">
           {rating.toFixed(1)}
           {totalRatings !== undefined && ` (${totalRatings})`}
         </span>
