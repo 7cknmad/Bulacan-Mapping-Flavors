@@ -1,18 +1,11 @@
-// Get the base API URL based on environment
+// Get the base API URL based on build-time environment variables
 const getBaseUrl = () => {
   const env = (import.meta as any).env || {};
-  
-  // For GitHub Pages deployment, use the production API URL
-  if (typeof window !== 'undefined' && window.location.hostname.includes('github.io')) {
-  throw new Error('API base URL is not set. Please set VITE_API_URL or VITE_ADMIN_API_URL in your environment.');
+  const apiUrl = env.VITE_ADMIN_API_URL || env.VITE_API_URL;
+  if (!apiUrl) {
+    throw new Error('API base URL is not set. Please set VITE_API_URL or VITE_ADMIN_API_URL in your build environment.');
   }
-  
-  // For development, use local or specified URL
-  return (
-    env.VITE_ADMIN_API_URL ||  // prefer admin base in admin builds
-    env.VITE_API_URL ||        // public base otherwise
-    "http://localhost:3002"    // fallback local development URL
-  ).replace(/\/+$/, "");
+  return apiUrl.replace(/\/+$/, "");
 };
 
 export const API = getBaseUrl();
