@@ -254,8 +254,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         console.error('Admin API logout error:', e);
       }
 
-      // Force reload the page to ensure clean state
-      window.location.href = '/';
+  // Force reload the page to ensure clean state
+  // Use Vite's base URL for correct routing on GitHub Pages
+  const base = (import.meta as any).env?.BASE_URL || '/';
+  window.location.href = base;
     } catch (e) {
       console.error('Logout error:', e);
     }

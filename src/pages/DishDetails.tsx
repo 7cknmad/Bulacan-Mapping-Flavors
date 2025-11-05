@@ -65,7 +65,10 @@ export default function DishDetails() {
     // Increment popularity when dish is viewed
     useEffect(() => {
       if (dishQ.data?.id) {
-        fetch(`/api/dishes/${dishQ.data.id}/view`, { method: 'POST' }).catch(() => {});
+        // Use the correct API base URL
+        import("../utils/apiConfig").then(({ API }) => {
+          fetch(`${API}/dishes/${dishQ.data.id}/view`, { method: 'POST' }).catch(() => {});
+        });
       }
     }, [dishQ.data?.id]);
 
