@@ -1526,14 +1526,26 @@ function RestaurantsTab() {
       return;
     }
 
-    // Prepare payload with proper location format
+    // Prepare payload with strict validation and correct location format
+    const safeLat = typeof lat === 'number' && !isNaN(lat) ? lat : null;
+    const safeLng = typeof lng === 'number' && !isNaN(lng) ? lng : null;
+    const safeMunicipalityId = Number(form.municipality_id) || null;
+    const safeKind = ['restaurant','stall','store','dealer','market','home-based'].includes(form.kind) ? form.kind : 'restaurant';
+    const safeAddress = String(form.address || '').trim();
+    const safeName = String(form.name || '').trim();
+    const safeCuisineTypes = Array.isArray(form.cuisine_types)
+      ? form.cuisine_types
+      : typeof form.cuisine_types === 'string'
+        ? form.cuisine_types.split(',').map(s => s.trim()).filter(Boolean)
+        : [];
+
     const payload = {
-      name: String(form.name).trim(),
-      kind: form.kind,
+      name: safeName,
+      kind: safeKind,
       description: form.description?.trim() || null,
       image_url: form.image_url?.trim() || null,
-      municipality_id: Number(form.municipality_id),
-      address: String(form.address).trim(),
+      municipality_id: safeMunicipalityId,
+      address: safeAddress,
       phone: form.phone?.trim() || null,
       email: form.email?.trim() || null,
       website: form.website?.trim() || null,
@@ -1541,20 +1553,29 @@ function RestaurantsTab() {
       instagram: form.instagram?.trim() || null,
       opening_hours: form.opening_hours?.trim() || null,
       price_range: form.price_range || 'moderate',
-      cuisine_types: Array.isArray(form.cuisine_types) ? form.cuisine_types : 
-                    typeof form.cuisine_types === 'string' ? form.cuisine_types.split(',').map(s => s.trim()).filter(Boolean) : [],
-      lat: lat,
-      lng: lng,
+      cuisine_types: safeCuisineTypes,
+      lat: safeLat,
+      lng: safeLng,
       featured: form.featured ? 1 : 0,
       featured_rank: form.featured_rank === "" ? null : Number(form.featured_rank),
       panel_rank: form.panel_rank === "" ? null : Number(form.panel_rank),
       status: "active",
       metadata: {},
-      location: `POINT(${lng} ${lat})` // MySQL POINT format
+      location: (safeLat !== null && safeLng !== null) ? `POINT(${safeLng} ${safeLat})` : null // MySQL POINT format
     };
 
+    if (!safeName || !safeKind || !safeMunicipalityId || !safeAddress || safeLat === null || safeLng === null || !payload.location) {
+      setServerError('Missing required fields. Please check all required fields and try again.');
+      return;
+    }
+
     console.log('Creating restaurant with payload:', payload);
-    createM.mutate(payload);
+    createM.mutate(payload, {
+      onError: (e: any) => {
+        setServerError(e?.message || 'Create failed. Please check your input and try again.');
+        console.error('Create restaurant error:', e);
+      }
+    });
   };
 
   const processFormData = (data: any) => ({
