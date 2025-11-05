@@ -4,7 +4,7 @@ const getBaseUrl = () => {
   
   // For GitHub Pages deployment, use the production API URL
   if (typeof window !== 'undefined' && window.location.hostname.includes('github.io')) {
-    return 'https://existed-bonds-drain-worldcat.trycloudflare.com';
+  throw new Error('API base URL is not set. Please set VITE_API_URL or VITE_ADMIN_API_URL in your environment.');
   }
   
   // For development, use local or specified URL
