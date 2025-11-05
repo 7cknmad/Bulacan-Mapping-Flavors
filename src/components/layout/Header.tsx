@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   SearchIcon, MenuIcon, XIcon, SunIcon, MoonIcon,
   UserIcon, LogOutIcon, BellIcon, SettingsIcon,
@@ -22,6 +22,7 @@ const Header: React.FC = () => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const profileRef = useRef<HTMLDivElement>(null);
   // control nav visibility: visible by default
   const [showNav, setShowNav] = useState(true);
@@ -245,8 +246,11 @@ const Header: React.FC = () => {
             ) : (
               <button
                 onClick={() => {
-                  if (location.pathname === '/') scrollToJoin();
-                  else window.location.href = '/#join-us';
+                  if (location.pathname === '/') {
+                    scrollToJoin();
+                  } else {
+                    navigate('/', { state: { scrollToJoin: true } });
+                  }
                 }}
                 className="ml-2 px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium transition-colors flex items-center gap-2"
               >
@@ -328,8 +332,11 @@ const Header: React.FC = () => {
               <button
                 onClick={() => {
                   setIsMenuOpen(false);
-                  if (location.pathname === '/') scrollToJoin();
-                  else window.location.href = '/#join-us';
+                  if (location.pathname === '/') {
+                    scrollToJoin();
+                  } else {
+                    navigate('/', { state: { scrollToJoin: true } });
+                  }
                 }}
                 className="w-full mt-4 px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium flex items-center gap-2 justify-center transition-colors"
               >

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Menu, Bookmark, Clock, X as XIcon, Home as HomeIcon } from 'lucide-react';
+import { Menu, Bookmark, Clock, X as XIcon, Home as HomeIcon, UtensilsCrossed, Store } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import RecentPanel from './RecentPanel';
 import SavedPanel from './SavedPanel';
@@ -91,6 +91,38 @@ export default function FloatingRail() {
                   <HomeIcon size={20} />
                 </div>
                 <span className="mt-2 text-xs font-medium text-neutral-700">Home</span>
+              </button>
+            </div>
+
+            <div className="group relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate('/dishes');
+                }}
+                className="flex flex-col items-center text-sm text-neutral-700 hover:text-primary-700"
+                aria-label="Dishes"
+              >
+                <div className="bg-neutral-50 p-2 rounded-md w-10 h-10 flex items-center justify-center">
+                  <UtensilsCrossed size={20} />
+                </div>
+                <span className="mt-2 text-xs font-medium text-neutral-700">Dishes</span>
+              </button>
+            </div>
+
+            <div className="group relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate('/restaurants');
+                }}
+                className="flex flex-col items-center text-sm text-neutral-700 hover:text-primary-700"
+                aria-label="Restaurants"
+              >
+                <div className="bg-neutral-50 p-2 rounded-md w-10 h-10 flex items-center justify-center">
+                  <Store size={20} />
+                </div>
+                <span className="mt-2 text-xs font-medium text-neutral-700">Restaurants</span>
               </button>
             </div>
 

@@ -1,6 +1,7 @@
 // src/pages/HomePage.tsx
  
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { assetUrl } from "../utils/assets";
 import useRevealOnScroll from "../hooks/useRevealOnScroll";
 import LoginForm from "../components/LoginForm";
@@ -224,14 +225,14 @@ export default function HomePage() {
 
   const scrollToJoin = () => {
     // Start a subtle animation on the auth panel before scrolling
-    const authPanel = document.querySelector('#join-us .bg-white/95');
+    const authPanel = document.querySelector('#join-us [class*="bg-white"]');
     if (authPanel instanceof HTMLElement) {
       authPanel.style.transform = 'perspective(1000px) rotateX(5deg)';
     }
 
     scrollToSection('join-us', () => {
       // Reset and animate the auth panel
-      const authPanel = document.querySelector('#join-us .bg-white/95');
+      const authPanel = document.querySelector('#join-us [class*="bg-white"]');
       if (authPanel instanceof HTMLElement) {
         authPanel.style.transform = 'perspective(1000px) rotateX(0deg)';
       }
@@ -252,8 +253,9 @@ export default function HomePage() {
     // After scrolling completes, focus input and reset auth panel
     window.setTimeout(() => {
       // Reset and animate the auth panel
-      if (authPanel instanceof HTMLElement) {
-        authPanel.style.transform = 'perspective(1000px) rotateX(0deg)';
+      const panel = document.querySelector('#join-us [class*="bg-white"]');
+      if (panel instanceof HTMLElement) {
+        panel.style.transform = 'perspective(1000px) rotateX(0deg)';
       }
 
       // Focus the first input for keyboard users
@@ -270,6 +272,17 @@ export default function HomePage() {
       }
     }, 800);
   };
+
+  const location = useLocation();
+
+  // Handle scroll to join when navigated with state
+  useEffect(() => {
+    if (location.state && typeof location.state === 'object' && 'scrollToJoin' in location.state) {
+      scrollToJoin();
+      // Clear the state to avoid scrolling again on subsequent renders
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
 
   // Enhanced reveal animations when scrolled into view
   useEffect(() => {
@@ -354,8 +367,13 @@ export default function HomePage() {
     >
       {showWelcome && user && (
         <WelcomeToast
-          user={user}
-          isNewUser={user.isNewUser}
+          user={{
+            id: String(user.id),
+            email: user.email || '',
+            displayName: user.displayName,
+            isNewUser: false // Since this is from useAuth type, isNewUser will be false
+          }}
+          isNewUser={false}
           onStartTour={handleStartTour}
         />
       )}
@@ -548,6 +566,7 @@ export default function HomePage() {
 
         {/* Mission */}
         <section className="bm-section snap-start bg-white">
+          <div className="bm-bg" style={{ backgroundImage: `url(${assetUrl('images/home/culinary.jpg')})`, filter: 'blur(10px) grayscale(0.05)' }} aria-hidden />
           <div className="bm-content bm-content-dark max-w-4xl text-center">
             <span className="text-primary-600/90 uppercase tracking-wider text-sm font-medium mb-3 block">Our Purpose</span>
             <h2 className="bm-hero-title mb-4">Preserving Our Culinary Heritage</h2>

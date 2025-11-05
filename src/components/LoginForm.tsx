@@ -55,7 +55,7 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
       <h2 className="text-lg font-semibold">Login</h2>
       <input
         type="email"
-        className="w-full border rounded p-2"
+        className="w-full border rounded p-2 text-neutral-800 bg-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-neutral-400"
         placeholder="Email"
         value={email}
         onChange={e => setEmail(e.target.value)}
@@ -66,7 +66,7 @@ export default function LoginForm({ onLogin }: { onLogin?: (user: any, token: st
       <div className="relative">
         <input
           type={showPassword ? "text" : "password"}
-          className="w-full border rounded p-2 pr-10"
+          className="w-full border rounded p-2 pr-10 text-neutral-800 bg-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-neutral-400"
           placeholder="Password"
           value={password}
           onChange={e => setPassword(e.target.value)}
