@@ -11,7 +11,7 @@ function RestaurantGrid({ restaurants, error, placeholder, onHighlightPlace }: {
     <motion.div variants={listVariants} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
       {restaurants === null && !error && (<><div className="skeleton rounded-xl h-44" /><div className="skeleton rounded-xl h-44" /><div className="skeleton rounded-xl h-44" /></>)}
       {error && <div className="text-sm text-red-600">Failed to load restaurants. {error}</div>}
-      {restaurants && restaurants.length === 0 && <div className="text-sm text-neutral-600">None yet.</div>}
+      {restaurants && restaurants.length === 0 && <div className="text-sm text-neutral-600">No Top Rated Restaurants At The Moment.</div>}
       {restaurants?.map((r) => (
         <motion.div
           key={r.id}
@@ -39,9 +39,6 @@ function RestaurantGrid({ restaurants, error, placeholder, onHighlightPlace }: {
                       size={14}
                       className="text-yellow-300"
                     />
-                  )}
-                  {r.featured && (
-                    <span className="bg-primary-500/90 text-white px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide">Featured</span>
                   )}
                 </div>
               </div>
@@ -370,6 +367,11 @@ function sortAndSlice<T extends Dish | Restaurant>(
   const shortDesc = useMemo(() => (desc.length > 220 ? `${desc.slice(0, 220)}…` : desc), [desc]);
 
   // Overlay for focus effect
+  useEffect(() => {
+    if (restos) {
+      console.log('[MunicipalityCard] Top restaurants (restos) data:', restos);
+    }
+  }, [restos]);
   return (
     <>
       {/* Overlay */}
