@@ -1,7 +1,64 @@
+
 import express from 'express';
 import pool from '../db.js';
 
 const router = express.Router();
+
+router.get('/:id/top-restaurants', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { type = 'osm' } = req.query; // 'internal' or 'osm', default to OSM for frontend compatibility
+
+    // Determine which ID field to use
+    const idField = type === 'osm' ? 'osm_id' : 'id';
+    console.log('[top-restaurants] id:', id, 'type:', type, 'idField:', idField);
+
+    // Get municipality details
+    const [[municipality]] = await pool.query(
+      `SELECT id, osm_id, name FROM municipalities WHERE ${idField} = ?`,
+      [id]
+    );
+    console.log('[top-restaurants] municipality lookup result:', municipality);
+
+    if (!municipality) {
+      console.error('[top-restaurants] Municipality not found for', idField, '=', id);
+      return res.status(404).json({ error: 'Municipality not found' });
+    }
+
+    // Get top 3 restaurants by avg_rating and total_ratings
+    try {
+      const [restaurants] = await pool.query(
+        `SELECT 
+          r.id,
+          r.name,
+          r.address,
+          r.image_url,
+          r.featured,
+          r.price_range,
+          r.slug,
+          r.lat,
+          r.lng,
+          COALESCE(AVG(rt.rating), 0) as avg_rating,
+          COUNT(rt.id) as total_ratings
+         FROM restaurants r
+         LEFT JOIN ratings rt ON rt.rateable_type = 'restaurant' AND rt.rateable_id = r.id
+         WHERE r.municipality_id = ?
+         GROUP BY r.id
+         ORDER BY avg_rating DESC, total_ratings DESC, r.name ASC
+         LIMIT 3`,
+        [municipality.id]
+      );
+      console.log('[top-restaurants] restaurants query result:', restaurants);
+      res.json(restaurants);
+    } catch (sqlErr) {
+      console.error('[top-restaurants] SQL error:', sqlErr);
+      res.status(500).json({ error: 'Failed to fetch top restaurants (SQL error)' });
+    }
+  } catch (err) {
+    console.error('[top-restaurants] General error:', err);
+    res.status(500).json({ error: 'Failed to fetch top restaurants' });
+  }
+});
 
 // Get municipality by ID (supports both internal ID and OSM ID)
 router.get('/:id', async (req, res) => {
