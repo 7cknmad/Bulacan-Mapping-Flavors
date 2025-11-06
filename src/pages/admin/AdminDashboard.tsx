@@ -148,9 +148,9 @@ function AnalyticsTab() {
     const validPopularity = dishes.filter(d => d.popularity != null).map(d => d.popularity!);
     
     return {
-      avgRating: validRatings.length ? (validRatings.reduce((a, b) => a + b, 0) / validRatings.length).toFixed(1) : "N/A",
+      avgRating: validRatings.length ? (validRatings.reduce((a, b) => a + b, 0) / validRatings.length).toFixed(1) : "No Ratings Yet",
       avgPopularity: validPopularity.length ? (validPopularity.reduce((a, b) => a + b, 0) / validPopularity.length).toFixed(1) : "N/A",
-      topRated: validRatings.length ? Math.max(...validRatings).toFixed(1) : "N/A",
+      topRated: validRatings.length ? Math.max(...validRatings).toFixed(1) : "No Ratings Yet",
       mostPopular: validPopularity.length ? Math.max(...validPopularity).toFixed(1) : "N/A",
       ratedCount: validRatings.length,
       popularityCount: validPopularity.length
