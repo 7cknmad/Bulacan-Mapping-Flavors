@@ -54,15 +54,22 @@ router.get('/:id', async (req, res) => {
 
     const [restaurants] = await pool.query(
       `SELECT 
-        id,
-        name,
-        address,
-        rating,
-        image_url,
-        featured
-       FROM restaurants 
-       WHERE municipality_id = ?
-       ORDER BY rating DESC, name ASC
+        r.id,
+        r.name,
+        r.address,
+        r.image_url,
+        r.featured,
+        r.price_range,
+        r.slug,
+        r.lat,
+        r.lng,
+        COALESCE(AVG(rt.rating), 0) as avg_rating,
+        COUNT(DISTINCT rt.id) as total_ratings
+       FROM restaurants r
+       LEFT JOIN ratings rt ON r.id = rt.restaurant_id
+       WHERE r.municipality_id = ?
+       GROUP BY r.id
+       ORDER BY avg_rating DESC, r.name ASC
        LIMIT 10`,
       [municipality.id]
     );
@@ -116,7 +123,6 @@ router.get('/:id/dishes-summary', async (req, res) => {
       recommendedDish = dish || null;
     }
 
-    // Get top-rated dish (with minimum number of ratings)
     const [[topDish]] = await pool.query(
       `SELECT 
         d.*,

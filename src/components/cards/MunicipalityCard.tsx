@@ -1,6 +1,66 @@
+// RestaurantGrid: reusable grid for restaurants
+function RestaurantGrid({ restaurants, error, placeholder, onHighlightPlace }: {
+  restaurants: Restaurant[] | null;
+  error: string | null;
+  placeholder: string;
+  onHighlightPlace?: MunicipalityCardProps['onHighlightPlace'];
+}) {
+  const listVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.05 } } };
+  const itemVariants = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0, transition: { duration: 0.22 } } };
+  return (
+    <motion.div variants={listVariants} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+      {restaurants === null && !error && (<><div className="skeleton rounded-xl h-44" /><div className="skeleton rounded-xl h-44" /><div className="skeleton rounded-xl h-44" /></>)}
+      {error && <div className="text-sm text-red-600">Failed to load restaurants. {error}</div>}
+      {restaurants && restaurants.length === 0 && <div className="text-sm text-neutral-600">None yet.</div>}
+      {restaurants?.map((r) => (
+        <motion.div
+          key={r.id}
+          variants={itemVariants}
+          onMouseEnter={() => onHighlightPlace?.({ type: 'restaurant', id: r.id })}
+          onMouseLeave={() => onHighlightPlace?.(null)}
+        >
+          <Link to={`/restaurant/${encodeURIComponent(String(r.slug ?? r.id))}`} className="group block" title={r.name}>
+            <div className="relative h-44 rounded-2xl overflow-hidden shadow-lg bg-white border border-neutral-200 transition-transform group-hover:-translate-y-1 group-hover:shadow-xl">
+              <img
+                src={assetUrl("images/placeholders/restaurant-thumb.jpg")}
+                alt={r.name}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent group-hover:opacity-95 transition" />
+              <div className="absolute bottom-0 left-0 right-0 p-4">
+                <div className="text-white font-bold text-base truncate drop-shadow-sm mb-1">{r.name}</div>
+                {r.address && <div className="text-white/85 text-xs line-clamp-1 mb-1">{r.address}</div>}
+                <div className="text-white/80 text-xs flex items-center gap-2">
+                  {r.price_range && <span>{r.price_range}</span>}
+                  {r.avg_rating !== null && r.avg_rating !== undefined && (
+                    <RatingDisplay 
+                      rating={Number(r.avg_rating)}
+                      totalRatings={r.total_ratings}
+                      size={14}
+                      className="text-yellow-300"
+                    />
+                  )}
+                  {r.featured && (
+                    <span className="bg-primary-500/90 text-white px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide">Featured</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Link>
+        </motion.div>
+      ))}
+    </motion.div>
+  );
+}
 // src/components/cards/MunicipalityCard.tsx
 import React, { useMemo, useState, useEffect } from "react";
 import { API } from "../../utils/apiConfig";
+import RatingDisplay from "../../components/RatingDisplay";
+import { X as XIcon, MapPin, Utensils, ExternalLink, ChevronRight, Landmark, Star, Info } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { assetUrl } from "../../utils/assets";
+
 // DishGrid: reusable grid for dishes/delicacies
 function DishGrid({ dishes, error, placeholder, onHighlightPlace }: {
   dishes: Dish[] | null;
@@ -54,12 +114,6 @@ function DishGrid({ dishes, error, placeholder, onHighlightPlace }: {
     </motion.div>
   );
 }
-import { X as XIcon, MapPin, Utensils, ExternalLink, ChevronRight, Landmark, Star, Info } from "lucide-react";
-import RatingDisplay from "../../components/RatingDisplay";
-import { Link, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { assetUrl } from "../../utils/assets";
-
 type Dish = {
   id: number | string;
   slug?: string;
@@ -88,6 +142,8 @@ type Restaurant = {
   featured?: number | null;
   featured_rank?: number | null;
   price_range?: string | null;
+  lat?: number;
+  lng?: number;
 };
 
 type UIMunicipality = {
@@ -525,6 +581,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
                         </div>
                       )}
                     </div>
+                    
                     {/* Top Rated Dishes column */}
                     <div>
                       <h3 className="text-lg font-semibold mb-4 text-primary-700">Top Rated Dishes And Delicacies</h3>
@@ -561,7 +618,7 @@ function sortAndSlice<T extends Dish | Restaurant>(
                     <h3 className="text-lg font-semibold text-primary-700">Top Rated Restaurants</h3>
                     <button
                       onClick={() => window.dispatchEvent(new CustomEvent('map:showRestaurants', {
-                        detail: { municipalityId: municipality.id }
+                        detail: { restaurants: restos?.map(r => ({ id: r.id, lat: r.lat, lng: r.lng, name: r.name })) }
                       }))}
                       className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white hover:bg-primary-700 transition-colors rounded-lg shadow-sm"
                     >
@@ -569,45 +626,12 @@ function sortAndSlice<T extends Dish | Restaurant>(
                       Show All on Map
                     </button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {restos === null && !restosErr && (<><div className="skeleton rounded-xl h-44" /><div className="skeleton rounded-xl h-44" /><div className="skeleton rounded-xl h-44" /></>)}
-                    {restosErr && <div className="text-sm text-red-600">Failed to load restaurants. {restosErr}</div>}
-                    {restos && restos.length === 0 && <div className="text-sm text-neutral-600">No restaurants yet.</div>}
-                    {restos?.map((r) => (
-                      <div
-                        key={r.id}
-                        onMouseEnter={() => onHighlightPlace?.({ type: 'restaurant', id: r.id })}
-                        onMouseLeave={() => onHighlightPlace?.(null)}
-                      >
-                        <Link to={`/restaurant/${encodeURIComponent(String(r.slug ?? r.id))}`} className="group block" title={r.name}>
-                          <div className="relative h-44 rounded-2xl overflow-hidden shadow-lg bg-white border border-neutral-200 transition-transform group-hover:-translate-y-1 group-hover:shadow-xl">
-                            <img
-                              src={assetUrl("images/placeholders/restaurant-thumb.jpg")}
-                              alt={r.name}
-                              className="absolute inset-0 w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent group-hover:opacity-95 transition" />
-                            <div className="absolute bottom-0 left-0 right-0 p-4">
-                              <div className="text-white font-bold text-base truncate drop-shadow-sm mb-1">{r.name}</div>
-                              {r.address && <div className="text-white/85 text-xs line-clamp-1 mb-1">{r.address}</div>}
-                              <div className="text-white/80 text-xs flex items-center gap-2">
-                                {r.price_range && <span>{r.price_range}</span>}
-                                <RatingDisplay 
-                                  rating={Number(r.avg_rating ?? 0)}
-                                  totalRatings={r.total_ratings}
-                                  size={14}
-                                  className="text-yellow-300"
-                                />
-                                {r.featured && (
-                                  <span className="bg-primary-500/90 text-white px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide">Featured</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </Link>
-                      </div>
-                    ))}
-                  </div>
+                  <RestaurantGrid 
+                    restaurants={restos}
+                    error={restosErr}
+                    placeholder="images/placeholders/restaurant-thumb.jpg"
+                    onHighlightPlace={onHighlightPlace}
+                  />
                 </motion.div>
               )}
               {activeTab === 'info' && (

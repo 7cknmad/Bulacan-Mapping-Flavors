@@ -35,7 +35,7 @@ const RestaurantCard: React.FC<{ restaurant: Restaurant; compact?: boolean }> = 
   const navigate = useNavigate();
   const [showLoginModal, setShowLoginModal] = useState(false);
 
-  let rating = 0;
+  let rating: number | null = null;
   if (typeof restaurant.avg_rating === 'number' && !isNaN(restaurant.avg_rating)) {
     rating = restaurant.avg_rating;
   } else if (typeof restaurant.avg_rating === 'string' && !isNaN(Number(restaurant.avg_rating))) {
@@ -98,7 +98,7 @@ const RestaurantCard: React.FC<{ restaurant: Restaurant; compact?: boolean }> = 
               {!compact && (
                 <>
                   <div className="absolute top-2 left-2 bg-white/90 px-2 py-1 rounded-md">
-                    <RatingDisplay rating={rating} size={14} className="text-black" />
+                    <RatingDisplay rating={rating ?? 0} totalRatings={restaurant.total_ratings} size={14} className="text-black" />
                   </div>
                   <div className="absolute top-2 right-2 flex items-center gap-2">
                     <div className="bg-white/90 px-2 py-1 rounded-md text-xs font-medium">

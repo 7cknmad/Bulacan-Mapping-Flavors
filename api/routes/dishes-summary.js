@@ -11,7 +11,6 @@ function init(pool) {
         return res.status(400).json({ error: 'Invalid municipality ID' });
       }
 
-      // Get recommended dish - prioritize featured dishes first, then by rating and views
       const [recommendedDish] = await pool.query(`
         SELECT 
           d.id,

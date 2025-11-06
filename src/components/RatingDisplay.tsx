@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { Star, StarHalf } from 'lucide-react';
 
 interface RatingDisplayProps {
@@ -10,10 +10,15 @@ interface RatingDisplayProps {
 }
 
 export default function RatingDisplay({ rating, totalRatings, showCount = true, size = 14, className = "" }: RatingDisplayProps) {
-  const fullStars = Math.floor(rating);
-  const hasHalfStar = rating % 1 >= 0.5;
-  const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
-
+  const safeRating = typeof rating === 'number' && !isNaN(rating) ? rating : null;
+  let fullStars = 0, hasHalfStar = false, emptyStars = 5;
+  if (safeRating !== null && safeRating > 0) {
+    fullStars = Math.floor(safeRating);
+    const fraction = safeRating - fullStars;
+    // More visually accurate: show half star for 0.25 <= fraction < 0.75
+    hasHalfStar = fraction >= 0.25 && fraction < 0.75;
+    emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
+  }
   return (
     <div className={`flex items-center gap-1.5 ${className}`} data-testid="rating-display">
       <div className="flex gap-0.5">
@@ -40,8 +45,8 @@ export default function RatingDisplay({ rating, totalRatings, showCount = true, 
       </div>
       {showCount && (
         <span className="text-black text-xs">
-          {rating.toFixed(1)}
-          {totalRatings !== undefined && ` (${totalRatings})`}
+          {safeRating !== null && safeRating > 0 ? safeRating.toFixed(1) : 'N/A'}
+          {totalRatings !== undefined && safeRating !== null && safeRating > 0 && ` (${totalRatings})`}
         </span>
       )}
     </div>
