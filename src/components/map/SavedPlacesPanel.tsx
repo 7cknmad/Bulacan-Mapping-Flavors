@@ -20,15 +20,13 @@ const SavedPlacesPanel: React.FC<SavedPlacesPanelProps> = ({ onSelect, className
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [pendingRemove, setPendingRemove] = React.useState<FavoriteItem | null>(null);
 
-  // Only show restaurants
-  const restaurantFavorites = favorites.filter(f => f.type === 'restaurant');
-  // Sort by saved_at
-  const sortedFavorites = [...restaurantFavorites].sort((a, b) => ((b.saved_at || 0) - (a.saved_at || 0))).slice(0, 10);
+  // Show both restaurants and dishes
+  const sortedFavorites = [...favorites].sort((a, b) => ((b.saved_at || 0) - (a.saved_at || 0))).slice(0, 10);
 
   if (!sortedFavorites.length) return null;
 
-  // Always show name, fallback to 'Unnamed Restaurant' if missing
-  const getName = (item: FavoriteItem) => item.name?.trim() ? item.name : 'Unnamed Restaurant';
+  // Always show name, fallback to generic
+  const getName = (item: FavoriteItem) => item.name?.trim() ? item.name : (item.type === 'restaurant' ? 'Unnamed Restaurant' : 'Unnamed Dish');
 
   const handleRemove = async () => {
     if (!pendingRemove || !user) return;
@@ -49,11 +47,11 @@ const SavedPlacesPanel: React.FC<SavedPlacesPanelProps> = ({ onSelect, className
   return (
     <div className={`bg-white/95 backdrop-blur-sm rounded-lg shadow-lg p-3 text-sm ${className}`}>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="font-medium text-neutral-800">Saved Restaurants</h3>
+        <h3 className="font-medium text-neutral-800">Saved Items</h3>
         <button
           onClick={clearAllFavorites}
           className="text-xs text-neutral-500 hover:text-neutral-700"
-          aria-label="Clear all saved restaurants"
+          aria-label="Clear all saved items"
         >
           Clear All
         </button>
@@ -61,7 +59,7 @@ const SavedPlacesPanel: React.FC<SavedPlacesPanelProps> = ({ onSelect, className
       <AnimatePresence mode="sync">
         {sortedFavorites.map((item) => (
           <motion.div
-            key={`restaurant-${item.id}`}
+            key={`${item.type}-${item.id}`}
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
@@ -79,19 +77,31 @@ const SavedPlacesPanel: React.FC<SavedPlacesPanelProps> = ({ onSelect, className
                   </div>
                 )}
                 <div className="text-xs text-neutral-400">
-                  🍽️ Restaurant
+                  {item.type === 'restaurant' ? '🍽️ Restaurant' : '🍲 Dish'}
                 </div>
               </div>
               <div className="flex flex-col gap-1 items-end">
                 <button
-                  onClick={() => onSelect(item)}
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey) {
+                      // Route to details if modifier is held
+                      if (item.type === 'restaurant') navigate(`/restaurant/${item.id}`);
+                      else if (item.type === 'dish') navigate(`/dish/${item.id}`);
+                    } else {
+                      onSelect(item);
+                    }
+                  }}
                   className="text-xs px-2 py-1 rounded bg-primary-100 hover:bg-primary-200 text-primary-700"
                   aria-label={`Show ${getName(item)} on map`}
+                  title="Ctrl+Click to view details"
                 >
                   Show on Map
                 </button>
                 <button
-                  onClick={() => setDetailsItem(item)}
+                  onClick={() => {
+                    if (item.type === 'restaurant') navigate(`/restaurant/${item.id}`);
+                    else if (item.type === 'dish') navigate(`/dish/${item.id}`);
+                  }}
                   className="text-xs px-2 py-1 rounded bg-neutral-100 hover:bg-neutral-200 text-neutral-700"
                   aria-label={`View details for ${getName(item)}`}
                 >
@@ -105,7 +115,7 @@ const SavedPlacesPanel: React.FC<SavedPlacesPanelProps> = ({ onSelect, className
                     setConfirmOpen(true);
                   }}
                   className={`text-xs p-1 hover:text-red-500 ${!user ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  aria-label={`Remove ${getName(item)} from saved restaurants`}
+                  aria-label={`Remove ${getName(item)} from saved items`}
                   disabled={!user}
                   title={!user ? 'Login required to manage favorites' : undefined}
                 >

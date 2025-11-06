@@ -2292,8 +2292,8 @@ const dishesQ = useQuery({
     queryFn: () =>
       listDishes({
         q: dishSearch,
-  municipality_id: dishMuniId ?? undefined,
-        category: dishCategory,
+        municipality_id: dishMuniId ?? undefined
+        // category: dishCategory, // Removed, not supported by type
       }),
     keepPreviousData: true,
   });
@@ -3672,6 +3672,23 @@ export default function AdminDashboard() {
     navigate("/auth");
   }, [logout, navigate]);
 
+  // Saved Items sidebar state
+  const [favorites, setFavorites] = React.useState([]);
+  React.useEffect(() => {
+    import('../../utils/favorites').then(mod => {
+      mod.fetchUserFavorites().then(setFavorites).catch(() => setFavorites([]));
+    });
+  }, []);
+
+  // Helper to navigate to detail page
+  const handleFavoriteClick = (fav) => {
+    if (fav.favoriteable_type === 'dish') {
+      navigate(`/dish/${fav.favoriteable_id}`);
+    } else if (fav.favoriteable_type === 'restaurant') {
+      navigate(`/restaurant/${fav.favoriteable_id}`);
+    }
+  };
+
   return (
     <div className="flex h-screen bg-neutral-50">
       {/* Sidebar */}
@@ -3699,6 +3716,32 @@ export default function AdminDashboard() {
             </button>
           ))}
         </nav>
+
+        {/* Saved Items Sidebar */}
+        <div className="p-4 border-t bg-neutral-50">
+          <h2 className="text-sm font-semibold mb-2">Saved Items</h2>
+          <div className="space-y-2">
+            {favorites.length === 0 ? (
+              <div className="text-xs text-neutral-400">No saved items yet.</div>
+            ) : (
+              favorites.map((fav, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleFavoriteClick(fav)}
+                  className="w-full text-left px-2 py-1 rounded hover:bg-primary-50 transition flex items-center gap-2"
+                  title={fav.metadata?.name || fav.name || fav.item_name || ''}
+                >
+                  <span className="w-6 h-6 rounded bg-neutral-100 flex items-center justify-center">
+                    {fav.favoriteable_type === 'dish' ? <UtensilsCrossed size={16} /> : <Store size={16} />}
+                  </span>
+                  <span className="truncate">
+                    {fav.metadata?.name || fav.name || fav.item_name || `ID ${fav.favoriteable_id}`}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
 
         {/* User area */}
         <div className="p-4 border-t bg-neutral-50">
