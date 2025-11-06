@@ -23,7 +23,8 @@ export default function FiltersModal({ isOpen, onClose, filters, onChange }: Fil
             </button>
           </div>
 
-          {/* Price Range */}
+
+          {/* Price Range Only */}
           <div className="mb-6">
             <h3 className="font-medium mb-3">Price Range</h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -37,56 +38,6 @@ export default function FiltersModal({ isOpen, onClose, filters, onChange }: Fil
                 >
                   <div className="font-medium">{option.label}</div>
                   <div className="text-sm text-neutral-600">{option.description}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Dietary Preferences */}
-          <div className="mb-6">
-            <h3 className="font-medium mb-3">Dietary Preferences</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {dietaryOptions.map(option => (
-                <button
-                  key={option.key}
-                  onClick={() => {
-                    const isSelected = filters.dietary.includes(option.key);
-                    onChange({
-                      ...filters,
-                      dietary: isSelected
-                        ? filters.dietary.filter(d => d !== option.key)
-                        : [...filters.dietary, option.key]
-                    });
-                  }}
-                  className={`p-3 border rounded-lg text-left hover:bg-neutral-50 ${
-                    filters.dietary.includes(option.key) ? "border-primary-500 bg-primary-50" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span>{option.icon}</span>
-                    <span className="font-medium">{option.label}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Spiciness Level */}
-          <div className="mb-6">
-            <h3 className="font-medium mb-3">Spiciness Level</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {spicyLevelOptions.map(option => (
-                <button
-                  key={option.key}
-                  onClick={() => onChange({ ...filters, spicyLevel: option.key })}
-                  className={`p-3 border rounded-lg text-left hover:bg-neutral-50 ${
-                    filters.spicyLevel === option.key ? "border-primary-500 bg-primary-50" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span>{option.icon}</span>
-                    <span className="font-medium">{option.label}</span>
-                  </div>
                 </button>
               ))}
             </div>

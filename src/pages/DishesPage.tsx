@@ -15,7 +15,6 @@ import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../components/ToastProvider";
 import DishCard from "../components/cards/DishCard";
 import FiltersModal from "../components/FiltersModal";
-import { FilterOptions } from "../utils/constants";
 
 type Cat = "all" | "food" | "delicacy" | "drink";
 type SortKey = "popularity" | "rating" | "name" | "price_low" | "price_high";
@@ -149,15 +148,7 @@ export default function DishesPage() {
       
       // Sort dishes by signature/featured status first
       return data.sort((a, b) => {
-        // First by signature status
-        if (a.signature && !b.signature) return -1;
-        if (!a.signature && b.signature) return 1;
-        
-        // Then by panel rank
-        const aRank = Number(a.panel_rank ?? 999);
-        const bRank = Number(b.panel_rank ?? 999);
-        if (aRank !== bRank) return aRank - bRank;
-        
+
         // Then by popularity
         const aPop = Number(a.popularity ?? 0);
         const bPop = Number(b.popularity ?? 0);
@@ -176,6 +167,13 @@ export default function DishesPage() {
   const filtered = useMemo(() => {
     const rows = dishesQ.data ?? [];
     return rows.filter(dish => {
+      // Apply category tab filter
+      if (cat !== 'all') {
+        // Accept dish if its category code matches the tab (case-insensitive)
+        const dishCat = (dish.category || dish.code || '').toString().toLowerCase();
+        if (dishCat !== cat) return false;
+      }
+
       // Apply price range filter
       if (filters.priceRange !== 'all') {
         const price = Number(dish.price ?? 0);
@@ -209,7 +207,7 @@ export default function DishesPage() {
 
       return true;
     });
-  }, [dishesQ.data, filters]);
+  }, [dishesQ.data, filters, cat]);
 
   const sorted = useMemo(() => {
     const clone = [...filtered];
@@ -307,13 +305,6 @@ export default function DishesPage() {
             >
               ← Back to Map
             </Link>
-            <Link
-              to={muni ? `/dishes/top?municipalityId=${muni.id}` : "/dishes/top"}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-primary-500 bg-primary-500 text-white shadow-sm hover:bg-primary-600 transition-colors font-medium"
-              title="Top dishes"
-            >
-              ⭐ Top dishes
-            </Link>
           </div>
         </div>
 
@@ -324,12 +315,12 @@ export default function DishesPage() {
             <div className="flex flex-wrap items-center gap-4">
               {/* Tabs */}
               <div className="flex shrink-0 rounded-lg overflow-hidden border border-gray-300 bg-gray-50">
-                {categoryTabs.map((t) => {
+                {[{ key: "food", label: "Food" }, { key: "delicacy", label: "Delicacy" }, { key: "drink", label: "Drink" }].map((t) => {
                   const active = cat === t.key;
                   return (
                     <button
                       key={t.key}
-                      onClick={() => setCat(t.key)}
+                      onClick={() => setCat(t.key as Cat)}
                       className={`px-4 py-2 text-sm font-medium transition-colors ${
                         active
                           ? "bg-primary-600 text-white shadow-sm"

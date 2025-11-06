@@ -222,37 +222,67 @@ router.post('/admin/dishes', adminAuthRequired, async (req, res) => {
       await connection.beginTransaction();
 
       // Insert the dish
-      const [result] = await connection.query(`
-        INSERT INTO dishes (
-          name,
-          slug,
-          municipality_id,
-          category_id,
-          description,
-          image_url,
-          flavor_profile,
-          ingredients,
-          history,
-          is_signature,
-          featured,
-          featured_rank,
-          panel_rank
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
+      // Always lookup category code from dish_categories using category_id
+      let categoryCode = 'food';
+      if (finalCategoryId) {
+        const [[cat]] = await pool.query('SELECT code FROM dish_categories WHERE id = ? LIMIT 1', [finalCategoryId]);
+        if (cat && cat.code) categoryCode = String(cat.code).toLowerCase();
+      }
+
+      // Insert the dish with both category_id and category string
+      console.log('📝 DISH INSERT VALUES:', {
         name,
         slug,
         municipality_id,
         finalCategoryId,
+        categoryCode,
+        description,
+        image_url,
+        flavor_profile,
+        ingredients,
+        history,
+        is_signature,
+        featured,
+        featured_rank,
+        panel_rank
+      });
+      const [result] = await connection.query(`
+        INSERT INTO dishes (
+          municipality_id,
+          category_id,
+          name,
+          slug,
+          description,
+          flavor_profile,
+          ingredients,
+          history,
+          image_url,
+          category,
+          popularity,
+          rating,
+          is_signature,
+          panel_rank,
+          featured,
+          featured_rank
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        municipality_id,
+        finalCategoryId,
+        name,
+        slug,
         description || null,
-        image_url || null,
         JSON.stringify(flavor_profile),
         JSON.stringify(ingredients),
         history,
+        image_url || null,
+        categoryCode,
+        popularity || 0,
+        rating || 0,
         is_signature ? 1 : 0,
+        panel_rank,
         featured ? 1 : 0,
-        featured_rank,
-        panel_rank
+        featured_rank
       ]);
 
       const dishId = result.insertId;
@@ -268,10 +298,13 @@ router.post('/admin/dishes', adminAuthRequired, async (req, res) => {
 
       // Fetch the complete dish data
       const [[dish]] = await pool.query(`
-        SELECT d.*,
-               r.name as restaurant_name,
+        SELECT d.*, 
+               c.display_name as category, 
+               c.code as category_code, 
+               r.name as restaurant_name, 
                GROUP_CONCAT(di.ingredient_name) as ingredients
         FROM dishes d
+        LEFT JOIN dish_categories c ON d.category_id = c.id
         LEFT JOIN restaurants r ON d.restaurant_id = r.id
         LEFT JOIN dish_ingredients di ON d.id = di.dish_id
         WHERE d.id = ?
@@ -329,11 +362,19 @@ router.put('/admin/dishes/:id', adminAuthRequired, async (req, res) => {
     // Generate slug
     const slug = slugify(name);
     
+    // Lookup category code from dish_categories
+    let categoryCode = 'food';
+    if (category_id) {
+      const [[cat]] = await pool.query('SELECT code FROM dish_categories WHERE id = ? LIMIT 1', [category_id]);
+      if (cat && cat.code) categoryCode = cat.code;
+    }
+
     // Update the dish
     const [result] = await pool.query(`
       UPDATE dishes 
       SET municipality_id = ?,
           category_id = ?,
+          category = ?,
           name = ?,
           slug = ?,
           description = ?,
@@ -352,6 +393,7 @@ router.put('/admin/dishes/:id', adminAuthRequired, async (req, res) => {
     `, [
       municipality_id,
       category_id,
+      categoryCode,
       name,
       slug,
       description || null,
@@ -404,45 +446,55 @@ router.put('/admin/dishes/:id', adminAuthRequired, async (req, res) => {
     res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
-
-// Delete dish
-router.delete('/admin/dishes/:id', adminAuthRequired, async (req, res) => {
+// PATCH /admin/dishes/:id -- curation only
+router.patch('/admin/dishes/:id', adminAuthRequired, async (req, res) => {
   try {
     const { id } = req.params;
+    const {
+      panel_rank = null,
+      is_signature = undefined,
+      featured = undefined,
+      featured_rank = undefined
+    } = req.body;
 
-    // Start a transaction
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
-
-      // First delete related records
-      await connection.query('DELETE FROM dish_ingredients WHERE dish_id = ?', [id]);
-      await connection.query('DELETE FROM dish_reviews WHERE dish_id = ?', [id]);
-
-      // Then delete the dish
-      const [result] = await connection.query('DELETE FROM dishes WHERE id = ?', [id]);
-
-      if (result.affectedRows === 0) {
-        await connection.rollback();
-        return res.status(404).json({ error: 'Dish not found' });
-      }
-
-      await connection.commit();
-      res.status(204).send();
-
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
+    // Build update fields
+    const fields = [];
+    const params = [];
+    if (panel_rank !== undefined) {
+      fields.push('panel_rank = ?');
+      params.push(panel_rank);
     }
+    if (is_signature !== undefined) {
+      fields.push('is_signature = ?');
+      params.push(is_signature ? 1 : 0);
+    }
+    if (featured !== undefined) {
+      fields.push('featured = ?');
+      params.push(featured ? 1 : 0);
+    }
+    if (featured_rank !== undefined) {
+      fields.push('featured_rank = ?');
+      params.push(featured_rank);
+    }
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No curation fields provided' });
+    }
+    params.push(id);
+
+    const sql = `UPDATE dishes SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+    const [result] = await pool.query(sql, params);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Dish not found' });
+    }
+    // Return updated dish
+    const [[dish]] = await pool.query('SELECT * FROM dishes WHERE id = ?', [id]);
+    res.json(dish);
   } catch (error) {
-    console.error('Error deleting dish:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Error PATCHing dish curation:', error);
+    res.status(500).json({ error: 'Failed to update dish curation', details: error.message });
   }
 });
 
-// Get restaurant's dishes
 router.get('/admin/restaurants/:restaurantId/dishes', adminAuthRequired, async (req, res) => {
   try {
     const { restaurantId } = req.params;

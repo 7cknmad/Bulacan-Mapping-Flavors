@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Nov 02, 2025 at 04:41 PM
+-- Generation Time: Nov 06, 2025 at 03:55 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -49,8 +49,63 @@ CREATE TABLE `dishes` (
   `featured_rank` tinyint(4) DEFAULT NULL,
   `avg_rating` float DEFAULT 0,
   `total_ratings` int(11) DEFAULT 0,
-  `view_count` int(11) DEFAULT 0
+  `view_count` int(11) DEFAULT 0,
+  `signature` tinyint(1) DEFAULT 0,
+  `temp_municipality_id` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Triggers `dishes`
+--
+DELIMITER $$
+CREATE TRIGGER `after_dish_panel_rank_update` AFTER UPDATE ON `dishes` FOR EACH ROW BEGIN
+    -- If panel_rank was set to 1, update municipality
+    IF NEW.panel_rank = 1 THEN
+        -- First clear any existing rank 1 dishes for this municipality
+        UPDATE dishes 
+        SET panel_rank = NULL
+        WHERE municipality_id = NEW.municipality_id 
+        AND id != NEW.id 
+        AND panel_rank = 1;
+        
+        -- Then set this as the recommended dish
+        UPDATE municipalities
+        SET recommended_dish_id = NEW.id
+        WHERE id = NEW.municipality_id;
+    END IF;
+    
+    -- If panel_rank was removed from 1, clear municipality's recommendation if it was this dish
+    IF OLD.panel_rank = 1 AND NEW.panel_rank != 1 THEN
+        UPDATE municipalities
+        SET recommended_dish_id = NULL
+        WHERE id = NEW.municipality_id
+        AND recommended_dish_id = NEW.id;
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `before_dish_panel_rank_update` BEFORE UPDATE ON `dishes` FOR EACH ROW BEGIN
+    IF NEW.panel_rank = 1 THEN
+        -- Check if another dish already has rank 1
+        SET @existing := (
+            SELECT id FROM dishes
+            WHERE municipality_id = NEW.municipality_id
+            AND panel_rank = 1
+            AND id != NEW.id
+            LIMIT 1
+        );
+        
+        IF @existing IS NOT NULL THEN
+            -- Clear the panel_rank of the other dish
+            UPDATE dishes
+            SET panel_rank = NULL
+            WHERE id = @existing;
+        END IF;
+    END IF;
+END
+$$
+DELIMITER ;
 
 -- --------------------------------------------------------
 
@@ -104,21 +159,6 @@ CREATE TABLE `dish_variants` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `dish_views`
---
-
-CREATE TABLE `dish_views` (
-  `id` int(11) NOT NULL,
-  `dish_id` int(11) NOT NULL,
-  `user_id` int(11) DEFAULT NULL,
-  `ip_address` varchar(45) DEFAULT NULL,
-  `viewed_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `session_id` varchar(255) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
 -- Table structure for table `images`
 --
 
@@ -151,6 +191,7 @@ CREATE TABLE `migrations` (
 
 CREATE TABLE `municipalities` (
   `id` int(10) UNSIGNED NOT NULL,
+  `osm_relation_id` int(11) NOT NULL,
   `name` varchar(120) NOT NULL,
   `slug` varchar(140) NOT NULL,
   `description` text DEFAULT NULL,
@@ -160,7 +201,9 @@ CREATE TABLE `municipalities` (
   `location_pt` point NOT NULL,
   `image_url` varchar(512) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `recommended_dish_id` int(11) DEFAULT NULL,
+  `osm_id` int(10) UNSIGNED DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -185,12 +228,70 @@ CREATE TABLE `ratings` (
   `response_date` timestamp NULL DEFAULT NULL,
   `response_by` int(11) DEFAULT NULL,
   `last_vote_date` timestamp NULL DEFAULT NULL,
-  `weight` decimal(4,3) DEFAULT 1.000
+  `weight` decimal(4,3) DEFAULT 1.000,
+  `helpful_votes` int(11) DEFAULT 0,
+  `report_votes` int(11) DEFAULT 0,
+  `helpfulness_score` decimal(10,2) GENERATED ALWAYS AS (`helpful_votes` * 1.0 / nullif(`helpful_votes` + `report_votes`,0)) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Triggers `ratings`
 --
+DELIMITER $$
+CREATE TRIGGER `after_rating_delete` AFTER DELETE ON `ratings` FOR EACH ROW BEGIN
+    DECLARE total_count INT;
+    DECLARE avg_rating DECIMAL(3,2);
+    SET total_count = (
+        SELECT COUNT(*) FROM ratings WHERE rateable_type = OLD.rateable_type AND rateable_id = OLD.rateable_id
+    );
+    SET avg_rating = COALESCE((SELECT SUM(rating * weight) / SUM(weight) FROM ratings WHERE rateable_type = OLD.rateable_type AND rateable_id = OLD.rateable_id), 0);
+    IF OLD.rateable_type = 'dish' THEN
+        UPDATE dishes SET total_ratings = total_count, avg_rating = avg_rating WHERE id = OLD.rateable_id;
+    ELSEIF OLD.rateable_type = 'restaurant' THEN
+        UPDATE restaurants SET total_ratings = total_count, avg_rating = avg_rating WHERE id = OLD.rateable_id;
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `after_rating_insert` AFTER INSERT ON `ratings` FOR EACH ROW BEGIN
+    DECLARE total_count INT;
+    DECLARE avg_rating DECIMAL(3,2);
+    SET total_count = (
+        SELECT COUNT(*) FROM ratings WHERE rateable_type = NEW.rateable_type AND rateable_id = NEW.rateable_id
+    );
+    SET avg_rating = COALESCE((SELECT SUM(rating * weight) / SUM(weight) FROM ratings WHERE rateable_type = NEW.rateable_type AND rateable_id = NEW.rateable_id), 0);
+    IF NEW.rateable_type = 'dish' THEN
+        UPDATE dishes SET total_ratings = total_count, avg_rating = avg_rating WHERE id = NEW.rateable_id;
+    ELSEIF NEW.rateable_type = 'restaurant' THEN
+        UPDATE restaurants SET total_ratings = total_count, avg_rating = avg_rating WHERE id = NEW.rateable_id;
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `after_rating_insert_restaurant` AFTER INSERT ON `ratings` FOR EACH ROW UPDATE restaurants SET 
+  total_ratings = (SELECT COUNT(*) FROM ratings WHERE rateable_type = 'restaurant' AND rateable_id = NEW.rateable_id),
+  avg_rating = COALESCE((SELECT SUM(rating * weight) / SUM(weight) FROM ratings WHERE rateable_type = 'restaurant' AND rateable_id = NEW.rateable_id), 0)
+WHERE id = NEW.rateable_id
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `after_rating_update` AFTER UPDATE ON `ratings` FOR EACH ROW BEGIN
+    DECLARE total_count INT;
+    DECLARE avg_rating DECIMAL(3,2);
+    SET total_count = (
+        SELECT COUNT(*) FROM ratings WHERE rateable_type = NEW.rateable_type AND rateable_id = NEW.rateable_id
+    );
+    SET avg_rating = COALESCE((SELECT SUM(rating * weight) / SUM(weight) FROM ratings WHERE rateable_type = NEW.rateable_type AND rateable_id = NEW.rateable_id), 0);
+    IF NEW.rateable_type = 'dish' THEN
+        UPDATE dishes SET total_ratings = total_count, avg_rating = avg_rating WHERE id = NEW.rateable_id;
+    ELSEIF NEW.rateable_type = 'restaurant' THEN
+        UPDATE restaurants SET total_ratings = total_count, avg_rating = avg_rating WHERE id = NEW.rateable_id;
+    END IF;
+END
+$$
+DELIMITER ;
 DELIMITER $$
 CREATE TRIGGER `dish_rating_update` AFTER INSERT ON `ratings` FOR EACH ROW BEGIN
   IF NEW.rateable_type = 'dish' THEN
@@ -268,6 +369,7 @@ CREATE TABLE `restaurants` (
   `featured_rank` tinyint(3) UNSIGNED DEFAULT NULL,
   `avg_rating` float DEFAULT 0,
   `total_ratings` int(11) DEFAULT 0,
+  `view_count` int(11) DEFAULT 0,
   `location` point NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -289,41 +391,61 @@ CREATE TABLE `review_votes` (
 -- Triggers `review_votes`
 --
 DELIMITER $$
-CREATE TRIGGER `after_vote_delete` AFTER DELETE ON `review_votes` FOR EACH ROW UPDATE ratings 
-SET 
-  helpfulness_votes = (
-    SELECT COUNT(*) 
-    FROM review_votes 
-    WHERE review_id = OLD.review_id 
-    AND vote_type = 'helpful'
-  ),
-  reported_count = (
-    SELECT COUNT(*) 
-    FROM review_votes 
-    WHERE review_id = OLD.review_id 
-    AND vote_type = 'report'
-  ),
-  last_vote_date = IF(OLD.vote_type = 'helpful', NOW(), last_vote_date)
-WHERE id = OLD.review_id
+CREATE TRIGGER `after_vote_delete` AFTER DELETE ON `review_votes` FOR EACH ROW BEGIN
+    -- Update helpfulness_votes count
+    IF OLD.vote_type = "helpful" THEN
+        UPDATE ratings 
+        SET helpfulness_votes = (
+            SELECT COUNT(*) 
+            FROM review_votes 
+            WHERE review_id = OLD.review_id 
+            AND vote_type = "helpful"
+        ),
+        last_vote_date = NOW()
+        WHERE id = OLD.review_id;
+    END IF;
+    
+    -- Update reported_count
+    IF OLD.vote_type = "report" THEN
+        UPDATE ratings 
+        SET reported_count = (
+            SELECT COUNT(*) 
+            FROM review_votes 
+            WHERE review_id = OLD.review_id 
+            AND vote_type = "report"
+        )
+        WHERE id = OLD.review_id;
+    END IF;
+END
 $$
 DELIMITER ;
 DELIMITER $$
-CREATE TRIGGER `after_vote_insert` AFTER INSERT ON `review_votes` FOR EACH ROW UPDATE ratings 
-SET 
-  helpfulness_votes = (
-    SELECT COUNT(*) 
-    FROM review_votes 
-    WHERE review_id = NEW.review_id 
-    AND vote_type = 'helpful'
-  ),
-  reported_count = (
-    SELECT COUNT(*) 
-    FROM review_votes 
-    WHERE review_id = NEW.review_id 
-    AND vote_type = 'report'
-  ),
-  last_vote_date = IF(NEW.vote_type = 'helpful', NOW(), last_vote_date)
-WHERE id = NEW.review_id
+CREATE TRIGGER `after_vote_insert` AFTER INSERT ON `review_votes` FOR EACH ROW BEGIN
+    -- Update helpfulness_votes count
+    IF NEW.vote_type = "helpful" THEN
+        UPDATE ratings 
+        SET helpfulness_votes = (
+            SELECT COUNT(*) 
+            FROM review_votes 
+            WHERE review_id = NEW.review_id 
+            AND vote_type = "helpful"
+        ),
+        last_vote_date = NOW()
+        WHERE id = NEW.review_id;
+    END IF;
+    
+    -- Update reported_count
+    IF NEW.vote_type = "report" THEN
+        UPDATE ratings 
+        SET reported_count = (
+            SELECT COUNT(*) 
+            FROM review_votes 
+            WHERE review_id = NEW.review_id 
+            AND vote_type = "report"
+        )
+        WHERE id = NEW.review_id;
+    END IF;
+END
 $$
 DELIMITER ;
 
@@ -400,15 +522,6 @@ ALTER TABLE `dish_variants`
   ADD KEY `fk_variant_dish` (`dish_id`);
 
 --
--- Indexes for table `dish_views`
---
-ALTER TABLE `dish_views`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_view_per_session` (`dish_id`,`session_id`),
-  ADD KEY `idx_dish_views_dish_id` (`dish_id`),
-  ADD KEY `idx_dish_views_viewed_at` (`viewed_at`);
-
---
 -- Indexes for table `images`
 --
 ALTER TABLE `images`
@@ -428,7 +541,12 @@ ALTER TABLE `migrations`
 ALTER TABLE `municipalities`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `slug` (`slug`),
-  ADD KEY `idx_muni_slug` (`slug`);
+  ADD UNIQUE KEY `idx_municipality_osm_id` (`osm_relation_id`),
+  ADD UNIQUE KEY `osm_id` (`osm_id`),
+  ADD KEY `idx_muni_slug` (`slug`),
+  ADD KEY `idx_osm_relation_id` (`osm_relation_id`),
+  ADD KEY `idx_municipalities_osm_id` (`osm_id`),
+  ADD KEY `idx_municipalities_osm_relation_id` (`osm_relation_id`);
 
 --
 -- Indexes for table `ratings`
@@ -498,12 +616,6 @@ ALTER TABLE `dish_variants`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT for table `dish_views`
---
-ALTER TABLE `dish_views`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
 -- AUTO_INCREMENT for table `images`
 --
 ALTER TABLE `images`
@@ -559,40 +671,8 @@ ALTER TABLE `user_favorites`
 -- Constraints for table `dishes`
 --
 ALTER TABLE `dishes`
-  ADD CONSTRAINT `fk_dish_cat` FOREIGN KEY (`category_id`) REFERENCES `dish_categories` (`id`) ON UPDATE CASCADE,
-  ADD CONSTRAINT `fk_dish_muni` FOREIGN KEY (`municipality_id`) REFERENCES `municipalities` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
-
---
--- Constraints for table `dish_restaurants`
---
-ALTER TABLE `dish_restaurants`
-  ADD CONSTRAINT `fk_dr_dish` FOREIGN KEY (`dish_id`) REFERENCES `dishes` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  ADD CONSTRAINT `fk_dr_rest` FOREIGN KEY (`restaurant_id`) REFERENCES `restaurants` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
-
---
--- Constraints for table `dish_variants`
---
-ALTER TABLE `dish_variants`
-  ADD CONSTRAINT `fk_variant_dish` FOREIGN KEY (`dish_id`) REFERENCES `dishes` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `fk_variant_rest` FOREIGN KEY (`restaurant_id`) REFERENCES `restaurants` (`id`) ON DELETE CASCADE;
-
---
--- Constraints for table `ratings`
---
-ALTER TABLE `ratings`
-  ADD CONSTRAINT `ratings_ibfk_1` FOREIGN KEY (`response_by`) REFERENCES `users` (`id`);
-
---
--- Constraints for table `restaurants`
---
-ALTER TABLE `restaurants`
-  ADD CONSTRAINT `fk_rest_muni` FOREIGN KEY (`municipality_id`) REFERENCES `municipalities` (`id`) ON UPDATE CASCADE;
-
---
--- Constraints for table `user_favorites`
---
-ALTER TABLE `user_favorites`
-  ADD CONSTRAINT `user_favorites_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `fk_dish_category` FOREIGN KEY (`category_id`) REFERENCES `dish_categories` (`id`),
+  ADD CONSTRAINT `fk_dish_municipality` FOREIGN KEY (`municipality_id`) REFERENCES `municipalities` (`id`);
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

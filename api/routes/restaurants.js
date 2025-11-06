@@ -164,8 +164,9 @@ router.post('/admin/restaurants', adminAuthRequired, async (req, res) => {
       featured = 0, featured_rank, panel_rank
     } = req.body;
 
-    // Create location point
-    const location = `POINT(${lng} ${lat})`;
+  // Create location point (MySQL expects POINT(lng lat))
+  const location = `POINT(${lng} ${lat})`;
+  const location_pt = location;
 
     // Add default fields
     const status = 'active';
@@ -174,6 +175,14 @@ router.post('/admin/restaurants', adminAuthRequired, async (req, res) => {
     // Generate slug from name
     const slug = slugify(name);
 
+    // Debug log for payload and location
+    console.log('📝 RESTAURANT INSERT PAYLOAD:', {
+      name, kind, description, image_url, municipality_id,
+      address, phone, email, website, facebook, instagram,
+      opening_hours, price_range, cuisine_types, lat, lng,
+      featured, featured_rank, panel_rank, location, location_pt
+    });
+
     const [result] = await pool.query(`
       INSERT INTO restaurants (
         name, slug, kind, description, image_url, municipality_id,
@@ -181,15 +190,14 @@ router.post('/admin/restaurants', adminAuthRequired, async (req, res) => {
         opening_hours, price_range, cuisine_types, lat, lng,
         featured, featured_rank, panel_rank, location, location_pt,
         status, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText(?), ST_GeomFromText(?),
-        ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText(?), ST_GeomFromText(?), ?, ?)
     `, [
       name, slug, kind, description || null, image_url || null, municipality_id,
       address, phone || null, email || null, website || null, 
       facebook || null, instagram || null, opening_hours || null,
       price_range, JSON.stringify(cuisine_types || []), lat, lng,
       featured, featured_rank || null, panel_rank || null,
-      location, location,
+      location, location_pt,
       status, JSON.stringify(metadata)
     ]);
 
