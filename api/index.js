@@ -2134,29 +2134,37 @@ app.patch('/admin/curate/dishes/:id', async (req, res) => {
 
     const { is_signature, panel_rank, featured, featured_rank } = req.body || {};
     const up = {};
-    
+
     // Use the schema checking functions properly
-    if (req.body.is_signature !== undefined && hasD('is_signature')) 
+    if (req.body.is_signature !== undefined && hasD('is_signature'))
       up.is_signature = is_signature ? 1 : 0;
-    if (req.body.panel_rank !== undefined && hasD('panel_rank')) 
+    if (req.body.panel_rank !== undefined && hasD('panel_rank'))
       up.panel_rank = panel_rank == null ? null : Number(panel_rank);
-    if (req.body.featured !== undefined && hasD('featured')) 
+    if (req.body.featured !== undefined && hasD('featured'))
       up.featured = featured ? 1 : 0;
-    if (req.body.featured_rank !== undefined && hasD('featured_rank')) 
+    if (req.body.featured_rank !== undefined && hasD('featured_rank'))
       up.featured_rank = featured_rank == null ? null : Number(featured_rank);
 
-    const sets = Object.keys(up).map(k => `${k}=?`); 
+    const sets = Object.keys(up).map(k => `${k}=?`);
     const vals = Object.keys(up).map(k => up[k]);
     if (!sets.length) return res.json({ ok: true });
-    
+
     // Get the dish's current data first
     const [[currentDish]] = await pool.query('SELECT name, municipality_id, panel_rank FROM dishes WHERE id = ? LIMIT 1', [id]);
     console.log(`[curate-dish] Current dish state:`, currentDish);
 
+    // If setting panel_rank = 1, clear it for all other dishes in the same municipality first
+    if (Object.prototype.hasOwnProperty.call(up, 'panel_rank') && up.panel_rank === 1 && currentDish.municipality_id) {
+      await pool.query(
+        'UPDATE dishes SET panel_rank = NULL WHERE municipality_id = ? AND id != ? AND panel_rank = 1',
+        [currentDish.municipality_id, id]
+      );
+    }
+
     // Update the dish
     await pool.query(`UPDATE dishes SET ${sets.join(',')} WHERE id=?`, [...vals, id]);
     console.log(`[curate-dish] Updated dish ${id} - ${currentDish.name}`);
-    
+
     // If panel_rank was part of the update, reflect "panel_rank == 1" as the municipality's recommended dish
     try {
       if (Object.prototype.hasOwnProperty.call(up, 'panel_rank')) {
@@ -2182,7 +2190,6 @@ app.patch('/admin/curate/dishes/:id', async (req, res) => {
             if (muni && muni.recommended_dish_id === id) {
               await pool.query('UPDATE municipalities SET recommended_dish_id = NULL WHERE id = ?', [muniId]);
               console.log(`[curate-dish] Cleared recommended_dish_id for municipality ${muniId} (${muni.name}) because panel_rank changed for dish ${id}`);
-              
               // Check if another dish should become recommended (has panel_rank = 1)
               const [[newRecommended]] = await pool.query(
                 'SELECT id, name FROM dishes WHERE municipality_id = ? AND panel_rank = 1 AND id != ? LIMIT 1',
