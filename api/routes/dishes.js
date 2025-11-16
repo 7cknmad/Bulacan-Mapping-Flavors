@@ -1,3 +1,5 @@
+// Get single dish by id
+
 import express from 'express';
 import { adminAuthRequired } from '../middleware/adminAuth.js';
 import pool from '../db.js';
@@ -93,6 +95,39 @@ const validateDishInput = (data) => {
   };
 };
 
+router.get('/api/dish/id/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [[dish]] = await pool.query(`
+      SELECT 
+        d.*,
+        m.name as municipality_name,
+        c.display_name as category,
+        c.code as category_code
+      FROM dishes d
+      LEFT JOIN municipalities m ON d.municipality_id = m.id
+      LEFT JOIN dish_categories c ON d.category_id = c.id
+      WHERE d.id = ?
+    `, [id]);
+
+    if (!dish) {
+      return res.status(404).json({ error: 'Dish not found' });
+    }
+
+    // Parse JSON fields
+    try {
+      dish.flavor_profile = dish.flavor_profile ? JSON.parse(dish.flavor_profile) : [];
+      dish.ingredients = dish.ingredients ? JSON.parse(dish.ingredients) : [];
+    } catch (e) {
+      console.error('Error parsing JSON fields:', e);
+    }
+
+    res.json(dish);
+  } catch (error) {
+    console.error('Error fetching dish by id:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
 // Get all dishes (with filters)
 router.get('/admin/dishes', adminAuthRequired, async (req, res) => {
   try {

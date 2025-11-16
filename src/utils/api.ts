@@ -1,3 +1,4 @@
+export const fetchDishById = async (id: number | string) => get<Dish>(`/api/dish/id/${id}`);
 // Helper: calculate average rating from reviews array using weights
 export function calculateAverageRating(reviews: Array<{ rating?: number; weight?: number }>): number {
   if (!reviews || !reviews.length) return 0;
@@ -460,3 +461,5 @@ export const removeFromFavorites = async (itemType: 'dish'|'restaurant', itemId:
 // Check favorite status for multiple items at once
 export const checkFavoritesStatus = (items: Array<{itemType: 'dish'|'restaurant', itemId: number}>) =>
   post<Record<string, boolean>>(`/api/user/favorites/check`, { items });
+
+

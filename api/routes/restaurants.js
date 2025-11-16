@@ -70,16 +70,16 @@ router.get('/admin/restaurants', adminAuthRequired, async (req, res) => {
   try {
     const search = req.query.search || '';
     const municipalityId = req.query.municipality_id;
+    const dishId = req.query.dishId;
     const sort = req.query.sort || 'name';
 
     let query = `
-      SELECT r.*, 
-             m.name as municipality_name
+      SELECT r.*, m.name as municipality_name
       FROM restaurants r
       LEFT JOIN municipalities m ON r.municipality_id = m.id
+      ${dishId ? 'INNER JOIN restaurant_dishes rd ON r.id = rd.restaurant_id' : ''}
       WHERE 1=1
     `;
-    
     const params = [];
 
     if (search) {
@@ -90,6 +90,11 @@ router.get('/admin/restaurants', adminAuthRequired, async (req, res) => {
     if (municipalityId) {
       query += ` AND r.municipality_id = ?`;
       params.push(municipalityId);
+    }
+
+    if (dishId) {
+      query += ` AND rd.dish_id = ?`;
+      params.push(dishId);
     }
 
     // Add sorting

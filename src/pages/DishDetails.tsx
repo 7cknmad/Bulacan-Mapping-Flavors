@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   fetchDishes,
   fetchDishBySlug,
+  fetchDishById,
   fetchMunicipalities,
   fetchRestaurants,
   fetchReviews,
@@ -57,7 +58,7 @@ export default function DishDetails() {
   const dishQ = useQuery<Dish>({
     queryKey: ["dish", idOrSlug],
     enabled: !!idOrSlug,
-    queryFn: () => fetchDishBySlug(idOrSlug),
+    queryFn: () => isNumericId ? fetchDishById(idOrSlug) : fetchDishBySlug(idOrSlug),
     staleTime: 60_000,
     retry: 0,
   });
@@ -436,7 +437,7 @@ export default function DishDetails() {
                     Try again
                   </button>
                 </div>
-              ) : (placesQ.data?.length ?? 0) === 0 ? (
+              ) : (placesQ.data?.rows?.length ?? 0) === 0 ? (
                 <div className="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
                   <MapPinIcon size={32} className="mx-auto mb-3 text-gray-400" />
                   <p className="text-gray-600 mb-2">No places are currently serving this dish</p>
@@ -444,7 +445,7 @@ export default function DishDetails() {
                 </div>
               ) : (
                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {placesQ.data!.map((r: Restaurant) => (
+                  {placesQ.data!.rows.map((r: Restaurant) => (
                     <Link
                       key={r.id}
                       to={`/restaurant/${encodeURIComponent(r.slug || String(r.id))}`}
@@ -492,14 +493,24 @@ export default function DishDetails() {
                         )}
 
                         <div className="flex flex-wrap gap-2 mt-3">
-                          {r.cuisine_types?.slice(0, 3).map((cuisine: string, i: number) => (
-                            <span 
-                              key={i}
-                              className="px-2 py-0.5 bg-gray-50 text-gray-600 text-xs rounded-full"
-                            >
-                              {cuisine}
-                            </span>
-                          ))}
+                          {(() => {
+                            let cuisines: string[] = [];
+                            if (Array.isArray(r.cuisine_types)) {
+                              cuisines = r.cuisine_types;
+                            } else if (typeof r.cuisine_types === 'string') {
+                              try {
+                                cuisines = JSON.parse(r.cuisine_types);
+                              } catch { cuisines = []; }
+                            }
+                            return cuisines.slice(0, 3).map((cuisine: string, i: number) => (
+                              <span 
+                                key={i}
+                                className="px-2 py-0.5 bg-gray-50 text-gray-600 text-xs rounded-full"
+                              >
+                                {cuisine}
+                              </span>
+                            ));
+                          })()}
                         </div>
                       </div>
                     </Link>

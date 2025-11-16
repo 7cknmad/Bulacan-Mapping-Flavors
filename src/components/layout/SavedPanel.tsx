@@ -109,9 +109,11 @@ export default function SavedPanel() {
             <div className="space-y-2">
               {savedRestaurants.map((r) => (
                 <div key={`sr-${r.id}`} className="group relative">
-                  <a 
-                    href={`/restaurant/${r.id}`} 
-                    className="flex items-start gap-3 p-3 rounded-lg hover:bg-neutral-50 transition-all duration-200 hover:shadow-sm"
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/restaurant/${r.id}`)}
+                    className="flex items-start gap-3 p-3 rounded-lg hover:bg-neutral-50 transition-all duration-200 hover:shadow-sm w-full text-left"
+                    aria-label={`View details for ${r.name}`}
                   >
                     <div className="relative h-16 w-16 rounded-lg overflow-hidden bg-neutral-100 flex-shrink-0">
                       {r.image_url ? (
@@ -142,7 +144,7 @@ export default function SavedPanel() {
                         </div>
                       )}
                     </div>
-                  </a>
+                  </button>
                   <button
                     aria-label={`Remove ${r.name} from favorites`}
                     title={`Remove ${r.name}`}
@@ -175,9 +177,11 @@ export default function SavedPanel() {
             <div className="space-y-2">
               {savedDishes.map((d) => (
                 <div key={`sd-${d.id}`} className="group relative">
-                  <a 
-                    href={`/dish/${d.id}`} 
-                    className="flex items-start gap-3 p-3 rounded-lg hover:bg-neutral-50 transition-all duration-200 hover:shadow-sm"
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/dish/${d.slug ?? d.id}`)}
+                    className="flex items-start gap-3 p-3 rounded-lg hover:bg-neutral-50 transition-all duration-200 hover:shadow-sm w-full text-left"
+                    aria-label={`View details for ${d.name}`}
                   >
                     <div className="relative h-16 w-16 rounded-lg overflow-hidden bg-neutral-100 flex-shrink-0">
                       {d.image_url ? (
@@ -208,7 +212,7 @@ export default function SavedPanel() {
                         </div>
                       )}
                     </div>
-                  </a>
+                  </button>
                   <button
                     aria-label={`Remove ${d.name} from favorites`}
                     title={`Remove ${d.name}`}

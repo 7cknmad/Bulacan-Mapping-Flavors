@@ -7,6 +7,7 @@ export type FavoriteItem = {
   id: number;
   type: 'restaurant' | 'dish';
   name?: string;
+  slug?: string;
   lat?: number;
   lng?: number;
   image_url?: string;
@@ -41,6 +42,7 @@ function convertFavorite(fav: UserFavorite): FavoriteItem {
     id: fav.favoriteable_id,
     type: fav.favoriteable_type,
     name,
+  slug: metadataObj.slug,
     lat: fav.lat ?? metadataObj.lat,
     lng: fav.lng ?? metadataObj.lng,
     image_url: fav.image_url ?? metadataObj.image_url ?? fav.item_image_url,
