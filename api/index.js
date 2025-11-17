@@ -14,7 +14,6 @@ import initRestaurantViewsRoutes from './routes/restaurant-views.js';
 import { adminAuthRequired } from './middleware/adminAuth.js';
 
 const app = express();
-/* ---------------- CORS (GH Pages + local + tunnel) ---------------- */
 const allowed = new Set([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -28,7 +27,7 @@ if (process.env.ALLOWED_ORIGINS) {
   }
 }
 function isAllowedOrigin(origin) {
-  if (!origin) return true; // curl/postman
+  if (!origin) return true; 
   if (allowed.has(origin)) return true;
   try {
     const u = new URL(origin);
@@ -40,16 +39,14 @@ const corsOptions = {
   origin: (origin, cb) => isAllowedOrigin(origin) ? cb(null, true) : cb(new Error(`CORS: ${origin}`)),
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-  credentials: true, // allow cookies for session/refresh flows
+  credentials: true, 
 };
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 app.set('trust proxy', 1);
-// Setup will be done after pool is initialized in async IIFE// Add diagnostic routes directly
 app.get('/admin/dish-recommendation-check', async (req, res) => {
   try {
-    // Get dishes with panel_rank = 1 and their municipality info
     const [rankedDishes] = await pool.query(`
       SELECT 
         d.id as dish_id, 
@@ -2126,7 +2123,6 @@ app.post('/admin/dish-restaurants/unlink', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Curation (provide both "/curate" and "/curation" aliases)
 app.patch('/admin/curate/dishes/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);

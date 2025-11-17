@@ -13,7 +13,6 @@ import MunicipalityLabel from './MunicipalityLabel';
 import MapControlPanel from './MapControlPanel';
 import RadiusOverlay from './RadiusOverlay';
 import './map.css';
-// Component to handle map background clicks
 const MapClickHandler: React.FC<{ onMapClick: (e: L.LeafletMouseEvent) => void }> = ({ onMapClick }) => {
   useMapEvent('click', onMapClick);
   return null;
@@ -24,8 +23,6 @@ import 'leaflet/dist/leaflet.css';
 import MunicipalityCard from '../cards/MunicipalityCard';
 import { AnimatePresence } from "framer-motion";
 import { fetchTopRestaurants, fetchRestaurantsCached } from '../../utils/api';
-
-
 interface UIMunicipality {
   id: number;
   slug: string;
@@ -286,7 +283,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     }
   }, [bulacanGeoJson]);
 
-  // Keyboard: close panel with Escape
   useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -296,7 +292,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isOpen, clear]);
 
-  // Lock background scroll when panel is open (especially on mobile)
   useEffect(() => {
     if (!isOpen) return;
     const prev = document.body.style.overflow;
@@ -304,7 +299,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     return () => { document.body.style.overflow = prev; };
   }, [isOpen]);
 
-  // Listen for external controls (e.g., sliders on MapExplorer)
   useEffect(() => {
     const onSetOpacity = (e: Event) => {
       try {
@@ -393,9 +387,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     mapRef.current?.flyTo(bulacanCenter, 10, { duration: 0.75, easeLinearity: 0.25 });
   };
 
-
-
-  // Clear selection when clicking outside polygons
   const handleMapClick = useCallback((e: L.LeafletMouseEvent) => {
     const target = e.originalEvent.target as HTMLElement | null;
     if (!target || !target.closest || !target.closest('.leaflet-interactive')) {
@@ -403,7 +394,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     }
   }, []);
 
-  // Handler passed to MunicipalityCard to highlight a place (dish/restaurant)
   const handleHighlightPlace = useCallback(async (place: { type: 'dish' | 'restaurant'; id: string | number; coordinates?: [number, number] } | null) => {
     // clear
     if (!place) {
@@ -569,7 +559,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
         setMapZoom(13);
       }
     } catch (err) {
-      // fallback: do nothing
     }
   }, []);
 
@@ -578,7 +567,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     setQuery('');
     setSuggestions([]);
     setHighlightedIndex(-1);
-    // blur input so keyboard focus returns to map; keep input ref for screen readers
     try { searchInputRef.current?.blur(); } catch (err) {}
   };
 
@@ -601,7 +589,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     }
   };
 
-  // Listen for municipality restaurant show events
   useEffect(() => {
     const handleShowRestaurants = async (e: CustomEvent<{ municipalityId: number }>) => {
       if (!e.detail.municipalityId) return;
@@ -674,7 +661,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     }
   };
 
-  // Close suggestions when clicking outside of the search container (improves mobile/keyboard UX)
   useEffect(() => {
     if (!suggestions.length) return;
     const onDocClick = (ev: MouseEvent) => {
@@ -879,8 +865,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     : compact
       ? `w-40 h-24 rounded overflow-hidden ${isOpen ? "panel-open" : ""}`
       : `relative h-[500px] md:h-[600px] lg:h-[700px] w-full rounded-lg overflow-hidden shadow-lg ${isOpen ? "panel-open" : ""} z-0`;
-
-      // keyboard pan/zoom for accessibility when the map wrapper is focused
       const [liveAnnounce, setLiveAnnounce] = useState<string>('');
       const announce = (msg: string) => {
         setLiveAnnounce(msg);
@@ -918,8 +902,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
           announce('Zoomed out');
         }
       };
-
-  // If a highlightedMunicipality id/slug is provided, attempt to fit the map to it
   useEffect(() => {
     if (!highlightedMunicipality || !muniFeatures.length) return;
     const idOrSlug = String(highlightedMunicipality);
@@ -931,7 +913,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     if (match) fitFeatureBounds(match);
   }, [highlightedMunicipality, muniFeatures, fitFeatureBounds]);
 
-  // Recompute sector geojson when userLocation/bearing/width changes
   useEffect(() => {
     if (!userLocation || !viewDirectionEnabled) { setSectorGeoJson(null); return; }
     try {
@@ -942,8 +923,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     }
   }, [userLocation, viewDirectionEnabled, bearingDeg, coneWidthDeg]);
 
-  // Compute filtered markers based on view direction (client-side) to avoid extra API calls
-  // Choose which markers to show: all, radius-filtered, or default
   const filteredMarkers = useMemo(() => {
     let markers: RestMarker[] = [];
     if (showAllRestaurants) {
@@ -1034,8 +1013,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
                 mouseover: () => setHoveredName(feature?.properties?.name || null),
                 mouseout: () => setHoveredName(null),
                 click: () => {
-                  // Select this municipality
-                  // Extract numeric ID from @id property (format: "relation/123456")
                   const relationId = feature?.properties?.['@id'] ?? '';
                   const numericId = Number(relationId.split('/')[1]) || -1;
                   select({

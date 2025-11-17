@@ -1,11 +1,11 @@
-// api/routes/reviews.js
+
 import express from 'express';
 import { authRequired } from '../middleware/auth.js';
 
 const router = express.Router();
 
 export default function initReviewsRoutes(pool) {
-  // Add a new review/rating
+
   router.post('/api/reviews/:type/:id', authRequired, async (req, res) => {
     try {
       const { type, id } = req.params;
@@ -20,22 +20,17 @@ export default function initReviewsRoutes(pool) {
       if (!['dish', 'restaurant'].includes(type)) {
         return res.status(400).json({ error: 'Invalid review type' });
       }
-
-      // Check if item exists
       const table = type === 'dish' ? 'dishes' : 'restaurants';
       const [[item]] = await pool.query(`SELECT id FROM ${table} WHERE id = ?`, [id]);
       if (!item) {
         return res.status(404).json({ error: `${type} not found` });
       }
-
-      // Check for existing review from this user
       const [[existing]] = await pool.query(
         'SELECT id FROM ratings WHERE user_id = ? AND rateable_id = ? AND rateable_type = ?',
         [userId, id, type]
       );
 
       if (existing) {
-        // Update existing review
         await pool.query(
           `UPDATE ratings 
            SET rating = ?, 
@@ -45,7 +40,6 @@ export default function initReviewsRoutes(pool) {
           [rating, comment || null, existing.id]
         );
       } else {
-        // Create new review
         await pool.query(
           `INSERT INTO ratings 
            (user_id, rateable_id, rateable_type, rating, comment, weight)
