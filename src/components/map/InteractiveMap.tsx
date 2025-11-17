@@ -55,6 +55,8 @@ type InteractiveMapProps = {
 
 
 const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality, fullScreen = false, compact = false, restaurantMarkers = null, userLocationOverride = null }) => {
+    // Toggle for showing all restaurants vs only those within radius
+    const [showAllRestaurants, setShowAllRestaurants] = useState<boolean>(true);
   const [searchRadius, setSearchRadius] = useState<number>(5);
   const [sortByDistance, setSortByDistance] = useState<boolean>(false);
   const { addVisit } = useRecentVisits();
@@ -953,31 +955,20 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     }
   }, [userLocation, viewDirectionEnabled, bearingDeg, coneWidthDeg]);
 
-  // Compute filtered markers based on view direction (client-side) to avoid extra API calls
+  // Compute filtered markers based on toggle
   const filteredMarkers = useMemo(() => {
     if (!restaurantMarkers || !restaurantMarkers.length) return [] as RestMarker[];
-
-    // Start with all markers
-    let filtered = [...restaurantMarkers];
-
-    // Filter by view direction if enabled
-    if (userLocation && viewDirectionEnabled) {
-      filtered = filtered.filter((r) => {
-        if (typeof r.lat !== 'number' || typeof r.lng !== 'number') return false;
-        const br = computeBearing(userLocation[0], userLocation[1], r.lat, r.lng);
-        return angleDiff(br, bearingDeg) <= (coneWidthDeg / 2);
-      });
+    if (showAllRestaurants) {
+      return [...restaurantMarkers];
     }
-
-    // Filter by distance if user location is available
+    // Show only within radius
+    let filtered = [...restaurantMarkers];
     if (userLocation) {
       filtered = filtered.filter((r) => {
         if (typeof r.lat !== 'number' || typeof r.lng !== 'number') return false;
         const distance = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], r.lat, r.lng);
         return distance <= searchRadius;
       });
-
-      // Sort by distance if enabled
       if (sortByDistance) {
         filtered.sort((a, b) => {
           if (typeof a.lat !== 'number' || typeof a.lng !== 'number') return 1;
@@ -988,9 +979,8 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
         });
       }
     }
-
     return filtered;
-  }, [restaurantMarkers, userLocation, viewDirectionEnabled, bearingDeg, coneWidthDeg, searchRadius, sortByDistance]);
+  }, [restaurantMarkers, userLocation, searchRadius, sortByDistance, showAllRestaurants]);
 
   // Reference some symbols that may only be used in the full UI to avoid "declared but never used" TS errors
   useEffect(() => {
@@ -1122,6 +1112,23 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
 
   {/* Map Controls Panel */}
   <div className="absolute z-[800] md:right-4 md:top-4 right-4 md:bottom-auto bottom-4">
+    <div className="bg-white rounded-lg shadow-lg p-3 mb-2 flex flex-col gap-2">
+      <label className="font-medium text-sm mb-1">Show Restaurants:</label>
+      <div className="flex gap-2">
+        <button
+          className={`px-3 py-1 rounded ${showAllRestaurants ? 'bg-primary-600 text-white' : 'bg-neutral-100 text-neutral-700'}`}
+          onClick={() => setShowAllRestaurants(true)}
+        >
+          All
+        </button>
+        <button
+          className={`px-3 py-1 rounded ${!showAllRestaurants ? 'bg-primary-600 text-white' : 'bg-neutral-100 text-neutral-700'}`}
+          onClick={() => setShowAllRestaurants(false)}
+        >
+          Within Radius
+        </button>
+      </div>
+    </div>
     <MapControlPanel
       searchRadius={searchRadius}
       onSearchRadiusChange={setSearchRadius}
@@ -1140,6 +1147,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
       onMapStyleChange={toggleTile}
       onMapReset={resetMap}
       className="w-[320px]"
+      disabled={showAllRestaurants}
     />
   </div>
 
