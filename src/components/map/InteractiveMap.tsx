@@ -55,6 +55,8 @@ type InteractiveMapProps = {
 
 
 const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality, fullScreen = false, compact = false, restaurantMarkers = null, userLocationOverride = null }) => {
+    // Track which restaurant marker's popup is open
+    const [openPopupMarkerId, setOpenPopupMarkerId] = useState<number | null>(null);
   const [searchRadius, setSearchRadius] = useState<number>(5);
     // New state for restaurant display mode
     const [showAllRestaurants, setShowAllRestaurants] = useState<boolean>(false);
@@ -840,12 +842,14 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
   // Effect to handle polygon visibility and focus on markers
   // Effect to handle polygon visibility only (no auto-focus for restaurant markers)
   useEffect(() => {
-    if (restaurantMarkers && restaurantMarkers.length > 0) {
+    if (showAllRestaurants) {
+      setShowPolygons(false);
+    } else if (restaurantMarkers && restaurantMarkers.length > 0) {
       setShowPolygons(false);
     } else {
       setShowPolygons(true);
     }
-  }, [restaurantMarkers]);
+  }, [showAllRestaurants, restaurantMarkers]);
 
   // Build a sector GeoJSON (polygon) centered at userLocation with bearing and width and radiusKm
   const buildSector = (center:[number,number], bearing:number, width:number, radiusKm = 10, steps = 36) => {
@@ -1068,8 +1072,33 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
             const lat = r.lat; const lng = r.lng;
             if (typeof lat !== 'number' || typeof lng !== 'number') return null;
             return (
-              <CircleMarker key={`r-${r.id}`} center={[lat, lng]} radius={4} pathOptions={{ color: '#e76f51', fillColor: '#e76f51', fillOpacity: 1 }} />
+              <CircleMarker
+                key={`r-${r.id}`}
+                center={[lat, lng]}
+                radius={9}
+                pathOptions={{
+                  color: '#d90429', // vibrant border
+                  weight: 3,
+                  fillColor: '#ffbe0b', // vibrant fill
+                  fillOpacity: 0.95,
+                  className: 'restaurant-marker-glow'
+                }}
+              />
             );
+            // Add marker glow style for visibility
+            useEffect(() => {
+              const id = 'restaurant-marker-glow-style';
+              if (document.getElementById(id)) return;
+              const style = document.createElement('style');
+              style.id = id;
+              style.innerHTML = `
+                .restaurant-marker-glow {
+                  filter: drop-shadow(0 0 6px #ffbe0b) drop-shadow(0 0 2px #d90429);
+                }
+              `;
+              document.head.appendChild(style);
+              return () => { style.remove(); };
+            }, []);
           })}
         </MapContainer>
         <div className="sr-only" aria-live="polite">{liveAnnounce}</div>
@@ -1324,10 +1353,34 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
             // Calculate distance from user if location is available
             const distance = userLocation && getDistanceFromLatLonInKm(userLocation[0], userLocation[1], r.lat, r.lng);
 
+            // Show popup for the highlighted marker, or the one whose id matches openPopupMarkerId
             const isHighlighted = highlightedPlaceType === 'restaurant' &&
               highlightedPlaceCoords &&
               r.lat === highlightedPlaceCoords[0] &&
               r.lng === highlightedPlaceCoords[1];
+
+            const showPopup = openPopupMarkerId === r.id || isHighlighted;
+
+            // Handler for marker click
+            const handleMarkerClick = () => {
+              addVisit({
+                id: r.id,
+                name: r.name,
+                lat: r.lat,
+                lng: r.lng,
+                municipalityName: hoveredName || undefined
+              });
+              setHighlightedPlaceCoords([r.lat!, r.lng!]);
+              setHighlightedPlaceName(r.name);
+              setHighlightedPlaceType('restaurant');
+              mapRef.current?.flyTo([r.lat!, r.lng!], 15, { duration: 0.6 });
+              setOpenPopupMarkerId(r.id);
+            };
+
+            // Handler for closing popup
+            const handlePopupClose = () => {
+              setOpenPopupMarkerId(null);
+            };
 
             return (
               <React.Fragment key={`r-${r.id}`}>
@@ -1335,26 +1388,11 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
                   restaurant={r}
                   userLocation={userLocation}
                   isHighlighted={isHighlighted}
-                  showPopup={isHighlighted}
-                  onClick={() => {
-                    // Track visit when a marker is clicked
-                    addVisit({
-                      id: r.id,
-                      name: r.name,
-                      lat: r.lat,
-                      lng: r.lng,
-                      municipalityName: hoveredName || undefined
-                    });
-                    // Update highlighted state
-                    setHighlightedPlaceCoords([r.lat!, r.lng!]);
-                    setHighlightedPlaceName(r.name);
-                    setHighlightedPlaceType('restaurant');
-                    // Center map on clicked restaurant
-                    mapRef.current?.flyTo([r.lat!, r.lng!], 15, { duration: 0.6 });
-                  }}
+                  showPopup={showPopup}
+                  onClick={handleMarkerClick}
                 />
-                {isHighlighted && (
-                  <Popup position={[r.lat, r.lng]}>
+                {showPopup && (
+                  <Popup position={[r.lat, r.lng]} eventHandlers={{ popupclose: handlePopupClose }}>
                     <div className="text-sm">
                       <div className="font-medium">{r.name}</div>
                       {r.address && <div className="text-xs text-neutral-600">{r.address}</div>}
