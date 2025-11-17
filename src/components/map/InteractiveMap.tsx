@@ -55,9 +55,33 @@ type InteractiveMapProps = {
 
 
 const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality, fullScreen = false, compact = false, restaurantMarkers = null, userLocationOverride = null }) => {
-    // Toggle for showing all restaurants vs only those within radius
-    const [showAllRestaurants, setShowAllRestaurants] = useState<boolean>(true);
   const [searchRadius, setSearchRadius] = useState<number>(5);
+    // New state for restaurant display mode
+    const [showAllRestaurants, setShowAllRestaurants] = useState<boolean>(false);
+    const [allRestaurants, setAllRestaurants] = useState<RestMarker[]>([]);
+    const [radiusFilterEnabled, setRadiusFilterEnabled] = useState<boolean>(false);
+    // Fetch all restaurants when showAllRestaurants is triggered
+    useEffect(() => {
+      if (!showAllRestaurants) return;
+      const fetchAllRestaurants = async () => {
+        try {
+          // Replace with your actual API call for all restaurants
+          const resp = await fetchRestaurantsCached({ perPage: 1000 });
+          if (resp.rows && resp.rows.length) {
+            setAllRestaurants(resp.rows.map(r => ({
+              id: r.id,
+              name: r.name,
+              lat: r.lat,
+              lng: r.lng,
+              address: r.address
+            })));
+          }
+        } catch (err) {
+          setAllRestaurants([]);
+        }
+      };
+      fetchAllRestaurants();
+    }, [showAllRestaurants]);
   const [sortByDistance, setSortByDistance] = useState<boolean>(false);
   const { addVisit } = useRecentVisits();
   const bulacanCenter: [number, number] = useMemo(() => [14.8527, 120.816], []);
@@ -100,21 +124,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
   const highlightTimeoutRef = useRef<number | null>(null);
 
   // Effect to highlight a specific restaurant on mount if provided in restaurantMarkers
-  useEffect(() => {
-    if (!restaurantMarkers || restaurantMarkers.length !== 1) return;
-    
-    const restaurant = restaurantMarkers[0];
-    if (typeof restaurant.lat === 'number' && typeof restaurant.lng === 'number') {
-      setHighlightedPlaceCoords([restaurant.lat, restaurant.lng]);
-      setHighlightedPlaceName(restaurant.name);
-      setHighlightedPlaceType('restaurant');
-      
-      // Fly to the restaurant with a slight delay to ensure map is ready
-      setTimeout(() => {
-        mapRef.current?.flyTo([restaurant.lat, restaurant.lng], 15, { duration: 0.6 });
-      }, 100);
-    }
-  }, [restaurantMarkers]);
+  // Remove automatic highlighting and focusing for single restaurant marker
 
 
   // Local component: instructions shown to first-time visitors
@@ -828,37 +838,10 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
   const [showPolygons, setShowPolygons] = useState<boolean>(true);
 
   // Effect to handle polygon visibility and focus on markers
+  // Effect to handle polygon visibility only (no auto-focus for restaurant markers)
   useEffect(() => {
     if (restaurantMarkers && restaurantMarkers.length > 0) {
       setShowPolygons(false);
-      
-      // If we have exactly one marker, focus on it
-      if (restaurantMarkers.length === 1) {
-        const r = restaurantMarkers[0];
-        if (typeof r.lat === 'number' && typeof r.lng === 'number') {
-          setHighlightedPlaceCoords([r.lat, r.lng]);
-          setHighlightedPlaceName(r.name);
-          setHighlightedPlaceType('restaurant');
-          // Add a slight delay to ensure map is ready
-          setTimeout(() => {
-            mapRef.current?.flyTo([r.lat!, r.lng!], 15, { duration: 0.6 });
-          }, 100);
-        }
-      } else if (restaurantMarkers.length > 1) {
-        // If we have multiple markers, fit bounds to show all
-        try {
-          const bounds = new L.LatLngBounds(
-            restaurantMarkers
-              .filter(m => typeof m.lat === 'number' && typeof m.lng === 'number')
-              .map(m => [m.lat!, m.lng!])
-          );
-          if (bounds.isValid()) {
-            mapRef.current?.fitBounds(bounds, { padding: [50, 50] });
-          }
-        } catch (err) {
-          console.warn('Failed to fit bounds to markers:', err);
-        }
-      }
     } else {
       setShowPolygons(true);
     }
@@ -955,32 +938,37 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
     }
   }, [userLocation, viewDirectionEnabled, bearingDeg, coneWidthDeg]);
 
-  // Compute filtered markers based on toggle
+  // Compute filtered markers based on view direction (client-side) to avoid extra API calls
+  // Choose which markers to show: all, radius-filtered, or default
   const filteredMarkers = useMemo(() => {
-    if (!restaurantMarkers || !restaurantMarkers.length) return [] as RestMarker[];
+    let markers: RestMarker[] = [];
     if (showAllRestaurants) {
-      return [...restaurantMarkers];
+      markers = [...allRestaurants];
+    } else if (restaurantMarkers && restaurantMarkers.length) {
+      markers = [...restaurantMarkers];
     }
-    // Show only within radius
-    let filtered = [...restaurantMarkers];
-    if (userLocation) {
-      filtered = filtered.filter((r) => {
+
+    // Filter by radius if enabled
+    if (radiusFilterEnabled && userLocation) {
+      markers = markers.filter((r) => {
         if (typeof r.lat !== 'number' || typeof r.lng !== 'number') return false;
         const distance = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], r.lat, r.lng);
         return distance <= searchRadius;
       });
-      if (sortByDistance) {
-        filtered.sort((a, b) => {
-          if (typeof a.lat !== 'number' || typeof a.lng !== 'number') return 1;
-          if (typeof b.lat !== 'number' || typeof b.lng !== 'number') return -1;
-          const distA = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], a.lat, a.lng);
-          const distB = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], b.lat, b.lng);
-          return distA - distB;
-        });
-      }
     }
-    return filtered;
-  }, [restaurantMarkers, userLocation, searchRadius, sortByDistance, showAllRestaurants]);
+
+    // Sort by distance if enabled
+    if (sortByDistance && userLocation) {
+      markers.sort((a, b) => {
+        if (typeof a.lat !== 'number' || typeof a.lng !== 'number') return 1;
+        if (typeof b.lat !== 'number' || typeof b.lng !== 'number') return -1;
+        const distA = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], a.lat, a.lng);
+        const distB = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], b.lat, b.lng);
+        return distA - distB;
+      });
+    }
+    return markers;
+  }, [showAllRestaurants, allRestaurants, restaurantMarkers, radiusFilterEnabled, userLocation, searchRadius, sortByDistance]);
 
   // Reference some symbols that may only be used in the full UI to avoid "declared but never used" TS errors
   useEffect(() => {
@@ -1101,9 +1089,11 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
               const feature = muniFeatures.find(f => f.properties?.name === result.name);
               if (feature) handleSelectSuggestion(feature);
             } else if (result.type === 'restaurant' && result.coordinates) {
-              // Fly to restaurant location
+              // Highlight and zoom to restaurant marker
+              setHighlightedPlaceCoords(result.coordinates);
+              setHighlightedPlaceName(result.name);
+              setHighlightedPlaceType('restaurant');
               mapRef.current?.flyTo(result.coordinates, 15, { duration: 0.6 });
-              // TODO: Show restaurant popup/marker
             }
           }}
           className="shadow-lg"
@@ -1112,23 +1102,6 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
 
   {/* Map Controls Panel */}
   <div className="absolute z-[800] md:right-4 md:top-4 right-4 md:bottom-auto bottom-4">
-    <div className="bg-white rounded-lg shadow-lg p-3 mb-2 flex flex-col gap-2">
-      <label className="font-medium text-sm mb-1">Show Restaurants:</label>
-      <div className="flex gap-2">
-        <button
-          className={`px-3 py-1 rounded ${showAllRestaurants ? 'bg-primary-600 text-white' : 'bg-neutral-100 text-neutral-700'}`}
-          onClick={() => setShowAllRestaurants(true)}
-        >
-          All
-        </button>
-        <button
-          className={`px-3 py-1 rounded ${!showAllRestaurants ? 'bg-primary-600 text-white' : 'bg-neutral-100 text-neutral-700'}`}
-          onClick={() => setShowAllRestaurants(false)}
-        >
-          Within Radius
-        </button>
-      </div>
-    </div>
     <MapControlPanel
       searchRadius={searchRadius}
       onSearchRadiusChange={setSearchRadius}
@@ -1147,8 +1120,47 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
       onMapStyleChange={toggleTile}
       onMapReset={resetMap}
       className="w-[320px]"
-      disabled={showAllRestaurants}
     />
+    {/* New controls for restaurant display */}
+    <div className="mt-2 flex flex-col gap-2 bg-white/80 rounded p-2 shadow">
+      <button
+        className={`px-3 py-1 rounded ${showAllRestaurants ? 'bg-primary-600 text-white' : 'bg-neutral-200'}`}
+        onClick={() => {
+          setShowAllRestaurants((v) => !v);
+          setHighlightedPlaceCoords(null);
+          setHighlightedPlaceName(null);
+          setHighlightedPlaceType(null);
+        }}
+      >
+        {showAllRestaurants ? 'Hide All Restaurants' : 'Show All Restaurants'}
+      </button>
+      <button
+        className={`px-3 py-1 rounded ${radiusFilterEnabled ? 'bg-primary-600 text-white' : 'bg-neutral-200'}`}
+        onClick={() => {
+          setRadiusFilterEnabled((v) => !v);
+          setHighlightedPlaceCoords(null);
+          setHighlightedPlaceName(null);
+          setHighlightedPlaceType(null);
+        }}
+        disabled={!userLocation}
+      >
+        {radiusFilterEnabled ? `Show All (Remove Radius Filter)` : `Show Only Within Radius`}
+      </button>
+      {radiusFilterEnabled && (
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-xs">Radius:</span>
+          <input
+            type="range"
+            min={1}
+            max={20}
+            value={searchRadius}
+            onChange={e => setSearchRadius(Number(e.target.value))}
+            className="w-24"
+          />
+          <span className="text-xs">{searchRadius} km</span>
+        </div>
+      )}
+    </div>
   </div>
 
         <MapContainer
@@ -1311,20 +1323,19 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
 
             // Calculate distance from user if location is available
             const distance = userLocation && getDistanceFromLatLonInKm(userLocation[0], userLocation[1], r.lat, r.lng);
-            
+
+            const isHighlighted = highlightedPlaceType === 'restaurant' &&
+              highlightedPlaceCoords &&
+              r.lat === highlightedPlaceCoords[0] &&
+              r.lng === highlightedPlaceCoords[1];
+
             return (
               <React.Fragment key={`r-${r.id}`}>
                 <RestaurantMarker
                   restaurant={r}
                   userLocation={userLocation}
-                  isHighlighted={highlightedPlaceType === 'restaurant' && 
-                    highlightedPlaceCoords && 
-                    r.lat === highlightedPlaceCoords[0] && 
-                    r.lng === highlightedPlaceCoords[1]}
-                  showPopup={highlightedPlaceType === 'restaurant' && 
-                    highlightedPlaceCoords && 
-                    r.lat === highlightedPlaceCoords[0] && 
-                    r.lng === highlightedPlaceCoords[1]}
+                  isHighlighted={isHighlighted}
+                  showPopup={isHighlighted}
                   onClick={() => {
                     // Track visit when a marker is clicked
                     addVisit({
@@ -1342,17 +1353,19 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ highlightedMunicipality
                     mapRef.current?.flyTo([r.lat!, r.lng!], 15, { duration: 0.6 });
                   }}
                 />
-                <Popup position={[r.lat, r.lng]}>
-                  <div className="text-sm">
-                    <div className="font-medium">{r.name}</div>
-                    {r.address && <div className="text-xs text-neutral-600">{r.address}</div>}
-                    {distance && (
-                      <div className="text-xs text-primary-600 mt-1 font-medium">
-                        {formatDistance(distance)} away
-                      </div>
-                    )}
-                  </div>
-                </Popup>
+                {isHighlighted && (
+                  <Popup position={[r.lat, r.lng]}>
+                    <div className="text-sm">
+                      <div className="font-medium">{r.name}</div>
+                      {r.address && <div className="text-xs text-neutral-600">{r.address}</div>}
+                      {distance && (
+                        <div className="text-xs text-primary-600 mt-1 font-medium">
+                          {formatDistance(distance)} away
+                        </div>
+                      )}
+                    </div>
+                  </Popup>
+                )}
               </React.Fragment>
             );
           })}
