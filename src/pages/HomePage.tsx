@@ -112,16 +112,19 @@ export default function HomePage() {
         setShowWelcome(true);
         setShowConfetti(true);
         sessionStorage.setItem('hasShownWelcome', 'true');
-        
+
         // Auto-hide welcome toast after 5 seconds
         const timer = setTimeout(() => {
           setShowWelcome(false);
         }, 5000);
-        
+
         return () => clearTimeout(timer);
       }
     }
   }, [user]);
+
+  // Determine if user is new or returning
+  const isNewUser = typeof window !== 'undefined' && !localStorage.getItem('bmf_has_logged_in');
 
   // Handle tour start
   const handleStartTour = () => {
@@ -371,9 +374,9 @@ export default function HomePage() {
             id: String(user.id),
             email: user.email || '',
             displayName: user.displayName,
-            isNewUser: false // Since this is from useAuth type, isNewUser will be false
+            isNewUser: isNewUser
           }}
-          isNewUser={false}
+          isNewUser={isNewUser}
           onStartTour={handleStartTour}
         />
       )}

@@ -45,7 +45,7 @@ const AuthPanel: React.FC = () => {
       }`}>
         {tab === 'login' ? (
           <LoginForm onLogin={() => { 
-            setMessage('Welcome back!');
+            setMessage('');
           }} />
         ) : (
           <RegisterForm onSuccess={() => { 

@@ -26,7 +26,7 @@ export const WelcomeToast: React.FC<WelcomeToastProps> = ({ user, isNewUser, onS
         {/* Welcome Message & Actions */}
         <div className="flex-1">
           <h3 className="font-semibold text-lg mb-1">
-            {isNewUser ? 'Welcome to Bulacan Mapping Flavors!' : `Welcome back, ${user.displayName || user.email || "User"}!`}
+            {isNewUser ? '' : `W, ${user.displayName || user.email || "User"}!`}
           </h3>
           <p className="text-neutral-600 text-sm mb-2">
             {isNewUser 
