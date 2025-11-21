@@ -1,5 +1,4 @@
 // Test if the migration works properly
-import mysql from 'mysql2/promise';
 import pool from './db.js';
 
 async function testMigration() {
@@ -12,7 +11,7 @@ async function testMigration() {
     const [rows] = await connection.execute('SELECT id, name, osm_relation_id FROM municipalities');
     console.log(rows);
 
-    // Run migration
+
     const migration = `
       -- 1) Add osm_relation_id column if it doesn't exist
       ALTER TABLE municipalities ADD COLUMN IF NOT EXISTS osm_relation_id INT;
